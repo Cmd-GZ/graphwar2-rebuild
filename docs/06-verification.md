@@ -17763,3 +17763,178 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
 * `game_client` 的 `connect 0x518320` / `disconnect 0x516370` 也没动（它们就是 `0x45a340` / `0x4592d0`
   的唯一调用者，本条落完后这两条已经**有被调者**了）。
 * `new`（`0x4599f0`）仍是 F2。
+
+## 106. T59：第二批 S-self 换真值 —— `play_screen_control` / `game.rs` / `broker` / `level_generator` / `function_evolutionator` / `diffconv` 共 **50 条换成外部真值**，`真 bug 报告 0 条`；挖到的 6 条是**协议/模型口径**而非实现错误（2026-11-27，任务 T59 / `task-54`）
+
+### 106.1 一句话结论
+
+T37（§85）判出 **341 条 `S-self`**；T46（§96）换了 19 条并留下方法论：**下一批按「被测对象有没有二进制对应物」排**。
+本轮按那条原则挑 **78 条**（三块：`play_screen_control` 20 / `game.rs` 14 / `broker` 8 / `level_generator` 11 /
+`function_evolutionator` 15 / `diffconv` 10），**50 条换成外部真值**，**28 条如实登记为"换不了/部分"**
+（不硬凑——T46 §96.8 ① 的教训）。**真 bug 报告 0 条**：新真值下旧实现**一条都没变红**。
+
+真值来源三类（预注册在 `fixtures/test_expectation_plan2.tsv`，真值表 `fixtures/test_expectation_truth2.tsv` 148 行，
+生成器 `tools/gen_test_expectations2.py`）：
+
+| 类 | 段 | 来源 | 条数 |
+|---|---|---|---|
+| **冻结语料**（403 份快照，`fixtures/guardrails.json` 的 corpus sha256 先核） | `L/*` `G/*` `D/*` | `EndOfTurnInfo` / `FunctionActive` / `EffectInfo` / `FunctionPoints` / `TurnCountInfo` 的真实取值 | 29 |
+| **unicorn 直调真二进制** | `E/*` | `random_function 0x4ef020` / `mutate 0x4ee720` / `assemble 0x4ee0e0`（注入 ChaCha key 后逐 token 读 `Vec<Token>`） | 15 |
+| **真实抓包** | `B/*` `V/*` | `fixtures/protocol_match.jsonl`（86 帧）+ `fixtures/levelgen_{draws,obstacles}.txt` | 6 |
+
+### 106.2 三块逐条：改前 → 改后 → 真值来源 → 结果
+
+#### 甲、`src/graphwar_play_screen_control.rs`（弹道生命周期 / 回合时钟 / AI 闸门，20 条里 **15 条换成真值**）
+
+| # | 测试 | 改前（S-self 形态） | 改后（真值） | 结果 |
+|---|---|---|---|---|
+| L01 | `kills_land_only_when_the_curve_reaches_the_point` | 点序号 10/50 是编的 | 真批 `1782642582` 批1：`active_tick=30864`、`DeathEffect=30894`（**+30**）、`Explosion=+47/+67` ⇒ 点序号 900（=30 tick×30 点/tick）上落地 | 绿 |
+| L02 | `kills_are_sorted_by_point_before_landing` | 只有我方排序 | 真语料 **196/198** 含 ≥2 死的批里死亡 `start_tick` 单调不减 | 绿 |
+| L03 | `arrival_needs_the_whole_curve` | 30 点/tick 只有常量出处 | 真批 47/67 tick 的到达 + **真采样器**对真函数文本点出 N=1420（`end_x` 用碰撞点截断）⇒ 47∈[ceil((N−30)/30), ceil((N+30)/30)] | 绿 |
+| L05 | `arrival_lands_the_remaining_kills_first` | 我方顺序 | 真语料 **299/299** 批死亡早于同批所有爆炸（反向 0） | 绿 |
+| L06 | `the_same_victim_lands_once_per_shot` | 我方闩 | 真语料 **378/380** 批内死亡坐标互不相同；例外 2 批点名（`1782677734`/`1783011370`）；**339 个实体**有多条 `LifeInfo(false)` | 绿 |
+| L07 | `targets_count_separately_from_soldiers` | 我方两计数 | 真语料死亡特效类型 `AshEffect 363 / DeathEffect 463 / SparkEffect 54`（皮肤分流） | 绿 |
+| L08 | `settle_happens_once_per_shot` | 我方回合模型 | 真语料 **1070 批恰 1 次 `TurnCountInfo`**、19 批 0 次（末批） | 绿 |
+| L09 | `reset_clears_everything_including_turns` | 我方 reset | 真语料 **381/381** 份回放首个 `turn_count == 0` | 绿 |
+| **L11** | `turn_clock_durations_match_the_six_modes` | 期望值 = 我方 `TimeMode::seconds()` 自己 | **真语料 `EndOfTurnInfo` 中位数**：Timer30s **1803** / Timer1m **3600** / Timer2m **7204** / Timer3m **10801** / TimerInf **哨兵 0**（893 次） | 绿 |
+| L12 | `auto_fire_needs_all_three_conjuncts` | 我方状态机 | 真语料 **15 次**超时开火（`FunctionFire.tick ≥ end_of_turn_tick`，4 份回放，单份最多 4 次） | 绿 |
+| L13 | `auto_fire_is_suppressed_while_in_flight_or_stopped` | 我方规则 | 15 次超时**全部落在截止时刻 ±21 tick**（不在 `ExecutingResults` 途中） | 绿（弱） |
+| L14 | `timer_inf_never_times_out` | 我方 `None` | 真语料 **893 次 `TimerInf` 的 `end_of_turn_tick` 全是 0**，234 份含该档的回放里**0 次**超时 | 绿 |
+| L15 | `seconds_left_counts_down` | 我方算式 | 真语料 `end_of_turn_tick` 是**绝对 tick**（60 s 档差中位数 3600） | 绿 |
+| L16 | `restart_clears_the_latch` | 我方断言 | 真语料 `1782673653` 一份里 **4 次**超时开火 ⇒ 闩每回合清 | 绿 |
+| L17 | `clock_keeps_fractional_ticks` | 我方 advance(1/60) | 真值派生：60 s 档 = 3600 tick ⇒ **1 s = 60 tick**（与 §44 的 59.94–60.01/s 独立一致） | 绿 |
+
+**登记为"换不了"的 4 条**（预注册时就写明，不当成已换）：
+`tiny_curve_arrives_immediately`（403 份语料里 `end_x == start_x` **0 例**）、
+`bot_gate_counts_down_then_fires_once` / `bot_gate_freezes_when_it_cannot_fire`（会话流里**观测不到 bot 内部倒计时**）、
+`bot_aim_expression_is_the_same_line`（真 bot 发的函数**没有一条**是 `{:.6}*x`，见 §106.6 ⑤）。
+`advancing_while_idle_does_nothing` 保留为契约断言并注明。
+
+#### 乙、`src/game.rs`（结算流程 / 微分方程局，14 条里 **6 条换成真值、8 条登记**）
+
+| # | 测试 | 真值 | 结果 |
+|---|---|---|---|
+| G02 | `diffeq_room_emits_the_function_text_verbatim` | 真语料 **550/550** 条 DiffEq 定稿报文 `corrected == function` | 绿 |
+| G04 | `function_mode_comes_from_the_room_and_from_the_info_event` | 真 `FunctionModeInfo` 取值域**只有** `NormalFunction`(550)/`DiffEqFunction`(320)，两个都要能映射 | 绿 |
+| G07 | `destroy_is_delayed_by_measured_ticks` | 真语料 `DestroyObstacle` 相对批开始 tick：**n=503 / min 69 / median 205**，294 批有销毁 | 绿 |
+| G09 | `hole_point_is_the_explosion_point_not_the_sampled_stop` | 真语料 **1050/1291** 条 `ExplosionEffect.pos_x` 与 `end_x` **逐位相同**、**1179/1291** 在 1e-4 内 | 绿 |
+| G10 | `settle_order_switch_is_closed_and_defaults_to_s3` | 真语料 1089 批的**事件种类序列 top-4**（爆炸在 `FunctionActive` 后、死亡在爆炸前、`DestroyObstacle` 最后） | 绿 |
+| G13 | `shooter_never_kills_itself` | 真语料 **950 个单射手批**里射手 id 出现在死亡集合 **0 次** | 绿 |
+
+登记（部分/换不了）：`diffeq_room_samples_the_same_function_with_rk4`（"同函数两模式对比"在真语料里没有对应物）、
+`diffeq_room_hole_point_is_the_stop`、`tick_comes_from_the_clock`（毫秒→tick 取整点无真报文）、
+`blocked_shot_also_queues_obstacle_destruction`（**回放不记 `QueueDestroyObstacle`**）、
+`queued_and_expired_destroy_points_are_identical`（同上）、`blocked_shot_punches_a_hole_in_the_mask`、
+`friendly_fire_kills_teammates_in_path_order`（语料无队伍归属标注）。
+
+#### 丙、`broker`(8) / `level_generator`(11) / `function_evolutionator`(15) / `diffconv`(10)
+
+* **broker**（`src/_scaffold/broker.rs`，4 条换真值）：`GameInfo` 三帧→真房间名/地址
+  （`US Room 2/1/3`、`69.164.213.144:35981/37933/38347`）、真帧**字段顺序**、`VersionInfo`(2.0.60/linux)、
+  抓包会话前 6 帧顺序。登记：`frame_is_u16_big_endian_prefixed`（仓库里只有**解析后文本**，无原始帧字节 ⇒ 推断）、
+  `room_table_*` / `snapshot_is_sorted_and_stable`（真广播顺序 `2→1→3` 既非按名字也非按地址 ⇒ 我方排序是自造）、
+  `game_removed_round_trips`（**0 真实帧**，等 t53）。
+* **level_generator**（`src/graphwar_level_generator.rs`，**2 条换真值** + 1 条补出处）：真抓包那一局的 13 个障碍
+  统计成为期望（半径**下限 0.8**、**3 个**正好卡在下限、max 5.156227、均值 2.5086；`generate(真实随机流)` 逐位复现）。
+  登记：中心模式/圆盘式/种子类 8 条**没有真实样本**（`docs/103` §6 同一边界）。
+* **function_evolutionator**（`src/graphwar_function_evolutionator.rs`，**14 条换真值**，本批质量最高）：
+  **unicorn 直调真二进制** —— `mutate([VarY]) → [(Add),(Const 0x403b458e13264d43),(VarY)]`、
+  `mutate([VarX])` 同常数位型、`mutate([Add,Sin])` 原样、`mutate(Const(3.0))` **200/200 都改变**、
+  `assemble` 四用例（含 `[Sin,VarX,Add] → [Sin,VarX]` **变短**：悬空算子被丢）、
+  1200 次 `random_function` 的 tag 直方图（**11351 token，折成 85 分母恰好 85.000，恰好 15 个 tag**）、
+  长度均值 9.4592（真机）/ 10.0097（非零）、`gen → assemble`（120 例）：**55 变长 / 4 同长 / 61 变短**
+  （变短 = 丢掉悬空算子）、`gen` 输出再喂 `assemble` 会变的例数 **109/120**（空样本 66/1200）。
+  我方用**同一把 ChaCha key** 跑 `mutate_w` / `assemble_w` **逐 token 位型复现**（含两个常数位型）。
+* **diffconv**（`src/_scaffold/diffconv.rs` 8 条 + `tests/diffconv_parity.rs` 1 条）：把 4 条**纯 parity** 测试
+  （收敛层 vs 我方内核）接上真报文：299/0 死亡先于爆炸、1050/1179/1291 爆炸点=end_x、19 条真实括号不平衡报文
+  、950/0 单射手不自伤、真模式取值域、728/9 修正后缀、550/550 DiffEq 原文照发；
+  `tests/diffconv_parity.rs` 直接从真回放读 `end_x = 4.988566611566738`（逐位）并验"爆炸点 x == end_x"。
+  登记：`non_finite_explosion_point_falls_back_to_stop`（真语料 2243 条 `EffectInfo` + 1291 条 `FunctionPoints`
+  里 **0 次** NaN/±inf ⇒ 无对应物）、`mutations_keep_the_sequence_well_formed`（原版"合法"判据不是前缀计数）。
+
+### 106.3 反面对照：临时改坏**被测实现**，确认新断言会红（三次都复原，`git diff src/` 里不留痕）
+
+| # | 改坏哪处实现 | 期望变红的断言 | 实测 |
+|---|---|---|---|
+| A | `src/graphwar_mode_manager.rs::TimeMode::seconds()` 的 `Timer1m` **60 → 58**（时长表写错） | L11 `turn_clock_durations_match_the_six_modes` | **红**：`档位 Timer1m：我方 3480 tick，真语料中位数 3600（n=108）` |
+| B | `src/graphwar_function_evolutionator.rs::mutate_w` 的常数尺度 `× CONST_SCALE → × CONST_SCALE × 2` | E07 `mutate_wraps_y_like_x` + E10 `mutate_wraps_x_in_an_operation` | **2 红**：常数位型 `4632873118189636931` vs 真值 `4628369518562266435` |
+| C | `src/graphwar_level_generator.rs` 的半径下限 `0.8 → 0.7` | V03 `normal_is_reasonably_distributed` | **红**：`真实半径下限是 0.8（夹紧）` |
+
+### 106.4 门槛读数（本批每项都跑过）
+
+| 项 | 读数 | 命令 |
+|---|---|---|
+| `cargo test --offline` | **1826 / 0 / 1 ignored**（基线 1826/0/1 —— 本轮只在既有测试里加断言，条数不变、无红） | `cargo test --offline` |
+| `cargo test --offline --features gdext-bindings` | **1956 / 0 / 1 ignored**（基线 1956） | 同上 `--features gdext-bindings` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637** 一位未退 | `replay_attrib --drive fire|batch --policy default`、`batch_conv --policy strict` |
+| `tools/check_doc_refs.py` | rc=0 | `python3 tools/check_doc_refs.py` |
+| 语料指纹 | 403 份逐份 sha256 与 `guardrails.json` 一致（`names_sha256 = c3325c0b…`） | `gen_test_expectations2.py` 跑之前先核 |
+
+### 106.5 复跑（一条链）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild WT=$MAIN/.agent-work/cg/wt-t59
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cd $WT
+# 1) 真值表：语料指纹先核 → 扫 403 份快照 + unicorn 直调 + 真抓包（≈2 min，unicorn 段占大头）
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations2.py            # 写 fixtures/test_expectation_truth2.tsv
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations2.py --check    # 只比对（应当 OK）
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations2.py --skip-emu # 不跑 unicorn 的快速版
+# 2) 被测的三块
+cargo test --offline --lib graphwar_play_screen_control
+cargo test --offline --lib 'game::'
+cargo test --offline --lib graphwar_function_evolutionator
+cargo test --offline --lib graphwar_level_generator
+cargo test --offline --lib broker
+cargo test --offline --lib diffconv
+cargo test --offline --test diffconv_parity
+```
+
+### 106.6 本轮**新挖到的口径事实**（不是 bug，也别当成 bug；但会误导下一个人）
+
+1. **`EndOfTurnInfo.time_mode` 是陈旧默认字段**：137 个 Timer2m 回合里它写的是 `Timer1m`、9 个 Timer3m 写 `Timer1m`、
+   6 个 Timer30s 也写 `Timer1m`；只有 893 个 TimerInf 回合跟着写 `TimerInf`。**真档位必须看 `TimeModeInfo`**。
+   本轮的 `L11` 就是按"最近一次 `TimeModeInfo`"归档的；按 `EndOfTurnInfo.time_mode` 归档会把 3600/7200/10800 混成一堆。
+2. **`TurnLimitInfo` 在 403 份语料里出现 21 次**（`{"turn_limit": 5}`，21 份回放）—— 与 §96.7 表里
+   "`TurnLimitInfo` 冻结语料里一条真实帧都没有"的记录**矛盾**。本批不碰 `protocol.rs`（那是 t53 的活），
+   但这条**请 lead 转给 t53**：`TurnLimitInfo` 的字段形状有现成真实帧可挖。
+3. **`DestroyObstacle` 有真帧、`QueueDestroyObstacle` 从不入回放**（294 批有销毁 / 503 条）⇒ 任何"排队点 == 到期点"
+   的断言在真语料里**无法**验证（`Policy::unobserved_kinds` 已有登记）。
+4. **真语料的死亡特效会重复**：380 个含死亡的批里 **2 个**出现坐标完全相同的两条死亡（`1782677734`/`1783011370`），
+   另有 4 条死亡特效的 `start_tick` 早于同批最小 `active_tick`（同一份 `1783011370`，批边界处上一阶段排队的死亡）。
+   ⇒ "每发每人只死一次"是我方**去重模型**，不是可从语料直接读出的不变量。
+5. **bot 的出手延迟与我方 0.6 s 闸门不是一回事**：真语料 bot 的 `FunctionFire − 回合开始 tick` n=397：
+   min 4 / p10 18 / **median 285** / max 182723 tick（混合了网络与超时开火）⇒ 0.6 s 这个常数**没有观测支撑**（保留为自造）。
+   真 bot 发的函数也**不是** `{:.6}*x` 直线（394 条：`(0.43*x)`、`(x/-7.96)`、`sin(x)`、`-11.54`、进化出的 sigmoid 组合）。
+6. **`ExplosionEffect.pos_x` 与 `end_x`**：1050/1291 逐位相同、1179/1291 在 1e-4 内，其余 112 条**没有解释**
+   （多为一批多发的归属问题）—— 如实登记，不硬说成"全部一致"。
+
+### 106.7 我写错了什么 / 前提被证伪（比数字重要）
+
+1. **第一版 `L03` 断言写错了**：我以为"真采样器的 end_x 必须等于回放的 end_x"，实测**不等** ——
+   真批的 `end_x` 是被**障碍/靶子挡住**那一刻的 x（碰撞点），而纯采样器会一直走到画布边。
+   改成"按碰撞点截断点数 + ±1 tick 区间"，并把 sigmoid 那一发（在到达碰撞点前已冲出画布）**排除**并写明原因。
+2. **`tests/diffconv_parity.rs` 只做到"接上真报文的一半"**（预注册 D10 写的是"2 条换成真批"）：
+   现只加了"真回放里那一发的 `end_x` 位型 + 爆炸点 x == end_x"，**没有**把 `compare_batch` 全批评测搬进去。
+   ⇒ 记**部分落空**；下一批应该把 `diffconv.rs` 的 `REAL_SINGLE_SHOT` 那套 `compare_batch` 搬到集成测试里。
+3. **`E05`（常数 N(0,10.2) 尺度）只换了"占比"**：真值表存了真二进制 const 计数（1503/11351 = 13.24%）与 tag 直方图，
+   但**没存** const 值的统计量 ⇒ 尺度那条仍是 `docs/71` §5.1 的转录。下一批若要升档，给 `random_function` 的
+   const 值加一把"均值/方差/分位"的真值。
+4. **`E09`/`E11`（多轮变异）的真值抓法有缺陷**：`tools/ai_gen_parity.py::run_binary` 每次调用都**新建 emulator**，
+   同一把 key 的随机流会重来 ⇒ "连喂多轮"拿到的是同一笔抽样。所以那两条只用了"长度不变/常数改变"这类**不会因此失真**
+   的断言；要严格做多轮，得在同一个 emulator 里连续调用（下一批的活）。
+5. **`normal_corrected_text_appends_signed_suffix` 里我一度编了两条"真语料样本"**（`-0.8 - 0.297` 之类），
+   已删掉：真值表里只有"728 正常 / 9 例外"的计数与 4 条括号不平衡原文是逐字的，其余不能凭印象写。
+
+### 106.8 遗留：还剩多少 S-self、下一批挑什么
+
+* 本轮换掉 **50 条**（真值表 148 行、预注册 78 行）。按 T37 的 341 条分母，**还剩约 276 条**（T46 已换 19 条 ⇒ 341−19−50）。
+* **本批之后"最值得先做"的顺序**（按"被测对象有没有对应物"重排）：
+  1. **`_scaffold/protocol.rs` 的 9 条** —— 等 t53 抓包；顺带**先查 `TurnLimitInfo`**（§106.6 ②：语料里其实有 21 条真帧）。
+  2. **`_scaffold/replay_driver.rs`（20 条）/ `_scaffold/api.rs`（43 条）** —— 我方自造物，**换不了**，只能在文档口径上
+     写清"回归保护、非复原证据"（T46 已给的结论）。
+  3. **`tests/misc_modules.rs`(15) / `tests/win_rule.rs`(4)** —— 缺一份**打到结束的整局回放**（`EndingGame` 在 403 份里 0 次）。
+  4. **`tests/half_step.rs` 余 3 条 + `plane.rs` 余 0 条 + `graphwar_team_manager.rs`(4)**：收集/统计类，需要新造测量。
+* **本批留下的两个"可继续做深"的口子**：①`diffconv_parity` 的全批评测（§106.7 ②）；
+  ②`function_evolutionator` 的多轮变异真值（§106.7 ④：同 emulator 连续调用）。
+* **本批没有改任何被测实现**（`git diff src/` 里只有测试与取证注释；三次反面对照的改动都还原了）。

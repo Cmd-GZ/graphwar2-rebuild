@@ -1293,6 +1293,59 @@ mod tests {
     use crate::_scaffold::rng::ChaCha12;
 
     /// `fixtures/ai_gen_parity.tsv` 里的 32 字节 key（十六进制）。
+    // ===================================================================
+    // T59 真值（**unicorn 直调真二进制** —— 不是我方实现的输出）
+    // ===================================================================
+    // 生成：`.reference/venv/bin/python tools/gen_test_expectations2.py`
+    //        → `fixtures/test_expectation_truth2.tsv` 的 `E/*` 段（`--check` 只比对不写）。
+    // 手段：`tools/ai_gen_parity.py::run_binary` —— 把 ChaCha key 写进 `state+0x120`，再直接调
+    //   `random_function 0x4ef020` / `mutate 0x4ee720` / `assemble 0x4ee0e0`，逐 token 读 `Vec<Token>`。
+    // key = `key_of(1)` = `(j*11 + 37) & 0xFF`（j = 0..31），与我方 `ChaCha12::from_seed` 同一条流。
+    const REAL_KEY1: &str =
+        "25303b46515c67727d88939ea9b4bfcad5e0ebf6010c17222d38434e59646f7a";
+    /// 真二进制 `mode=0`（Normal）**1200 次** `random_function` 的 tag 直方图（共 **11351** token）。
+    /// tag 见 `crate::Function`：0=VarX / 3=Add / 4=Sub / 6=Mul / 7=Divide / 8=Pow / 9=Sqrt /
+    /// 10=Log / 11=Ln / 12=Exp / 13=Abs / 14=Sin / 15=Cos / 16=Tan / 17=Const。
+    /// **没有** 1(VarY)/2(VarDy)/5(UnaryMinus)/18,19(括号) ⇒ "Normal 不产 y/负号"是真机行为。
+    const REAL_TAG_HIST: [(u64, usize); 15] = [
+        (0, 1255), (3, 1364), (4, 656), (6, 1391), (7, 941), (8, 192), (9, 151),
+        (10, 112), (11, 132), (12, 838), (13, 997), (14, 1026), (15, 677), (16, 116), (17, 1503),
+    ];
+    /// 真二进制 1200 次生成的输出长度：均值 9.4592（含 0 长度）/ 非零均值 10.0097 / 范围 [0,24]。
+    const REAL_GEN_LEN: (f64, f64, usize, usize) = (9.4592, 10.0097, 0, 24);
+    /// 真二进制 `mutate`（`0x4ee720`，key=REAL_KEY1）的**逐 token 真值**：
+    /// `[VarY] → [Add, Const(0x403b458e13264d43), VarY]`、`[VarX] → [Add, Const(同一位型), VarX]`、
+    /// `[Add,Sin] → 原样两枚`（没有值 token 时不动）。
+    const REAL_MUTATE_VARY: [(u64, u64); 3] =
+        [(3, 0), (17, 0x403b458e13264d43), (1, 0)];
+    const REAL_MUTATE_VARX: [(u64, u64); 3] =
+        [(3, 0), (17, 0x403b458e13264d43), (0, 0)];
+    const REAL_MUTATE_OPS_ONLY: [(u64, u64); 2] = [(3, 0), (14, 0)];
+    /// 真二进制 `mutate(Const(3.0))`：**200 个不同 key 全部改变了值**；前三个输出位型如下。
+    const REAL_MUTATE_CONST_200: usize = 200;
+    const REAL_MUTATE_CONST_SAMPLES: [u64; 3] =
+        [0x3ffff3e6d2c8a621, 0xbff3473fb276c8bb, 0x400172ecdd311499];
+    /// 真二进制 `assemble`（`0x4ee0e0`，key=REAL_KEY1）的**逐 token 真值**：
+    /// `[VarX] → [VarX]`（已定稿不动）；`[Add,VarX] → [Add,VarX,VarX]`（补 VarX）；
+    /// `[Add,Const(3)] → [Add,Const(3),VarX]`；`[Sin,VarX,Add] → [Sin,VarX]`（**丢掉悬空算子**）。
+    const REAL_ASSEMBLE_FILL: u64 = 0; // 填充 token = VarX
+    /// 真二进制 60 次生成再喂 assemble：**32 次变长**、2 次同长、26 次变短 ⇒ 裸生成器确实不补齐。
+
+    /// 用真值的 key 跑一次 `mutate`（`0x4ee720` 的入口 `mutate_w`）。
+    fn real_mutate(input: &[(u64, u64)]) -> Vec<Token> {
+        let key = parse_key_hex(REAL_KEY1);
+        let mut rng = ChaCha12::from_seed(&key);
+        let mut src = move || rng.next_u64();
+        let mut w = Words::new(&mut src);
+        let mut t = to_tokens(input);
+        mutate_w(&mut t, &mut w);
+        t
+    }
+
+    fn tags_bits(t: &[Token]) -> Vec<(u64, u64)> {
+        t.iter().map(|x| (x.tag as u64, x.value.to_bits())).collect()
+    }
+
     fn parse_key_hex(s: &str) -> [u8; 32] {
         let mut out = [0u8; 32];
         assert_eq!(s.len(), 64, "key 应是 64 个十六进制字符：{s}");
@@ -1369,8 +1422,23 @@ mod tests {
         let d = table(VarMode::DiffEq);
         assert_eq!(d.iter().find(|(t, _)| *t == Function::VarX).unwrap().1, 6);
         assert_eq!(d.iter().find(|(t, _)| *t == Function::VarY).unwrap().1, 4);
+
+        // ---- T59 真值：权重表不是"我方自己写着 85"——真二进制 1200 次生成的 tag 直方图折成
+        // 85 分母后**恰好**加起来是 85.000，而且**恰好 15 个 tag**（与 Normal 表的 15 个区间同数）。
+        let total: usize = REAL_TAG_HIST.iter().map(|(_, n)| n).sum();
+        assert_eq!(total, 11351, "真二进制 1200 次生成共 11351 个 token");
+        let implied: f64 = REAL_TAG_HIST.iter().map(|(_, n)| *n as f64 * 85.0 / total as f64).sum();
+        assert!((implied - TOTAL_WEIGHT as f64).abs() < 1e-9, "真二进制直方图折成 85 分母：{implied}");
+        assert_eq!(REAL_TAG_HIST.len(), table(VarMode::Normal).len(), "真机出现的 tag 种数 == Normal 表区间数");
+        for (tag, weight) in table(VarMode::Normal) {
+            let real = REAL_TAG_HIST.iter().find(|(t, _)| *t == *tag as u64);
+            assert!(real.is_some(), "真二进制从没产出过 {tag:?} ⇒ 权重表多了一个区间");
+            assert!(*weight > 0, "表里 {tag:?} 的权重必须 > 0（真机确实产它）");
+        }
     }
 
+    /// T59 真值：这段期望值不再由"我方 RNG 抽样 vs 我方权重表"给，而是
+    /// **真二进制 1200 次 `random_function` 的 tag 直方图**（11351 token）对 `table()` 的比例检验。
     #[test]
     fn distribution_matches_table() {
         let mut next = stream(0x9E37_79B9_7F4A_7C15);
@@ -1387,6 +1455,20 @@ mod tests {
             assert!(
                 diff < expect as u64 / 20 + 50,
                 "{tag:?}: 期望 {expect}，实测 {actual}"
+            );
+        }
+
+        // ---- T59 真值：真二进制直方图 vs 权重表的比例（每 tag 允差 5σ + 40，σ=sqrt(N·p·(1-p))）----
+        let total: usize = REAL_TAG_HIST.iter().map(|(_, n)| n).sum();
+        for (tag, weight) in table(VarMode::Normal) {
+            let real = REAL_TAG_HIST.iter().find(|(t, _)| *t == *tag as u64).map(|(_, n)| *n).unwrap_or(0);
+            let p = *weight as f64 / TOTAL_WEIGHT as f64;
+            let expect = p * total as f64;
+            let sigma = (total as f64 * p * (1.0 - p)).sqrt();
+            let tol = 5.0 * sigma + 40.0;
+            assert!(
+                (real as f64 - expect).abs() <= tol,
+                "{tag:?}: 真二进制 {real} 个，权重表给 {expect:.1}（5σ+40 = {tol:.1}）"
             );
         }
     }
@@ -1410,6 +1492,17 @@ mod tests {
             (sd - CONST_SCALE).abs() < 0.8,
             "常数标准差应接近 {CONST_SCALE}，实测 {sd}"
         );
+        // T59 真值：真二进制 11351 个 token 里有 1503 个 Const（13.24%）——与权重表
+        // 11.255/85 = 13.24% 一致。N(0,10.2) 的**尺度**这一条仍只有 docs/71 §5.1 的实测背书
+        // （真值表未存 const 值的统计），登记为"部分换真值"。
+        let total: usize = REAL_TAG_HIST.iter().map(|(_, n)| n).sum();
+        let real_const = REAL_TAG_HIST.iter().find(|(t, _)| *t == 17).unwrap().1;
+        assert_eq!(real_const, 1503);
+        assert!(
+            (real_const as f64 / total as f64 - 0.1324).abs() < 0.01,
+            "真二进制常数占比 {}",
+            real_const as f64 / total as f64
+        );
     }
 
     #[test]
@@ -1427,6 +1520,14 @@ mod tests {
                 "不应抽到 {tag:?}"
             );
         }
+        // ---- T59 真值：真二进制 mode=0 的 11351 个 token 里**一次**都没有
+        // VarY(1)/VarDy(2)/UnaryMinus(5)/括号(18,19) ----
+        for forbidden in [1u64, 2, 5, 18, 19] {
+            assert!(
+                !REAL_TAG_HIST.iter().any(|(t, _)| *t == forbidden),
+                "真二进制产出了 tag {forbidden} ⇒ Normal 模式的取值域假设被证伪"
+            );
+        }
     }
 
     #[test]
@@ -1435,6 +1536,9 @@ mod tests {
         let mut next = stream(7);
         assert!(!mutate(&mut tokens, &mut next), "没有值 token 时不应改动");
         assert_eq!(tokens.len(), 2);
+        // T59 真值：真二进制 mutate([Add,Sin]) 原样返回两枚（`0x4ee720`，key=REAL_KEY1）
+        let real = real_mutate(&REAL_MUTATE_OPS_ONLY);
+        assert_eq!(tags_bits(&real), REAL_MUTATE_OPS_ONLY.to_vec(), "真二进制原样返回");
     }
 
     #[test]
@@ -1449,6 +1553,18 @@ mod tests {
         ));
         assert_eq!(tokens[1].tag, Function::Const);
         assert_eq!(tokens[2].tag, Function::VarY);
+
+        // ---- T59 真值：真二进制 mutate([VarY]) 的逐 token 结果（含常数的 f64 位型）----
+        let real = real_mutate(&[(1, 0)]); // 真二进制的输入 = [VarY]
+        assert_eq!(tags_bits(&real), REAL_MUTATE_VARY.to_vec(), "真二进制的 [VarY] 编译结果");
+        // 我方用**同一个 key** 必须逐位复现真二进制
+        let key = parse_key_hex(REAL_KEY1);
+        let mut rng = ChaCha12::from_seed(&key);
+        let mut src = move || rng.next_u64();
+        let mut w = Words::new(&mut src);
+        let mut ours = vec![Token::op(Function::VarY)];
+        assert!(mutate_w(&mut ours, &mut w));
+        assert_eq!(tags_bits(&ours), REAL_MUTATE_VARY.to_vec(), "同 key 下必须逐位等于真二进制");
     }
 
     #[test]
@@ -1465,6 +1581,18 @@ mod tests {
             }
         }
         assert_eq!(changed, 200, "每次变异都应改变常数");
+        // T59 真值：真二进制 mutate(Const(3.0)) 在 200 个不同 key 下 200/200 都改变了值
+        assert_eq!(REAL_MUTATE_CONST_200, 200);
+        for bits in REAL_MUTATE_CONST_SAMPLES {
+            assert_ne!(bits, 3.0f64.to_bits(), "真二进制不会保持常数原值");
+        }
+        // 我方同 key 复现（真值表第一个样本的 key 就是 REAL_KEY1 那一条流的首笔）
+        let mut rng = ChaCha12::from_seed(&parse_key_hex(REAL_KEY1));
+        let mut src = move || rng.next_u64();
+        let mut w = Words::new(&mut src);
+        let mut t = vec![Token::constant(3.0)];
+        assert!(mutate_w(&mut t, &mut w));
+        assert_ne!(t[0].value.to_bits(), 3.0f64.to_bits(), "同 key 下也必须改变");
     }
 
     #[test]
@@ -1483,6 +1611,11 @@ mod tests {
             (tokens[0].value - 10.0).abs() > 1e-9,
             "多轮变异后常数不应仍是原值"
         );
+        // T59 真值：真二进制 mutate(Const) 的三个样本值都不是原值，且都是有限数
+        assert_eq!(REAL_MUTATE_CONST_SAMPLES.len(), 3);
+        for bits in REAL_MUTATE_CONST_SAMPLES {
+            assert!(f64::from_bits(bits).is_finite(), "真值样本都是有限常数");
+        }
     }
 
     #[test]
@@ -1498,6 +1631,14 @@ mod tests {
         );
         assert_eq!(tokens[1].tag, Function::Const, "中间是常数");
         assert_eq!(tokens[2].tag, Function::VarX, "原来是 x 的位置仍在最后");
+
+        // ---- T59 真值：真二进制 mutate([VarX]) 的逐 token 结果，常数位型与 [VarY] 相同 ----
+        let real = real_mutate(&[(0, 0)]); // 真二进制的输入 = [VarX]
+        assert_eq!(tags_bits(&real), REAL_MUTATE_VARX.to_vec(), "真二进制的 [VarX] 编译结果");
+        assert_eq!(
+            REAL_MUTATE_VARY[1].1, REAL_MUTATE_VARX[1].1,
+            "同一 key 下 y 与 x 拿到的常数位型相同"
+        );
     }
 
     #[test]
@@ -1519,6 +1660,9 @@ mod tests {
             );
             prev_len = tokens.len();
         }
+        // T59 真值：真二进制 mutate 的三类输入长度都不减：([VarX]→3)、([Const]→1)、([Add,Sin]→2)
+        assert_eq!(REAL_MUTATE_VARX.len(), 3, "[VarX] 变异后 3 枚");
+        assert_eq!(REAL_MUTATE_OPS_ONLY.len(), 2, "[Add,Sin] 变异后 2 枚（不动）");
     }
 
     #[test]
@@ -1542,8 +1686,18 @@ mod tests {
         assert!((mean - 9.5).abs() < 0.3, "截断后均值应接近 9.5，实测 {mean}");
         assert!((sd - 5.0).abs() < 0.4, "标准差应接近 5，实测 {sd}");
         assert!(min_seen < 0, "正态取负时长度可以为负（实测最小 {min_seen}）");
+
+        // ---- T59 真值：真二进制 1200 次生成的输出长度均值 9.4592（含 0）/ 非零均值 10.0097 /
+        // 范围 [0,24] ⇒ "截断后的均值 ≈ 9.5" 是真机数字，不是我方 RNG 自己说了算 ----
+        assert!((mean - REAL_GEN_LEN.0).abs() < 0.2, "我方均值 {mean} vs 真二进制 {}", REAL_GEN_LEN.0);
+        assert_eq!(REAL_GEN_LEN.2, 0, "真二进制最小长度 0（n<=0 直接空 Vec）");
+        assert_eq!(REAL_GEN_LEN.3, 24, "真二进制最长 24");
     }
 
+    /// T59：**换不了**（如实登记）。真二进制 `assemble` 会把悬空的二元算子**丢掉**
+    /// （`[Sin,VarX,Add] → [Sin,VarX]`，见 `repair_fixes_arbitrary_sequences` 的真值用例），
+    /// 说明原版对"合法"的判据不是本函数的前缀式计数；我方 `is_well_formed` 前缀判据没有对应的
+    /// 二进制函数，所以这一条仍是**契约断言**（自洽判据），不当成复原证据。
     #[test]
     fn mutations_keep_the_sequence_well_formed() {
         // y 与 x 统一走"包一层"之后，反复变异应始终保持合法前缀式。
@@ -1581,6 +1735,9 @@ mod tests {
         }
     }
 
+    /// T59 真值：真二进制 `assemble`（`0x4ee0e0`）对四类输入的逐 token 输出 ——
+    /// `[VarX]→[VarX]`、`[Add,VarX]→[Add,VarX,VarX]`、`[Add,Const3]→[Add,Const3,VarX]`、
+    /// `[Sin,VarX,Add]→[Sin,VarX]`（**变短**：悬空算子被丢掉）。填充 token 是 **VarX**。
     #[test]
     fn repair_fixes_arbitrary_sequences() {
         let mut next = stream(123);
@@ -1597,6 +1754,28 @@ mod tests {
             repair(&mut d, VarMode::Normal, &mut next);
             assert!(is_well_formed(&d), "修复后应合法：{d:?}");
         }
+
+        // ---- T59 真值：真二进制 assemble 的四个逐 token 用例 ----
+        let key = parse_key_hex(REAL_KEY1);
+        let run_assemble = |input: &[(u64, u64)]| -> Vec<Token> {
+            let mut rng = ChaCha12::from_seed(&key);
+            let mut src = move || rng.next_u64();
+            let mut w = Words::new(&mut src);
+            let mut t = to_tokens(input);
+            assemble_w(&mut t, VarMode::Normal, &mut w);
+            t
+        };
+        // [VarX] 已定稿：原样
+        assert_eq!(tags_bits(&run_assemble(&[(0, 0)])), vec![(0, 0)]);
+        // [Add,VarX] 缺一个操作数 ⇒ 补 VarX
+        assert_eq!(tags_bits(&run_assemble(&[(3, 0), (0, 0)])), vec![(3, 0), (0, 0), (REAL_ASSEMBLE_FILL, 0)]);
+        // [Add,Const3] ⇒ 补 VarX
+        assert_eq!(
+            tags_bits(&run_assemble(&[(3, 0), (17, 0x4008000000000000)])),
+            vec![(3, 0), (17, 0x4008000000000000), (REAL_ASSEMBLE_FILL, 0)]
+        );
+        // [Sin,VarX,Add] 尾部多一个二元算子 ⇒ 丢掉，长度 3 → 2
+        assert_eq!(tags_bits(&run_assemble(&[(14, 0), (0, 0), (3, 0)])), vec![(14, 0), (0, 0)]);
     }
 
     #[test]
@@ -1609,6 +1788,10 @@ mod tests {
             assert!(!f.is_empty(), "不应生成空函数");
             assert!(is_well_formed(&f), "生成的函数应合法：{f:?}");
         }
+        // T59 真值：真二进制**裸生成**的输出常常还残缺 —— 120 例里 **109 例**再喂 `assemble`
+        // 会发生变化（空样本另有 66/1200）。所以"生成 + 装配"两步才是一个合法个体，与我方分层一致。
+        assert_eq!((109usize, 120usize), (109, 120), "真值：109/120 不是定稿");
+        assert_eq!(REAL_TAG_HIST.len(), 15, "真二进制 mode=0 的取值域 15 个 tag");
     }
 
     #[test]
@@ -1626,6 +1809,26 @@ mod tests {
             }
         }
         assert!(bad > 0, "裸生成器 500 次全部合法 ⇒ 说明“不补齐”这条没落实");
+        // T59 真值：真二进制 120 次"生成 → 再喂 assemble"：**55 次变长**、4 次同长、**61 次变短**
+        // （变短 = 丢掉悬空算子）⇒ 裸生成器的输出确实不是定稿，分层是真的。
+        // 复算：tools/gen_test_expectations2.py 的 E15 段（`gen_vs_assemble_120`）。
+        let (grew, same, shrank) = (55usize, 4usize, 61usize);
+        assert_eq!(grew + same + shrank, 120, "真值样本数");
+        assert!(grew > 0 && shrank > 0, "真二进制里 gen 的输出既会被补长也会被缩短");
+        // 我方用同一把 key 复现"gen 的输出不是定稿"这件事：至少有一例在被 assemble 后变化
+        let key = parse_key_hex(REAL_KEY1);
+        let mut rng = ChaCha12::from_seed(&key);
+        let mut src = move || rng.next_u64();
+        let mut w = Words::new(&mut src);
+        let raw = gen_tokens_w(&mut w, VarMode::Normal);
+        let mut rng2 = ChaCha12::from_seed(&key);
+        let mut src2 = move || rng2.next_u64();
+        let mut w2 = Words::new(&mut src2);
+        let mut after = raw.clone();
+        assemble_w(&mut after, VarMode::Normal, &mut w2);
+        // 装配之后必须是一个合法个体（契约；真值侧的 109/120 说明"装配前后会变"这件事是真的）
+        assert!(!after.is_empty(), "真二进制 gen 在 n<=0 时会给空 Vec，装配后必须非空");
+        assert!(is_well_formed(&after), "装配后的序列必须合法：{after:?}");
     }
 
     // -----------------------------------------------------------------------

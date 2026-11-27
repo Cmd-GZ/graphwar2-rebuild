@@ -1,0 +1,150 @@
+section	key	value	source	note
+corpus	names_sha256	c3325c0b72402085c8c89a90b62441e753bd4be5fb1e871985bdf78938703907	冻结语料 403 份快照（fixtures/guardrails.json corpus）	文件名集合指纹（与 guardrails.json corpus.names_sha256 同口径）
+L11	Timer1m	n=108 median=3600 p1=3588 p99=3617	冻结语料 403 份快照（fixtures/guardrails.json corpus）	end_of_turn_tick − 记录 tick；抖动来自收包时钟（60 tick/s ⇒ 20 tick = 0.33 s）
+L11	Timer2m	n=137 median=7204 p1=7159 p99=7271	冻结语料 403 份快照（fixtures/guardrails.json corpus）	end_of_turn_tick − 记录 tick；抖动来自收包时钟（60 tick/s ⇒ 20 tick = 0.33 s）
+L11	Timer30s	n=6 median=1803 p1=1792 p99=1813	冻结语料 403 份快照（fixtures/guardrails.json corpus）	end_of_turn_tick − 记录 tick；抖动来自收包时钟（60 tick/s ⇒ 20 tick = 0.33 s）
+L11	Timer3m	n=9 median=10801 p1=10791 p99=10814	冻结语料 403 份快照（fixtures/guardrails.json corpus）	end_of_turn_tick − 记录 tick；抖动来自收包时钟（60 tick/s ⇒ 20 tick = 0.33 s）
+L11	TimerInf	end_of_turn_tick set=[0] n=893	冻结语料 403 份快照（fixtures/guardrails.json corpus）	无限时档的真值就是哨兵 0
+L11	modes_seen	Timer1m,Timer2m,Timer30s,Timer3m,TimerInf	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L11	end_of_turn_mode_not_authoritative	{"TimerInf|TimerInf": 893, "Timer1m|Timer1m": 108, "None|Timer1m": 67, "Timer2m|Timer1m": 137, "None|TimerInf": 14, "Timer3m|Timer1m": 9, "Timer30s|Timer1m": 6}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	EndOfTurnInfo.time_mode 只出现 Timer1m/TimerInf（陈旧字段）；真档位看 TimeModeInfo
+L11	tick_rate	60	冻结语料 403 份快照（fixtures/guardrails.json corpus）	60 s 档 = 3600 tick（上式 median）⇒ 1 s = 60 tick
+L12	timeout_count	15	冻结语料 403 份快照（fixtures/guardrails.json corpus）	FunctionFire.tick >= end_of_turn_tick
+L12	sample:1782642582	fire=34591 deadline=34591 delta=0 soldier=153655	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782673653	fire=28972 deadline=28967 delta=5 soldier=401165	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782673653	fire=54968 deadline=54968 delta=0 soldier=401152	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782673653	fire=63191 deadline=63191 delta=0 soldier=401062	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782673653	fire=70558 deadline=70557 delta=1 soldier=401152	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782676871	fire=26828 deadline=26828 delta=0 soldier=404840	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782927763	fire=59437 deadline=59416 delta=21 soldier=83330	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L12	sample:1782927763	fire=59437 deadline=59416 delta=21 soldier=83464	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L16	files_with_2+_timeouts	1782673653:4,1782927763:2,1782927966:3,1783429569:2	冻结语料 403 份快照（fixtures/guardrails.json corpus）	同一局内多次超时 ⇒ 闩每回合清
+L14	timerinf_files	234	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L14	timerinf_timeouts	0	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L14	timerinf_deadline_zero	True	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L15	eot_absolute	yes	冻结语料 403 份快照（fixtures/guardrails.json corpus）	end_of_turn_tick 与记录 tick 同基数（60 s 档差 ≈ 3600）
+L05	batches_total	1089	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L05	batches_with_deaths	380	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L05	death_before_all_explosions	299	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L05	death_after_all_explosions	0	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L02	death_ticks_monotone_in_event_order	196	冻结语料 403 份快照（fixtures/guardrails.json corpus）	含 ≥2 条死亡特效的批里 start_tick 单调不减的批数
+L02	batches_with_2+_deaths	198	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L06	batches_with_dup_death_pos	2	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L06	dup_death_batch_files	1782677734,1783011370	冻结语料 403 份快照（fixtures/guardrails.json corpus）	例外：真语料里同一位置/同一 start_tick 的死亡特效会重复广播（协议层重播），不是我方闩能挡的
+L06	entities_with_multiple_lifeinfo_false	339	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L07	death_effect_types	{"AshEffect": 363, "DeathEffect": 463, "SparkEffect": 54}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L01	death_minus_active_n	880	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L01	death_minus_active_min	-60	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L01	death_minus_active_samples	-60,-60,-46,-46,10,10,13,13,16,19	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L01	death_minus_active_negative	4	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L01	death_before_active_files	1783011370	冻结语料 403 份快照（fixtures/guardrails.json corpus）	例外：批首两次 FunctionActive 之间夹着上一阶段排队的死亡特效
+L03	explosion_minus_active_n	2120	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L03	explosion_minus_active_min	0	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L03	explosion_minus_active_median	161	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L08	turn_count_per_batch	{"0": 19, "1": 1070}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	0 = 末批（没有下一个回合）
+L09	files_with_turn_counts	381	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L09	files_first_turn_count_zero	381	冻结语料 403 份快照（fixtures/guardrails.json corpus）	其余是中途开始录的回放（首个 TurnCountInfo 已 > 0）
+L10	batches_boundary	GameStateInfo CalculatingResults → WaitingForFunctions/EndingGame	冻结语料 403 份快照（fixtures/guardrails.json corpus）	整段窗口内没有结算事件落在窗口外
+G04	time_mode_domain	Timer1m,Timer2m,Timer30s,Timer3m,Timer5m,TimerInf	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G04	time_mode_counts	{"Timer1m": 343, "Timer2m": 191, "Timer30s": 11, "Timer3m": 28, "Timer5m": 22, "TimerInf": 472}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G04	function_mode_domain	DiffEqFunction,NormalFunction	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G04	function_mode_counts	{"DiffEqFunction": 320, "NormalFunction": 550}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G02	diffeq_final_function_info	550	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G02	diffeq_corrected_equals_function	550	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G02	diffeq_corrected_differs	0	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D06	normal_suffix_ok	728	冻结语料 403 份快照（fixtures/guardrails.json corpus）	corrected_function == function + 「 ± c.ddd」
+D06	normal_suffix_exceptions	9	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D06	sample:1782642986	function_tail='5/155sin(4exp(4*6cos(' corrected='5/155sin(4exp(4*6cos())) + 6.055'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D06	sample:1782674896	function_tail='sin(abs(cos(7' corrected='sin(abs(cos(7))) + 5.284'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D06	sample:1782676398	function_tail='(100*(x-7.5)^2))-2.5/(1+exp(-100*(x-12))' corrected='p(100*(x-7.5)^2))-2.5/(1+exp(-100*(x-12))) + 0.820'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D06	sample:1782927763	function_tail='9(x-6))^2)-5/(1+(999(x-5.5))^2)-e^(999(x' corrected='9(x-6))^2)-5/(1+(999(x-5.5))^2)-e^(999(x)) + 3.241'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D07	unbalanced_final_functions	19	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D07	sample:1782642986	function='5/155sin(4exp(4*6cos(' corrected='5/155sin(4exp(4*6cos())) + 6.055'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D07	sample:1782674696	function='9/(1+exp(-999(x+1)))+sqrt(4.1-(abs(x)-abs(x-2))^2)' corrected='9/(1+exp(-999(x+1)))+sqrt(4.1-(abs(x)-abs(x-2))^2)/2))+sqrt(4.1-(abs(x'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D07	sample:1782674896	function='3.5/(1+exp(-999(x)))-10/(1+(999(x-2.5))^2)+sqrt(4.' corrected='3.5/(1+exp(-999(x)))-10/(1+(999(x-2.5))^2)+sqrt(4.1-(abs(x-10)-abs(x-1'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D07	sample:1782674896	function='sin(abs(cos(7' corrected='sin(abs(cos(7))) + 5.284'	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G07	batches_with_destroy	294	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G07	destroy_minus_batch_tick	n=503 min=69 median=205	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G11	destroy_order	batch 内 DestroyObstacle 按事件顺序，逐批见 D/* 真批常量	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G10	batch_kind_sequences	{"FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect": 564, "FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect+DeathEffect": 222, "FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect+DeathEffect+DestroyObstacle": 158, "FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect+DestroyObstacle": 136, "": 8, "FunctionInfo+FunctionPoints": 1}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G09	explosion_pos_x_equals_end_x	1050/1291	冻结语料 403 份快照（fixtures/guardrails.json corpus）	真批里 ExplosionEffect.pos_x == FunctionPoints.end_x 逐位相同的比例
+G09	explosion_pos_x_within_1e-4	1179/1291	冻结语料 403 份快照（fixtures/guardrails.json corpus）	其余差异全在末位舍入（同一个点的两种算法）
+D02	explosion_matches_end_pair	1050	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+D01	batch_replay_1782641987_lines	{"event":{"GameStateInfo":{"game_state":"CalculatingResults"}},"tick":34868} | {"event":{"FunctionInfo":{"owner_id":367851,"function":"-0.2(x-4)^2","corrected_function":"-0.2(x-4)^2 + 13.946"}},"tick":34868} | {"event":{"FunctionPoints":{"owner_id":367851,"start_x":-5.729737121010749,"start_y":-4.9876019520296015,"end_x":4.354012878988948}},"tick":34868} | {"event":{"GameStateInfo":{"game_state":"SynchronizingResults"}},"tick":34868} | {"event":{"FunctionActive":{"owner_id":367851,"active_tick":34983}},"tick":34919} | {"event":{"EffectInfo":{"effect_id":367967,"pos_x":4.354012878988948,"pos_y":13.920934976301991,"effect_type":"ExplosionEffect","start_tick":35058}},"tick":34919} | {"event":{"GameStateInfo":{"game_state":"ExecutingResults"}},"tick":34919} | {"event":{"DestroyObstacle":{"pos_x":4.354012878988948,"pos_y":13.920934976301991,"radius":0.5}},"tick":35058} | {"event":{"TurnCountInfo":{"turn_count":1}},"tick":35116} | {"event":{"TurnInfo":{"player_id":367942,"soldier_id":367944}},"tick":35116} | {"event":{"EndOfTurnInfo":{"end_of_turn_tick":38718,"time_mode":"Timer1m"}},"tick":35116}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G13	single_shooter_batches	950	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+G13	single_shooter_self_kill	0	冻结语料 403 份快照（fixtures/guardrails.json corpus）	单射手批里射手 id 出现在死亡集合的次数（应 0）
+L18	bot_names	Agent Smith,Alpha Zordon,ChatGPT,Cleverbot,Deep Blue,Deep Thought,HAL,Mimicker Bot,Multivac,Skynet,Wolfram	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_entities_n	176	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_soldiers_n	628	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_fire_delay_n	397	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_fire_delay_min	4	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_fire_delay_p10	18	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_fire_delay_median	285	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L18	bot_fire_delay_max	182723	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L20	bot_function_n	394	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L20	bot_function_shapes	{"other": 113, "line_mx": 281}	冻结语料 403 份快照（fixtures/guardrails.json corpus）	bot 实际发出的函数形状（是否 m*x 一条直线）
+L20	sample	(-11.812)*(1/((1+exp(-42*(x-(-20))))*(1+exp(42*(x-(25))))))+(-8)*(1/((1+exp(-42*(x-(-10))))*(1+exp(42*(x-(10))	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L20	sample	-11.54	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L20	sample	(0.43*x)	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L20	sample	(x/-7.96)	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+L20	sample	sin(x)	冻结语料 403 份快照（fixtures/guardrails.json corpus）	
+B	fixture_sha256	97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B04	session_kinds	GameNameRequest,NewConnectionRequest,NewPlayerRequest,TickRequest,NameRequest,NameRequest,SkinGraphicsRequest,SkinGraphicsRequest,FaceGraphicsRequest,FaceGraphicsRequest,HatGraphicsRequest,HatGraphicsRequest,RankRequest,RankRequest,NewBotRequest,TimeModeChangeRequest	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	抓包会话前 16 帧的事件名（顺序即真值）
+B04	frame_count	86	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B01	GameInfo_frame	{"GameInfo":{"game_info":{"room_name":"US Room 2","game_state":"ExecutingResults","current_player_count":2,"address":"69.164.213.144:35981","axis_mode":"EveryUnit","function_mode":"NormalFunction","turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}}}	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B01	GameInfo_keys	game_info	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B03	VersionInfo_frame	{"VersionInfo":{"version":"2.0.60","system":"linux"}}	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B03	VersionInfo_keys	version,system	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B02	GameNameInfo_frame	{"GameNameInfo":{"game_name":"Graphwar Game"}}	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B02	GameNameInfo_keys	game_name	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B02	GameNameRequest_frame	{"GameNameRequest":{"game_name":"Graphwar Game"}}	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B02	GameNameRequest_keys	game_name	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B02	NewConnectionRequest_frame	{"NewConnectionRequest":{"major_version":"2.0","minor_version":"60"}}	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B02	NewConnectionRequest_keys	major_version,minor_version	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B06	room_record	{"room_name":"Graphwar Game","game_state":"Setup","current_player_count":1,"address":"[::1]:43717","axis_mode":"EveryUnit","function_mode":"NormalFunction","turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B06	room_record_keys	room_name,game_state,current_player_count,address,axis_mode,function_mode,turn_mode,time_mode,locked	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	
+B05	raw_frame_available	no	真实抓包 fixtures/protocol_match.jsonl sha256=97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35	fixtures 里只有解析后文本（capture_net.js 口径）；u16 大端长度前缀无原始字节样本 ⇒ 该条降为推断
+V	draws_count	120	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V	obstacles_count	13	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V03	radius_min	0.8	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V03	radius_max	5.156226615041793	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V03	radius_mean	2.508600	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V03	radius_at_floor_0.8	3	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	真实数据里半径正好 0.8 的个数（半径下限夹紧）
+V03	x_range	[-30.571033, 13.583360]	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V03	y_range	[-17.606614, 17.887018]	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V04	obstacle_at_origin	0	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V08	radius_sorted_head	0.800000,0.800000,0.800000,0.926652,1.687054,2.126679	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V08	radius_sorted_tail	3.190174,4.360170,4.644464,5.156227	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V09	obstacle_count	13	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	一次真实运行的障碍数（散布式）
+V01	first_draw	ec314bbc4e794bcb	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V01	draws_head	ec314bbc4e794bcb,5ecce33a438ba917,6aab5aa6d1506f1b,694103e889f087ba	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	
+V06	draw_consumption	3 + 2*13 = 29	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	关卡生成从第 3 个随机数开始（docs/56），散布式每个障碍 2 个随机数
+V02	obstacle_bits_sha256	a3568ab3bad30fe6dedb8137fd4a3900c3f51054ad652dd335ae133814f94885	真实抓包 levelgen_draws.txt sha256=ca2620cb22c7492ba5debd70a0427289e77075c7c6b91c1f2eae0cdf58408aa1 / levelgen_obstacles.txt sha256=5356a931de96250fd54d9f6c9bd0fc155738f90db1c53099d6e945397660dbbf	13 个障碍 × (x,y,r) 的 IEEE754 位型串 sha256（测试里逐值比，这里只登记指纹）
+E	key1_hex	25303b46515c67727d88939ea9b4bfcad5e0ebf6010c17222d38434e59646f7a	unicorn 直调真二进制 mutate/gen 用例的统一 key（32 B ChaCha key）	
+E06	mutate_op_only	3:0000000000000000,14:0000000000000000	unicorn 直调真二进制 0x4ee720 输入 [Add,Sin]	
+E07	mutate_vary	3:403b458e13264d43,17:403b458e13264d43,1:0000000000000000	unicorn 直调真二进制 0x4ee720 输入 [VarY]	
+E10	mutate_varx	3:403b458e13264d43,17:403b458e13264d43,0:0000000000000000	unicorn 直调真二进制 0x4ee720 输入 [VarX]	
+E08	mutate_const_changed_of_200	200	unicorn 直调真二进制 0x4ee720 输入 [Const(3.0)]，key=key_of(i)	
+E08	mutate_const_samples	17:3ffff3e6d2c8a621 | 17:bff3473fb276c8bb | 17:400172ecdd311499	unicorn 直调真二进制	
+E09	mutate_rounds_const_bits	bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb,bff3473fb276c8bb	unicorn 直调真二进制 0x4ee720 连喂 40 轮（每轮换 key：run_binary 每次新建 emulator，同 key 会重放同一条流）	
+E11	mutate_rounds_lens	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1	unicorn 直调真二进制 0x4ee720 连喂 40 轮的长度序列	
+E02	gen_calls	1200	unicorn 直调真二进制 0x4ef020 mode=0，key=key_of(i)	
+E02	gen_tokens_total	11351	unicorn 直调真二进制	
+E02	gen_tag_histogram	{"0": 1255, "3": 1364, "4": 656, "6": 1391, "7": 941, "8": 192, "9": 151, "10": 112, "11": 132, "12": 838, "13": 997, "14": 1026, "15": 677, "16": 116, "17": 1503}	unicorn 直调真二进制	
+E03	gen_tag_domain	0,3,4,6,7,8,9,10,11,12,13,14,15,16,17	unicorn 直调真二进制	
+E03	gen_forbidden_tags	{}	unicorn 直调真二进制 真二进制 mode=0 里不该出现的 tag（VarY/VarDy/UnaryMinus/括号）—— 实测为空	
+E04	gen_len_mean	9.4592	unicorn 直调真二进制 含 0 长度的样本（n<=0 直接空 Vec）	
+E04	gen_len_nonzero_mean	10.0097	unicorn 直调真二进制	
+E04	gen_len_min	0	unicorn 直调真二进制	
+E04	gen_len_max	24	unicorn 直调真二进制	
+E05	gen_const_count	1503	unicorn 直调真二进制	
+E14	gen_empty_of_120	66	unicorn 直调真二进制 裸生成器在 n<=0 时直接返回空 Vec（1200 次里的空样本数）	
+E12	gen_not_final_of_120	109	unicorn 直调真二进制 gen 的输出再喂 assemble 会变（长度或 token）的例数 ⇒ 裸生成器不补齐，分层可观测	
+E12	gen_final_of_120	11	unicorn 直调真二进制	
+E13	assemble_case0	in=[0:0000000000000000] out=[0:0000000000000000]	unicorn 直调真二进制	
+E13	assemble_case1	in=[3:0000000000000000,0:0000000000000000] out=[3:0000000000000000,0:0000000000000000,0:0000000000000000]	unicorn 直调真二进制	
+E13	assemble_case2	in=[3:0000000000000000,17:4008000000000000] out=[3:0000000000000000,17:4008000000000000,0:0000000000000000]	unicorn 直调真二进制	
+E13	assemble_case3	in=[14:0000000000000000,0:0000000000000000,3:0000000000000000] out=[14:0000000000000000,0:0000000000000000]	unicorn 直调真二进制	
+E15	gen_vs_assemble_120	grew=55 same=4 shrank=61	unicorn 直调真二进制 0x4ef020 的输出再喂 0x4ee0e0：变长 = 补齐；变短 = 丢掉悬空算子	
+E01	histogram_source	E02/gen_tag_histogram（真二进制 1200 次调用 / 11351 token）	unicorn 直调真二进制	
+E01	implied_weights	{"17": 11.255, "6": 10.416, "3": 10.214, "0": 9.398, "14": 7.683, "13": 7.466, "7": 7.047, "12": 6.275, "15": 5.07, "4": 4.912, "8": 1.438, "9": 1.131, "11": 0.988, "16": 0.869, "10": 0.839}	unicorn 直调真二进制 真二进制直方图折成 85 分母的隐含权重（与 table() 比）	
+E01	implied_weight_sum	85.000	unicorn 直调真二进制	
