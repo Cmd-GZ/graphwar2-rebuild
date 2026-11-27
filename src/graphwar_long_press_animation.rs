@@ -929,9 +929,374 @@ impl GraphwarLongPressAnimation {
 // 单测（**不碰引擎**：只钉住「本类用的是哪份常量/算式」）
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// T80. gdext 登记存储 / 注册驱动 / `__init::__inner_init`（本轮落码的 6 条宏产物）
+// ---------------------------------------------------------------------------
+//
+// 这 6 条是 `GraphwarLongPressAnimation` 的**宏产物**：源码层对应物是 `#[derive(GodotClass)]` /
+// `#[godot_api]` 属性，不是手写 fn（`tools/function_coverage.py` 的 R3 判法）。本仓把每条
+// **机器函数**落成一个 fn：文档给该机器函数的 FDE / `panic::Location` / `.data` 静态槽 /
+// 重定位槽 / 调用链，函数体复述它的**可观测动作**（遍历登记表 / 依次调用胶水）。
+// 台账：`fixtures/f3_rest_anchors.tsv`；审计：`docs/06` §122。
+//
+// ## `__registration_storage::STORAGE`（arm64 每类一份 56 B）
+//
+// arm64 `.symtab`：`GraphwarLongPressAnimation::__registration_storage::STORAGE` @ arm64 `0x8b4330`
+// （56 B；`tools/arm64_sym.py find __registration_storage` 共 12 份，每类一份）。
+// x86 侧同构的 `.data` 静态块（**观测**：每条地址都是本节某条指令的 rip 目标）：
+//
+// | 偏移 | x86 地址 | 读者 | 语义 |
+// |---|---|---|---|
+// | +0x00 | `0x9c0eb8` | 两条注册驱动的 `lock cmpxchg` / `xchg` | 状态字（原子） |
+// | +0x04 | `0x9c0ebc` | `movzx` 读 / `mov byte,1` 写 | poison 字节 |
+// | +0x10 | `0x9c0ec8` | `__register_methods` | 表 A 指针 |
+// | +0x18 | `0x9c0ed0` | `__register_methods` | 表 A 长度 |
+// | +0x20 | `0x9c0ed8` | 读全 8 槽那条 `__init::__inner_init` | 未定 |
+// | +0x28 | `0x9c0ee0` | `__register_constants` | 表 B 指针 |
+// | +0x30 | `0x9c0ee8` | `__register_constants` | 表 B 长度 |
+//
+// ⚠️ `.data` 初值（直接读 ELF）：`[0x9c0ec8]` = **8**、`[0x9c0ed0]` = **0**、
+// `[0x9c0ee0]` = **8**、`[0x9c0ee8]` = **0** ⇒ 指针初值不是合法指针、长度初值为 0 ⇒ **静态初值下循环不执行**；表在运行期被填充（填充者未知）。
+// 表的**填充者未知**（`UNKNOWNS` 里有这一条；缺运行时观测）。
+//
+// ## 两条注册驱动的名字 = **推断**；体 = 观测
+//
+// 它们被**同一个 3 指令 thunk** 依次取用：`0x40e660`: `push rax` /
+// `call *0x9bb610` / `pop rax` / `jmp *0x9bb618` ⇒ A 先于 B。
+// arm64 `.symtab` 每类恰好两条 `ImplementsGodotApi::__register_methods` /
+// `::__register_constants`（各 400 B，methods 地址更低）；Windows 2.0.60 COFF 同名两条
+// （`fixtures/windows_name_to_addr.tsv`，`无一对一锚`）。⇒ A = `__register_methods`、
+// B = `__register_constants`。**顺序是观测，名字本身仍是推断**（缺 gdext 版本的 trait 声明序）。
+
+/// 表 A 的两个 `.data` 槽：`(指针, 长度)` —— `__register_methods` 读它们。
+pub const REGISTER_METHODS_TABLE_SLOTS: (u64, u64) = (0x9c0ec8, 0x9c0ed0);
+/// 表 B 的两个 `.data` 槽：`(指针, 长度)` —— `__register_constants` 读它们。
+pub const REGISTER_CONSTANTS_TABLE_SLOTS: (u64, u64) = (0x9c0ee0, 0x9c0ee8);
+/// 依次取用这两条注册驱动的 thunk：`push rax` / `call *A` / `pop rax` / `jmp *B`。
+pub const REGISTER_THUNK: u64 = 0x40e660;
+/// 两条注册驱动在重定位表里的槽（A = methods，B = constants）。
+pub const REGISTER_SLOTS: (u64, u64) = (0x9bb610, 0x9bb618);
+
+/// 一条 gdext 胶水 / 引擎调用（原版 `call` 指令）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlueCall {
+    /// 调用点（vaddr）。
+    pub site: u64,
+    /// 被调者（vaddr）；间接调用时是重定位槽的 addend。
+    pub target: u64,
+    /// 间接调用经过的重定位槽（直接 `call rel32` 时为 0）。
+    pub slot: u64,
+}
+
+/// gdext 胶水的宿主：原版每条 `call` 直接落到引擎 / gdext；本仓把它抽象成一个动作。
+pub trait GlueHost {
+    /// 执行一条调用。
+    fn call(&mut self, c: GlueCall);
+}
+
+/// 按地址顺序把该机器函数 FDE 内**全部** `call` 指令交给宿主，返回条数。
+///
+/// ⚠️ 清单是**普查**（census）：panic 冷臂、drop、全局构造的调用**都在里面**。
+/// 「哪几条属于直线路径」本轮没做控制流分析 ⇒ 清单**不是**执行序列（档位：清单=观测，
+/// 直线划分=未知）。
+pub fn replay_calls(calls: &[GlueCall], host: &mut dyn GlueHost) -> usize {
+    for c in calls {
+        host.call(*c);
+    }
+    calls.len()
+}
+
+/// 遍历一张「登记项表」并逐项调用，返回条数。
+///
+/// 原版的表是 `(ptr,len)` 两个静态槽（见本节 `STORAGE` 表）；这里把它作为参数表达 ——
+/// 本仓没有「gdext 全局登记存储」这一层（宏产物，见 `AGENTS.md` §4）。
+pub fn run_register_table(table: &[fn()]) -> usize {
+    for f in table {
+        f();
+    }
+    table.len()
+}
+
+/// `0x4d7bc0` —— `GraphwarLongPressAnimation::__register_methods`（**名字推断**，**体观测**）
+///
+/// FDE `0x4d7bc0..0x4d7d39`（`0x179` = 377 B）；`panic::Location` = `src/graphwar_long_press_animation.rs:17:1`。
+/// 重定位槽 `0x9bb610`（同一 thunk 的 A 半）。
+///
+/// ```text
+/// 0x4d7bd4  lock cmpxchg dword ptr [rip + 0x4e92dc], ecx  @0x9c0eb8 (<bin 0000000000000000>)
+/// 0x4d7bfa  movzx   eax, byte ptr [rip + 0x4e92bb]   @0x9c0ebc (<bin 0000000000000000>)
+/// 0x4d7c09  mov     r15, qword ptr [rip + 0x4e92c0]  @0x9c0ed0 (<bin 0000000000000000>)
+/// 0x4d7c15  mov     r12, qword ptr [rip + 0x4e92ac]  @0x9c0ec8 (<bin 0800000000000000>)
+/// 0x4d7c30  call    qword ptr [r12 + r13]
+/// 0x4d7c41  movabs  rax, 0x7fffffffffffffff          imm=0x7fffffffffffffff
+/// 0x4d7c59  xchg    dword ptr [rip + 0x4e9259], eax  @0x9c0eb8 (<bin 0000000000000000>)
+/// 0x4d7cfa  mov     byte ptr [rip + 0x4e91bb], 1     @0x9c0ebc (<bin 0000000000000000>)
+/// ```
+///
+/// 状态机（逐条在上面）：抢状态字 → poison 字节检查 → **遍历表 A**（`call *(%r12,%r13)`，步长 8）
+/// → `xchg` 释放（老值 == 2 走唤醒）→ poison 时置字节 1；poison 后再进入走
+/// `Result::unwrap()` 的 Err 臂（panic 面 `0x1c3b13`）。
+///
+/// 落码：只落「逐项遍历登记表」这一步（状态机 / 唤醒 / poison panic 在本仓没有对应层，
+/// 见本节文档与 `UNKNOWNS`）。档位：**观测**（体）+ **推断**（名）。
+pub fn register_methods(table: &[fn()]) -> usize {
+    // 0x4d7bc0 本函数起点；FDE 0x4d7bc0..0x4d7d39（377 B）
+    // 0x4d7c30  call qword ptr [r12 + r13]   ← 本行模型：逐项调用表 A
+    run_register_table(table)
+}
+
+/// `0x4d7d40` —— `GraphwarLongPressAnimation::__register_constants`（**名字推断**，**体观测**）
+///
+/// 与 [`register_methods`] **逐指令同形**，唯一差别 = 读的是**表 B**
+/// （`0x9c0ee0` 指针 / `0x9c0ee8` 长度）。FDE `0x4d7d40..0x4d7eb9`
+/// （`0x179` = 377 B）；`panic::Location` = `src/graphwar_long_press_animation.rs:17:1`；重定位槽 `0x9bb618`。
+/// 档位：**观测**（体）+ **推断**（名）。
+pub fn register_constants(table: &[fn()]) -> usize {
+    // 0x4d7d40 本函数起点；FDE 0x4d7d40..0x4d7eb9（377 B）
+    // 与 register_methods 同形：表 B 的指针/长度 = 0x9c0ee0 / 0x9c0ee8
+    run_register_table(table)
+}
+
+/// `0x4bd650` —— `GraphwarLongPressAnimation` 的 `_::__init::__inner_init`（Location `17:1`）
+///
+/// FDE `0x4bd650..0x4bd7f6`（`0x1a6` = 422 B）；重定位槽 `0x9ba2a0`
+/// （该类 4 个 `__init::__inner_init` 落在连续 4 槽里，见本节文档头）。
+/// 名字 / 归属：**推断**（4 槽连续 + arm64 每类 4 个同名符号；缺 gdext vtable 槽序对齐）。
+///
+/// 调用链（顺序 = 指令顺序，逐条见 [`INNER_INIT_L17A_CALLS`]）：
+/// * `0x4bd6bd` `call 0x460bb0`（槽 0x9baaf0）
+/// * `0x4bd734` `call 0x8f5cc0`（槽 0x9ba9c8）
+/// * `0x4bd73f` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4bd77c` `call 0x925430`（槽 0x9ba678）
+/// * `0x4bd78b` `call 0x4ff9bd`
+/// * `0x4bd79c` `call 0x8f5db0`（槽 0x9ba9d8）
+/// * `0x4bd7a7` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4bd7bf` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bd7c5` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bd7d5` `call 0x4da1e0`
+/// * `0x4bd7dc` `call 0x9254ab`（槽 0x9ba5b8）
+/// * `0x4bd7e5` `call 0x4da440`
+/// * `0x4bd7ea` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bd7f0` `call 0x9254ab`（槽 0x9ba5b8）
+///
+/// 档位：**观测**（体：FDE + 槽 + 每条 `call`）。
+pub fn inner_init_l17a(host: &mut dyn GlueHost) -> usize {
+    // 0x4bd650 本函数起点；FDE 0x4bd650..0x4bd7f6（422 B）
+    replay_calls(INNER_INIT_L17A_CALLS, host)
+}
+
+pub const INNER_INIT_L17A_CALLS: &[GlueCall] = &[
+    // 0x4bd6bd: call 0x460bb0（经槽 0x9baaf0）
+    GlueCall { site: 0x4bd6bd, target: 0x460bb0, slot: 0x9baaf0 },
+    // 0x4bd734: call 0x8f5cc0（经槽 0x9ba9c8）
+    GlueCall { site: 0x4bd734, target: 0x8f5cc0, slot: 0x9ba9c8 },
+    // 0x4bd73f: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4bd73f, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4bd77c: call 0x925430（经槽 0x9ba678）
+    GlueCall { site: 0x4bd77c, target: 0x925430, slot: 0x9ba678 },
+    // 0x4bd78b: call 0x4ff9bd（直接）
+    GlueCall { site: 0x4bd78b, target: 0x4ff9bd, slot: 0x0 },
+    // 0x4bd79c: call 0x8f5db0（经槽 0x9ba9d8）
+    GlueCall { site: 0x4bd79c, target: 0x8f5db0, slot: 0x9ba9d8 },
+    // 0x4bd7a7: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4bd7a7, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4bd7bf: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bd7bf, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bd7c5: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bd7c5, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bd7d5: call 0x4da1e0（直接）
+    GlueCall { site: 0x4bd7d5, target: 0x4da1e0, slot: 0x0 },
+    // 0x4bd7dc: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4bd7dc, target: 0x9254ab, slot: 0x9ba5b8 },
+    // 0x4bd7e5: call 0x4da440（直接）
+    GlueCall { site: 0x4bd7e5, target: 0x4da440, slot: 0x0 },
+    // 0x4bd7ea: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bd7ea, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bd7f0: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4bd7f0, target: 0x9254ab, slot: 0x9ba5b8 },
+];
+
+/// `0x4bd800` —— `GraphwarLongPressAnimation` 的 `_::__init::__inner_init`（Location `31:1`）
+///
+/// FDE `0x4bd800..0x4bda4f`（`0x24f` = 591 B）；重定位槽 `0x9ba298`
+/// （该类 4 个 `__init::__inner_init` 落在连续 4 槽里，见本节文档头）。
+/// 名字 / Location：**观测**（`fixtures/windows_name_to_addr.tsv` 的 `唯一锚`）。
+///
+/// 调用链（顺序 = 指令顺序，逐条见 [`INNER_INIT_L31_CALLS`]）：
+/// * `0x4bd8cc` `call 0x460bb0`（槽 0x9baaf0）
+/// * `0x4bd98d` `call 0x8f5cc0`（槽 0x9ba9c8）
+/// * `0x4bd998` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4bd9d5` `call 0x925430`（槽 0x9ba678）
+/// * `0x4bd9e4` `call 0x4ff9bd`
+/// * `0x4bd9f5` `call 0x8f5db0`（槽 0x9ba9d8）
+/// * `0x4bda00` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4bda18` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bda1e` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bda2e` `call 0x4da1e0`
+/// * `0x4bda35` `call 0x9254ab`（槽 0x9ba5b8）
+/// * `0x4bda3e` `call 0x4da440`
+/// * `0x4bda43` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bda49` `call 0x9254ab`（槽 0x9ba5b8）
+///
+/// 档位：**观测**（体：FDE + 槽 + 每条 `call`）。
+pub fn inner_init_l31(host: &mut dyn GlueHost) -> usize {
+    // 0x4bd800 本函数起点；FDE 0x4bd800..0x4bda4f（591 B）
+    replay_calls(INNER_INIT_L31_CALLS, host)
+}
+
+pub const INNER_INIT_L31_CALLS: &[GlueCall] = &[
+    // 0x4bd8cc: call 0x460bb0（经槽 0x9baaf0）
+    GlueCall { site: 0x4bd8cc, target: 0x460bb0, slot: 0x9baaf0 },
+    // 0x4bd98d: call 0x8f5cc0（经槽 0x9ba9c8）
+    GlueCall { site: 0x4bd98d, target: 0x8f5cc0, slot: 0x9ba9c8 },
+    // 0x4bd998: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4bd998, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4bd9d5: call 0x925430（经槽 0x9ba678）
+    GlueCall { site: 0x4bd9d5, target: 0x925430, slot: 0x9ba678 },
+    // 0x4bd9e4: call 0x4ff9bd（直接）
+    GlueCall { site: 0x4bd9e4, target: 0x4ff9bd, slot: 0x0 },
+    // 0x4bd9f5: call 0x8f5db0（经槽 0x9ba9d8）
+    GlueCall { site: 0x4bd9f5, target: 0x8f5db0, slot: 0x9ba9d8 },
+    // 0x4bda00: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4bda00, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4bda18: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bda18, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bda1e: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bda1e, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bda2e: call 0x4da1e0（直接）
+    GlueCall { site: 0x4bda2e, target: 0x4da1e0, slot: 0x0 },
+    // 0x4bda35: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4bda35, target: 0x9254ab, slot: 0x9ba5b8 },
+    // 0x4bda3e: call 0x4da440（直接）
+    GlueCall { site: 0x4bda3e, target: 0x4da440, slot: 0x0 },
+    // 0x4bda43: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bda43, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bda49: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4bda49, target: 0x9254ab, slot: 0x9ba5b8 },
+];
+
+/// `0x4bda50` —— `GraphwarLongPressAnimation` 的 `_::__init::__inner_init`（Location `17:1`）
+///
+/// FDE `0x4bda50..0x4bdbfa`（`0x1aa` = 426 B）；重定位槽 `0x9ba2b0`
+/// （该类 4 个 `__init::__inner_init` 落在连续 4 槽里，见本节文档头）。
+/// 名字 / 归属：**推断**（4 槽连续 + arm64 每类 4 个同名符号；缺 gdext vtable 槽序对齐）。
+///
+/// 调用链（顺序 = 指令顺序，逐条见 [`INNER_INIT_L17B_CALLS`]）：
+/// * `0x4bdaae` `call 0x8c5120`（槽 0x9baaf8）
+/// * `0x4bdae7` `call 0x8c5120`（槽 0x9baaf8）
+/// * `0x4bdb3c` `call 0x8f5cc0`（槽 0x9ba9c8）
+/// * `0x4bdb47` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4bdb90` `call 0x925430`（槽 0x9ba678）
+/// * `0x4bdb9f` `call 0x8f5db0`（槽 0x9ba9d8）
+/// * `0x4bdba7` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4bdbc1` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bdbc7` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bdbd7` `call 0x4da330`
+/// * `0x4bdbde` `call 0x9254ab`（槽 0x9ba5b8）
+/// * `0x4bdbe9` `call 0x4da440`
+/// * `0x4bdbee` `call 0x925623`（槽 0x9ba668）
+/// * `0x4bdbf4` `call 0x9254ab`（槽 0x9ba5b8）
+///
+/// 档位：**观测**（体：FDE + 槽 + 每条 `call`）。
+pub fn inner_init_l17b(host: &mut dyn GlueHost) -> usize {
+    // 0x4bda50 本函数起点；FDE 0x4bda50..0x4bdbfa（426 B）
+    replay_calls(INNER_INIT_L17B_CALLS, host)
+}
+
+pub const INNER_INIT_L17B_CALLS: &[GlueCall] = &[
+    // 0x4bdaae: call 0x8c5120（经槽 0x9baaf8）
+    GlueCall { site: 0x4bdaae, target: 0x8c5120, slot: 0x9baaf8 },
+    // 0x4bdae7: call 0x8c5120（经槽 0x9baaf8）
+    GlueCall { site: 0x4bdae7, target: 0x8c5120, slot: 0x9baaf8 },
+    // 0x4bdb3c: call 0x8f5cc0（经槽 0x9ba9c8）
+    GlueCall { site: 0x4bdb3c, target: 0x8f5cc0, slot: 0x9ba9c8 },
+    // 0x4bdb47: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4bdb47, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4bdb90: call 0x925430（经槽 0x9ba678）
+    GlueCall { site: 0x4bdb90, target: 0x925430, slot: 0x9ba678 },
+    // 0x4bdb9f: call 0x8f5db0（经槽 0x9ba9d8）
+    GlueCall { site: 0x4bdb9f, target: 0x8f5db0, slot: 0x9ba9d8 },
+    // 0x4bdba7: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4bdba7, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4bdbc1: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bdbc1, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bdbc7: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bdbc7, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bdbd7: call 0x4da330（直接）
+    GlueCall { site: 0x4bdbd7, target: 0x4da330, slot: 0x0 },
+    // 0x4bdbde: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4bdbde, target: 0x9254ab, slot: 0x9ba5b8 },
+    // 0x4bdbe9: call 0x4da440（直接）
+    GlueCall { site: 0x4bdbe9, target: 0x4da440, slot: 0x0 },
+    // 0x4bdbee: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4bdbee, target: 0x925623, slot: 0x9ba668 },
+    // 0x4bdbf4: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4bdbf4, target: 0x9254ab, slot: 0x9ba5b8 },
+];
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- T80：gdext 宏产物落码的自校验（期望值全部来自反汇编）-----------------
+
+    /// 记录宿主：把收到的调用按顺序存下来。
+    struct Recorder(Vec<GlueCall>);
+    impl GlueHost for Recorder {
+        fn call(&mut self, c: GlueCall) {
+            self.0.push(c);
+        }
+    }
+
+    /// `__register_methods` / `__register_constants` 同形：只落「遍历登记表」。
+    #[test]
+    fn register_tables_are_run_entry_by_entry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        fn t1() {
+            HITS.fetch_add(1, Ordering::SeqCst);
+        }
+        fn t2() {
+            HITS.fetch_add(10, Ordering::SeqCst);
+        }
+        let table: [fn(); 2] = [t1, t2];
+        assert_eq!(run_register_table(&table), 2);
+        assert_eq!(HITS.load(Ordering::SeqCst), 11);
+        assert_eq!(run_register_table(&[]), 0);
+    }
+
+    /// 表槽 / thunk / 重定位槽：每个数都是本节某条指令的 rip 目标。
+    #[test]
+    fn storage_slots_and_thunk_are_the_disassembly_constants() {
+        assert_eq!(REGISTER_THUNK & 0xf, 0, "thunk 表 16 字节对齐");
+        assert_eq!(REGISTER_SLOTS.1 - REGISTER_SLOTS.0, 8, "A/B 两个槽相邻");
+        assert_eq!(REGISTER_METHODS_TABLE_SLOTS.1 - REGISTER_METHODS_TABLE_SLOTS.0, 8);
+        assert_eq!(REGISTER_CONSTANTS_TABLE_SLOTS.1 - REGISTER_CONSTANTS_TABLE_SLOTS.0, 8);
+    }
+
+    /// 每条 `__init::__inner_init` 的调用**普查**条数（从各自指令流数出来的）。
+    #[test]
+    fn inner_init_call_census_matches_the_disassembly() {
+        assert_eq!(INNER_INIT_L17A_CALLS.len(), 14, "l17a 的 call 普查条数");
+        assert_eq!(INNER_INIT_L31_CALLS.len(), 14, "l31 的 call 普查条数");
+        assert_eq!(INNER_INIT_L17B_CALLS.len(), 14, "l17b 的 call 普查条数");
+    }
+
+    /// 普查里的每条调用点必须落在**该函数自己的 FDE** 内。
+    #[test]
+    fn inner_init_call_sites_lie_inside_their_own_fde() {
+        for c in INNER_INIT_L17A_CALLS {
+            assert!((0x4bd650..0x4bd7f6).contains(&c.site), "l17a: {:#x} 不在 FDE", c.site);
+        }
+        for c in INNER_INIT_L31_CALLS {
+            assert!((0x4bd800..0x4bda4f).contains(&c.site), "l31: {:#x} 不在 FDE", c.site);
+        }
+        for c in INNER_INIT_L17B_CALLS {
+            assert!((0x4bda50..0x4bdbfa).contains(&c.site), "l17b: {:#x} 不在 FDE", c.site);
+        }
+    }
 
     /// 时长 = `2π / 4π` = 0.5 s，与 500 ms 长按阈值**数值相同**（推断：同一个常量）。
     #[test]

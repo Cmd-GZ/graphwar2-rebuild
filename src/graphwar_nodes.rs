@@ -501,9 +501,241 @@ pub fn unknowns() -> &'static [&'static str] {
 /// 11 个单态化在**整份 `.so`** 里的直接调用点数（逐条 `call rel32` 计数）。
 pub const DIRECT_CALL_SITES: usize = 80;
 
+// ---------------------------------------------------------------------------
+// T80. `get_node_by_name::<T>` 的 11 个单态化（本轮补上 7 条 F3 缺口）
+// ---------------------------------------------------------------------------
+//
+// 本模块的 11 个 x86 入口是**同一个泛型 fn 的 11 次单态化**：逐指令比对（把地址、
+// rip 位移、`@` 注解归一化后）**完全相同**，唯一差别是最后一跳的**尾调目标**
+// （= 该类型的 `get_node_by_name_rec::<T>`，见 [`ACCESSORS`]）。
+// 源码层的真相是**一个 `fn get_node_by_name<T>`**；这里按实例化落成 11 个 fn，
+// 是为了与 11 个 FDE 边界一一对应（口径同 T62 对 `get_module::<T>` 两个单态化的处理）。
+// `T` 具体是什么类型 **未知**（缺 `class_id` 表，见 [`unknowns`] 第 1 条），
+// 所以实例 fn 的名字按**位次**编号，不假装知道类型。
+//
+// ## 一个实例的完整指令流（`0x3aaea0`，FDE `0x3aaea0..0x3aaf99`，`0xf9` = 249 B）
+//
+// ```text
+// 3aaea0  push r15/r14/r13/r12/rbx ; sub rsp,0x50
+// 3aaead  mov rbx,r8 ; 3aaeb0 mov r15,rcx ; 3aaeb3 mov r14,rdi    ; 三个额外实参
+// 3aaeb6  mov [rsp+0x20],rsi ; 3aaebb mov [rsp+0x28],rdx          ; name 的 (ptr,len)
+// 3aaec0  lea r12,[0x1bd8f2] ; 3aaecc mov edx,0xa                  ; "upcast_ref"（长度 10）
+// 3aaed7  call 0x4068f0                    ; `Gd::upcast_ref` 包装 A
+// 3aaedf  call *0x9ba7d0 -> 0x8b0890       ; 引擎调用 #1
+// 3aaeff  call 0x405a60                    ; 包装（取 (rax,rdx) 再走一步）
+// 3aaf0c  call *0x9ba7d8 -> 0x8aa9b0       ; 引擎调用 #2
+// 3aaf12  cmp dword [rsp+8],1 ; 3aaf17 jne 3aaf5d    ; Option 判别：None ⇒ panic
+// 3aaf5d  lea rdi,[0x951678]               ; panic::Location = src/graphwar_nodes.rs:8:62
+// 3aaf64  call *0x9ba870 -> 0x925410       ; unwrap panic
+// 3aaf28  call 0x448170                    ; Result 判别
+// 3aaf2d  cmp byte [rsp+8],0 ; 3aaf32 jne 3aaf6a     ; Err ⇒ panic「Upcast failed…」(0x1bd8fc)
+// 3aaf47  call <tail>                      ; **尾调** get_node_by_name_rec::<T>
+// ```
+//
+// ⇒ 语义（**观测**）：把 `(name.ptr, name.len)` 与三个额外实参准备好 → 两步引擎调用
+// （`0x8b0890` / `0x8aa9b0`，本文件 §3 记的是 `Node::get_tree` → `SceneTree::get_root` 这一段）
+// → 两处判别各带一条 panic → **尾调**该类型的递归查找。**没有 `call rel32` 调用者**：
+// 11 个入口全在 `.data.rel.ro` 的函数指针槽里被间接调用（80 个调用点，见
+// [`DIRECT_CALL_SITES`] 的反向读法）。
+
+/// 一个单态化实例：入口 vaddr + **尾调目标**（= `get_node_by_name_rec::<T>`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GetNodeByNameInstance {
+    /// `get_node_by_name::<T>` 的入口（vaddr）。
+    pub vaddr: u64,
+    /// 尾调目标（vaddr）。
+    pub tail: u64,
+}
+
+/// 11 个实例的 `(入口, 尾调)`。**观测**：入口来自 FDE 起点，尾调来自每个函数体最后
+/// 一条 `call rel32`（`0x3aaf47` 那一位置，11 个各差一个常数）。
+pub const GET_NODE_BY_NAME_INSTANCES: [GetNodeByNameInstance; 11] = [
+    GetNodeByNameInstance { vaddr: 0x3aaea0, tail: 0x3ad570 },
+    GetNodeByNameInstance { vaddr: 0x3aafa0, tail: 0x3ab990 },
+    GetNodeByNameInstance { vaddr: 0x3ab0a0, tail: 0x3ad220 },
+    GetNodeByNameInstance { vaddr: 0x3ab190, tail: 0x3acb00 },
+    GetNodeByNameInstance { vaddr: 0x3ab290, tail: 0x3ac770 },
+    GetNodeByNameInstance { vaddr: 0x3ab390, tail: 0x3af0a0 },
+    GetNodeByNameInstance { vaddr: 0x3ab490, tail: 0x3ac3e0 },
+    GetNodeByNameInstance { vaddr: 0x3ab590, tail: 0x3ae650 },
+    GetNodeByNameInstance { vaddr: 0x3ab690, tail: 0x3ace90 },
+    GetNodeByNameInstance { vaddr: 0x3ab790, tail: 0x3ac050 },
+    GetNodeByNameInstance { vaddr: 0x3ab890, tail: 0x3adc50 },
+];
+
+/// 按入口 vaddr 查实例。
+pub fn get_node_by_name_instance(vaddr: u64) -> Option<GetNodeByNameInstance> {
+    GET_NODE_BY_NAME_INSTANCES
+        .iter()
+        .copied()
+        .find(|i| i.vaddr == vaddr)
+}
+
+/// `get_node_by_name::<T>` 的**源码层本体**（我方模型，一个泛型 fn 对 11 次单态化）。
+///
+/// 可见动作只有两步：**先取场景根**（原版是 `0x8b0890` / `0x8aa9b0` 两次引擎调用，
+/// 本层由调用方把根传进来），**再把名字交给尾调**（`get_node_by_name_rec::<T>`）。
+/// 两个 panic 面（`Option::unwrap` → `src/graphwar_nodes.rs:8:62`、
+/// `Result::unwrap` →「Upcast failed. This is a bug; please report it.」）在本层
+/// 由 `rec` 的返回值形态表达，不另造。
+///
+/// 档位：**观测**（调用序列 + 两个 panic 面 + 尾调）；`T` = **未知**。
+pub fn get_node_by_name<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3aaed7 call 0x4068f0（upcast_ref 包装）→ 0x3aaedf/0x3aaf0c 两次引擎调用（本层以 root 表达）
+    // 0x3aaf47 call <tail>   ← 本行模型：尾调 get_node_by_name_rec::<T>
+    rec(root, name)
+}
+
+/// `0x3aaea0` —— `get_node_by_name::<T>` 的第 **1** 个单态化（**名推断 / 体观测**）。
+///
+/// FDE `0x3aaea0..0x3aaf99`（`0xf9` = 249 B）；尾调 **`0x3ad570`**；
+/// `panic::Location` = `src/graphwar_nodes.rs:8:62`（槽 `0x951678`）。
+pub fn get_node_by_name_mono_01<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3aaea0 本函数起点；FDE 0x3aaea0..0x3aaf99
+    // 0x3aaf47 call 0x3ad570   ← 本行模型：尾调 get_node_by_name_rec::<T>
+    get_node_by_name(root, name, rec)
+}
+
+/// `0x3ab290` —— 第 **2** 个单态化。FDE `0x3ab290..0x3ab389`（`0xf9`）；尾调 **`0x3ac770`**。
+pub fn get_node_by_name_mono_02<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3ab290 本函数起点；FDE 0x3ab290..0x3ab389
+    // 0x3ab337 call 0x3ac770   ← 本行模型：尾调
+    get_node_by_name(root, name, rec)
+}
+
+/// `0x3ab390` —— 第 **3** 个单态化。FDE `0x3ab390..0x3ab489`（`0xf9`）；尾调 **`0x3af0a0`**。
+pub fn get_node_by_name_mono_03<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3ab390 本函数起点；FDE 0x3ab390..0x3ab489
+    // 0x3ab437 call 0x3af0a0   ← 本行模型：尾调
+    get_node_by_name(root, name, rec)
+}
+
+/// `0x3ab490` —— 第 **4** 个单态化。FDE `0x3ab490..0x3ab589`（`0xf9`）；尾调 **`0x3ac3e0`**。
+pub fn get_node_by_name_mono_04<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3ab490 本函数起点；FDE 0x3ab490..0x3ab589
+    // 0x3ab537 call 0x3ac3e0   ← 本行模型：尾调
+    get_node_by_name(root, name, rec)
+}
+
+/// `0x3ab690` —— 第 **5** 个单态化。FDE `0x3ab690..0x3ab789`（`0xf9`）；尾调 **`0x3ace90`**。
+pub fn get_node_by_name_mono_05<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3ab690 本函数起点；FDE 0x3ab690..0x3ab789
+    // 0x3ab737 call 0x3ace90   ← 本行模型：尾调
+    get_node_by_name(root, name, rec)
+}
+
+/// `0x3ab790` —— 第 **6** 个单态化。FDE `0x3ab790..0x3ab889`（`0xf9`）；尾调 **`0x3ac050`**。
+pub fn get_node_by_name_mono_06<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3ab790 本函数起点；FDE 0x3ab790..0x3ab889
+    // 0x3ab837 call 0x3ac050   ← 本行模型：尾调
+    get_node_by_name(root, name, rec)
+}
+
+/// `0x3ab890` —— 第 **7** 个单态化。FDE `0x3ab890..0x3ab989`（`0xf9`）；尾调 **`0x3adc50`**。
+pub fn get_node_by_name_mono_07<Root, T>(
+    root: Root,
+    name: &str,
+    rec: impl FnOnce(Root, &str) -> T,
+) -> T {
+    // 0x3ab890 本函数起点；FDE 0x3ab890..0x3ab989
+    // 0x3ab937 call 0x3adc50   ← 本行模型：尾调
+    get_node_by_name(root, name, rec)
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- T80：11 个单态化落码的自校验（期望值 = 每个函数体最后一条 call rel32）----
+
+    /// 实例表必须与 [`ACCESSORS`] 1:1 对上（同一批 vaddr + 同一批尾调）。
+    #[test]
+    fn instance_table_matches_the_accessor_table() {
+        assert_eq!(GET_NODE_BY_NAME_INSTANCES.len(), ATTRIBUTED_FUNCS);
+        for (i, inst) in GET_NODE_BY_NAME_INSTANCES.iter().enumerate() {
+            assert_eq!(inst.vaddr, ACCESSORS[i].fn_addr);
+            assert_eq!(inst.tail, ACCESSORS[i].tail, "第 {i} 个实例的尾调");
+            assert_eq!(get_node_by_name_instance(inst.vaddr), Some(*inst));
+        }
+        assert_eq!(get_node_by_name_instance(0x3aaea1), None);
+    }
+
+    /// 本轮补的 7 条 F3 缺口的 **尾调地址**（各自函数体最后一条 `call rel32`）：
+    /// `0x3aaf47→0x3ad570` / `0x3ab337→0x3ac770` / `0x3ab437→0x3af0a0` /
+    /// `0x3ab537→0x3ac3e0` / `0x3ab737→0x3ace90` / `0x3ab837→0x3ac050` / `0x3ab937→0x3adc50`。
+    #[test]
+    fn the_seven_restored_instances_have_the_disassembly_tails() {
+        let want: [(u64, u64); 7] = [
+            (0x3aaea0, 0x3ad570),
+            (0x3ab290, 0x3ac770),
+            (0x3ab390, 0x3af0a0),
+            (0x3ab490, 0x3ac3e0),
+            (0x3ab690, 0x3ace90),
+            (0x3ab790, 0x3ac050),
+            (0x3ab890, 0x3adc50),
+        ];
+        for (vaddr, tail) in want {
+            let inst = get_node_by_name_instance(vaddr).expect("实例必须在表里");
+            assert_eq!(inst.tail, tail);
+        }
+    }
+
+    /// 11 个实例逐指令同形 ⇒ 行为模型同一个：把 `(根, 名字)` 交给尾调，原样返回。
+    #[test]
+    fn every_instance_forwards_root_and_name_to_its_tail() {
+        fn run<Root, T>(
+            f: fn(Root, &str, fn(Root, &str) -> T) -> T,
+            root: Root,
+            name: &str,
+            tail: fn(Root, &str) -> T,
+        ) -> T {
+            f(root, name, tail)
+        }
+        let got = run(get_node_by_name_mono_01, 7u32, "Team1Container", |r, n| {
+            (r, n.to_string())
+        });
+        assert_eq!(got, (7, "Team1Container".to_string()));
+        let got = run(get_node_by_name_mono_07, 9u32, "ViewFunctionsLabel", |r, n| {
+            (r, n.len())
+        });
+        assert_eq!(got, (9, 18));
+        // 7 个落码的实例函数都真的能调（不是死代码）
+        let _ = get_node_by_name_mono_02(1u8, "a", |r, _| r);
+        let _ = get_node_by_name_mono_03(1u8, "a", |r, _| r);
+        let _ = get_node_by_name_mono_04(1u8, "a", |r, _| r);
+        let _ = get_node_by_name_mono_05(1u8, "a", |r, _| r);
+        let _ = get_node_by_name_mono_06(1u8, "a", |r, _| r);
+    }
 
     /// 11 个单态化 = `coverage_matrix` 的 `orig_funcs`，且地址严格升序、互不相同。
     #[test]
