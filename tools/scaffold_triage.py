@@ -71,6 +71,22 @@ T57 §104.0 判 A「我方自造元数据」—— **两处结论冲突**，缺�
 * 搬之后本工具的分母变 736、`B` 归零；`--control` 仍要全绿（正对照用的是现役 `axis_drawer_class.rs`
   与 `git show cda427c^:…` 的历史版 `entity_drawer_class.rs`，都不受搬迁影响）。
 
+## T72 复算（2026-11-27，分支 `agent/scaffold-cd`）
+
+台账在 T63 之后**又过时了一次**，这次是分母本身变了 —— 一律按**当前文件**重算，不拿旧数凑：
+
+* 分母 **736 → 802**（`tools/audit_src.py scaffold` 同口径复算）：
+  T67（`86a6214`）新增 4 个 `Gw*` 桥接类 `campaign_control_class.rs`(10) / `client_link_class.rs`(18) /
+  `lan_v6_class.rs`(23) / `root_node_class.rs`(13) = **+64**，T66 给 `protocol.rs` 加 JSON 视图/转换 = **+2**。
+* **B 归零**：两个 `graphwar_*_class.rs` 已在 `_scaffold/` 消失 ⇒ 文件角色表里那两行删掉、
+  `EXTRA_EVIDENCE` 里另外两条死键也删掉（它们再匹配不到任何行）。
+* **C 17 → 16**：`graphwar_setup_control_class.rs::join_text` 随类搬出 `_scaffold`，不在分母里了
+  （重复本体仍在模块侧，T72 单独收口）。
+* 复算读数：**A 773 / B 0 / C 16 / D 13 = 802**（写进 `fixtures/scaffold_triage2.tsv`）。
+* `--identical`（新）：机判出的跨文件逐字相同组共 **6 组**，其中 3 组是本表已登记的 C
+  （`sym` / `triples` / 两条 `clamp_mode`·`line_primitive_count` 的语义重复不够 40 字符不在此列），
+  另 4 组是 `TRIVIAL_IDENTICAL` 里那四类样板 ⇒ **不升 C**。
+
 # 正对照（证明这套判法能把「对」的判对，`--control` 跑）
 
 | 对照 | 期望 | 依据 |
@@ -86,11 +102,15 @@ T57 §104.0 判 A「我方自造元数据」—— **两处结论冲突**，缺�
 
 ```bash
 V=$MAIN/.reference/venv/bin/python
-$V tools/scaffold_triage.py            # 汇总（793 个生产函数 = 与 audit_src.py scaffold 同口径）
-$V tools/scaffold_triage.py --tsv > fixtures/scaffold_triage.tsv
-$V tools/audit_src.py scaffold         # 核对分母（prod 列合计 793）
+$V tools/scaffold_triage.py            # 汇总（当前 802 个生产函数 = 与 audit_src.py scaffold 同口径）
+$V tools/scaffold_triage.py --tsv --id-prefix T72 --out fixtures/scaffold_triage2.tsv  # T72 重算台账
+$V tools/audit_src.py scaffold         # 核对分母（prod 列合计 802）
 $V tools/scaffold_triage.py --control  # 正/反对照
+$V tools/scaffold_triage.py --identical # 机判的跨文件逐字相同组（与本表的 C 交叉核对）
 ```
+
+`fixtures/scaffold_triage.tsv`（T63，793 行）是**预注册台账，不回填**；T72 的重算写进
+`fixtures/scaffold_triage2.tsv`（802 行，`id` 前缀 `T72-`），两份都留在库里对照。
 
 口径：**生产函数** = 文件里第一个 `#[cfg(test)]` **块**之前（与 `tools/audit_src.py` 同口径，
 见 `docs/06` §86.7 的 D04）；地址一律 **ELF vaddr（RVA）**（Ghidra/REA = +0x100000）。
@@ -147,11 +167,14 @@ FILE_ROLE = {
     "net_constants_class.rs": ("A", "-", "`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）"),
     "stream_buffer_class.rs": ("A", "-", "`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）"),
     "net_events_class.rs": ("A", "-", "`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）"),
-    # —— B：原版类名 + Location 锚（机判复核；理由在这里写清）——
-    "graphwar_setup_control_class.rs": ("B", "graphwar_setup_control",
-                                        "`GraphwarSetupControl` = 原版类名（`_::__init::__inner_init 0x4bcc60` Location 落 `src/graphwar_setup_control.rs`）⇒ 类层该在模块文件里（T57 §104.0 点名的剩余 2 个之一）"),
-    "graphwar_ad_switch_class.rs": ("B", "graphwar_ad_switch",
-                                    "`GraphwarAdSwitch` = 原版类名（`_::__init::__inner_init 0x4e9c90` Location 落 `src/graphwar_ad_switch.rs:45:1`）⇒ 类层该在模块文件里（T57 §104.0 点名的剩余 2 个之一）"),
+    # —— B 档：**当前为空**（T72 复算，2026-11-27）——
+    # T63（`f66713a`）把最后两个装着原版模块方法体的 `*_class.rs` 搬回去了：
+    #   `graphwar_setup_control_class.rs`(50) → `src/graphwar_setup_control.rs`
+    #   `graphwar_ad_switch_class.rs`(7)     → `src/graphwar_ad_switch.rs`
+    # 两者已不在 `_scaffold/` ⇒ 本表把它们**删掉**（T63 的台账 `scaffold_triage.tsv`
+    # 仍列着这两个文件，已陈旧；T72 的重算台账 `scaffold_triage2.tsv` 不再列）。
+    # 现在 `_scaffold/` 里剩下 8 个 `#[derive(GodotClass)]` 类全是 `Gw*` 前缀（我方桥接类），
+    # 机判（`classify_file`）会给 A —— 与「原版类名 + Location 锚」的判据一致。
 }
 
 # 判定「原版类名」要用的类名清单：从 fixtures/name_to_addr_v2.tsv 第 2 列 + 落 src/*.rs 的 Location 锚
@@ -193,9 +216,20 @@ C_LIST = {
         ("src/_scaffold/api.rs:681 `sym`", "**逐字符相同**的符号查找助手两份（机判）"),
     ("api.rs", "sym"):
         ("src/_scaffold/axis_drawer_class.rs:431 `sym`", "同上（两份实现）"),
-    ("graphwar_setup_control_class.rs", "join_text"):
-        ("src/graphwar_button.rs:1157 `join_text`", "**逐字符相同**的 `a|b|c` 拼接助手两份（机判）；搬类时不要把这第二份带进模块"),
+    # T72 删掉了一条陈旧登记：`graphwar_setup_control_class.rs::join_text`（与
+    # `src/graphwar_button.rs:1157` 逐字符相同）。T63（`f66713a`）把那个文件整体搬走后，
+    # 两份 `join_text` 都在**模块侧**（`src/graphwar_setup_control.rs` / `src/graphwar_button.rs`），
+    # 不在本台账的分母里 ⇒ 这条 C 从 17 降到 16。T72 把这第二份收口掉，见 `docs/06` §120。
 }
+
+# 机判「跨文件逐字相同」但**不升 C** 的四组（T72 复算时新出现的；都在 `_scaffold` 内部，
+# 且是 2–10 行样板，没有"规则"可收口 ⇒ 留 A，只登记，避免把它们读成重复实现）：
+#   * `p`（`api.rs` / `axis_drawer_class.rs`）：`self.0.as_ptr() as *mut c_void` 一行 ABI 存取器；
+#   * `init` × 10（8 个 `Gw*` 类 + `gdext_mod`）：`Self { base }` 构造样板；
+#   * `v2`（`gdext_mod.rs` / `replay_driver_class.rs`）：`Vector2::new(x as f32, y as f32)`；
+#   * `error`（`math_expr_class.rs` / `replay_driver_class.rs`）：`GString::from(self.error.as_str())`。
+# 判据：函数体归一后 < 200 字符且不含任何 `if`/`match`/循环 ⇒ 样板，不算"同一条规则两份"。
+TRIVIAL_IDENTICAL = {"p", "init", "v2", "error"}
 
 # ---------------------------------------------------------------------------
 # D_LIST：(file, fn) -> (缺什么)
@@ -230,16 +264,11 @@ D_LIST = {
 }
 
 # 逐函数补充证据/遗留（只改 evidence/note 文本，不改档位）
-EXTRA_EVIDENCE = {
-    ("graphwar_ad_switch_class.rs", "are_ads_enabled"):
-        "原版方法 `GraphwarAdSwitch::are_ads_enabled` = `!owned`：arm64 2.0.60 ptrcall 实例 `0x377cf4` 的 `ldrb w22,[obj+0x18]` + `eor w8,w22,#1`（**观测**，arm64；Linux 侧无符号锚）",
-    ("graphwar_ad_switch_class.rs", "get_ad_unit_id"):
-        "原版方法 `GraphwarAdSwitch::get_ad_unit_id`：返回 `.rodata` 的 38 字节 AdMob 单元 id 字面量（**观测**；Linux 侧无符号锚，见模块文件 `AD_UNIT_ID`）",
-    ("graphwar_setup_control_class.rs", "build_stub_children"):
-        "⚠️ 本函数的前提已被 T43 推翻：`client/scenes/screens/game_setup.tscn` 已装上（节点 `GraphwarSetupControl/RoomName/RoomNameLineEdit` 由场景提供）⇒ 替身子节点是否还该建 = 待定；本轮只搬不改语义",
-    ("graphwar_setup_control_class.rs", "ready"):
-        "原版 `GraphwarSetupControl::ready 0x4cf670`：11 个 `get_node` + 3 条 `connect`（`docs/16` §16）",
-}
+#
+# T72：原来这里有 4 条，全部属于 T63 已搬走的两个文件（`graphwar_ad_switch_class.rs` /
+# `graphwar_setup_control_class.rs`）⇒ 键再也匹配不到任何行，删掉（证据本身已随文件进了
+# `src/graphwar_ad_switch.rs` / `src/graphwar_setup_control.rs` 与 `docs/06` §114.3）。
+EXTRA_EVIDENCE = {}
 
 # ABI / 验收钩子的函数名词表（A 档判据②的一部分；只用于 note，不改变档位）
 ABI_NAMES = {
@@ -537,12 +566,46 @@ def cmd_control(files):
     return 0 if ok else 1
 
 
+def cmd_identical(files):
+    """机判的跨文件逐字相同组，与本表的 C 交叉核对（证明 C 表没漏也没多）。"""
+    groups = identical_body_groups(files)
+    rows = build_rows(load_orig(), orig_struct_names(), files)
+    c_by_fn = collections.defaultdict(list)
+    for r in rows:
+        if r["class"] == "C":
+            c_by_fn[r["fn"].split("#")[0]].append(r["file"])
+    print("跨文件逐字相同的函数体：%d 组（归一后 ≥40 字符）" % len(groups))
+    for (fname, name), members in sorted(groups.items()):
+        flag = "C 已登记" if name in c_by_fn else (
+            "样板（不升 C）" if name in TRIVIAL_IDENTICAL else "⚠️ 未登记")
+        print("  %-23s %-14s %-14s %s" % (flag, name, fname, members[0]))
+        # 机核 `TRIVIAL_IDENTICAL`：确实都是 < 200 字符、无控制流的样板
+        body = [b for n2, b, _l, _o in prod_functions(files[fname]) if n2 == name][0]
+        norm = re.sub(r"\s+", " ", body).strip()
+        if name in TRIVIAL_IDENTICAL:
+            assert len(norm) < 200 and not re.search(r"\b(if|match|while|for)\b", norm), \
+                "TRIVIAL_IDENTICAL 里的 %s 不像样板（%d 字符）" % (name, len(norm))
+    print()
+    print("C_LIST 里靠**人工判语义**登记的（逐字不相同，机判抓不到）：")
+    for (fname, name) in sorted(C_LIST):
+        if fname not in files:
+            continue  # 该文件已被搬出 _scaffold（陈旧键，见文件头「T72 复算」）
+        if name in {g[1] for g in groups} and fname in {
+                m.split(":")[0] for (_g, members) in groups.items() for m in members[0]}:
+            continue
+        print("  C  %-24s %-26s → %s" % (fname, name, C_LIST[(fname, name)][0]))
+    return 0
+
+
 def main(argv=None):
     global orig_structs_global
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tsv", action="store_true", help="打印台账 TSV")
     ap.add_argument("--control", action="store_true", help="正/反对照")
+    ap.add_argument("--identical", action="store_true", help="跨文件逐字相同组（与 C 表交叉核对）")
     ap.add_argument("--out", default=None, help="写 TSV 到文件（默认 stdout）")
+    ap.add_argument("--id-prefix", default="T63",
+                    help="台账 id 前缀（默认 T63 以保 `fixtures/scaffold_triage.tsv` 可复现；T72 重算用 T72）")
     args = ap.parse_args(argv)
 
     files = {}
@@ -554,8 +617,13 @@ def main(argv=None):
 
     if args.control:
         return cmd_control(files)
+    if args.identical:
+        return cmd_identical(files)
 
     rows = build_rows(load_orig(), orig_structs, files)
+    if args.id_prefix != "T63":
+        for r in rows:
+            r["id"] = r["id"].replace("T63-", args.id_prefix + "-", 1)
     if args.tsv:
         cols = ["id", "file", "fn_line", "fn", "class", "orig_module", "orig_func", "vaddr",
                 "other_impl", "evidence", "note"]

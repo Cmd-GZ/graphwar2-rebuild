@@ -1,0 +1,803 @@
+id	file	fn_line	fn	class	orig_module	orig_func	vaddr	other_impl	evidence	note
+T72-001	src/_scaffold/ai_explain.rs	80	soldier	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-002	src/_scaffold/ai_explain.rs	85	target	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-003	src/_scaffold/ai_explain.rs	108	empty	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	薄转发（规则本体在 crate::<原版模块>）
+T72-004	src/_scaffold/ai_explain.rs	121	add_obstacle	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-005	src/_scaffold/ai_explain.rs	126	occupied_pixels	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-006	src/_scaffold/ai_explain.rs	157	net_hits	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-007	src/_scaffold/ai_explain.rs	162	is_empty_hit	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-008	src/_scaffold/ai_explain.rs	181	is_friendly	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-009	src/_scaffold/ai_explain.rs	192	evaluate	C				src/graphwar_function_evolutionator.rs:1212 `evaluate` / `fitness_eval`	评分链第二份实现（§86.5 C07）（覆盖文件级 A）	
+T72-010	src/_scaffold/ai_explain.rs	262	label	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-011	src/_scaffold/ai_explain.rs	286	new	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-012	src/_scaffold/ai_explain.rs	292	over_limit	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-013	src/_scaffold/ai_explain.rs	333	why	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-014	src/_scaffold/ai_explain.rs	373	from_difficulty	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-015	src/_scaffold/ai_explain.rs	384	from_level	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-016	src/_scaffold/ai_explain.rs	395	rng_from_seed	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-017	src/_scaffold/ai_explain.rs	405	explain	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-018	src/_scaffold/ai_explain.rs	534	render	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-019	src/_scaffold/ai_explain.rs	633	truncate	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-020	src/_scaffold/ai_explain.rs	644	text_of	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-021	src/_scaffold/ai_explain.rs	649	contains_tag	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-022	src/_scaffold/ai_explain.rs	654	demo_situation	A					攻略向 AI 评分解释工具（`examples/ai_explain`；C07 的第二份评分实现）	
+T72-023	src/_scaffold/api.rs	87	err	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-024	src/_scaffold/api.rs	96	direction_is_flip	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-025	src/_scaffold/api.rs	121	calculate_path	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-026	src/_scaffold/api.rs	176	parse_mode	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-027	src/_scaffold/api.rs	210	calculate_path_ode	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-028	src/_scaffold/api.rs	243	calculate_path_mode	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-029	src/_scaffold/api.rs	288	result_pairs	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-030	src/_scaffold/api.rs	344	err#2	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-031	src/_scaffold/api.rs	377	hit_test	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	薄转发（规则本体在 crate::<原版模块>）
+T72-032	src/_scaffold/api.rs	441	hit_result_pairs	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-033	src/_scaffold/api.rs	481	err#3	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-034	src/_scaffold/api.rs	501	level_obstacles	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	薄转发（规则本体在 crate::<原版模块>）
+T72-035	src/_scaffold/api.rs	527	obstacle_pairs	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-036	src/_scaffold/api.rs	573	new	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-037	src/_scaffold/api.rs	576	p	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-038	src/_scaffold/api.rs	650	calls	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-039	src/_scaffold/api.rs	654	ok_calls	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	验收钩子
+T72-040	src/_scaffold/api.rs	657	err_calls	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	验收钩子
+T72-041	src/_scaffold/api.rs	661	hit_calls	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	验收钩子
+T72-042	src/_scaffold/api.rs	665	obstacle_calls	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	验收钩子
+T72-043	src/_scaffold/api.rs	669	obstacle_last_count	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	验收钩子
+T72-044	src/_scaffold/api.rs	673	mode_calls	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	验收钩子
+T72-045	src/_scaffold/api.rs	677	api	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-046	src/_scaffold/api.rs	681	sym	C				src/_scaffold/axis_drawer_class.rs:431 `sym`	同上（两份实现）（覆盖文件级 A）	
+T72-047	src/_scaffold/api.rs	689	from_ctor	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-048	src/_scaffold/api.rs	701	to_ctor	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-049	src/_scaffold/api.rs	713	sn	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	C ABI/注册入口
+T72-050	src/_scaffold/api.rs	724	string	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-051	src/_scaffold/api.rs	736	ty	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-052	src/_scaffold/api.rs	744	get_f64	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-053	src/_scaffold/api.rs	765	get_i64	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-054	src/_scaffold/api.rs	787	get_string	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-055	src/_scaffold/api.rs	809	destroy_variant	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-056	src/_scaffold/api.rs	816	destroy_raw	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-057	src/_scaffold/api.rs	829	call	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-058	src/_scaffold/api.rs	852	read_packed_v2	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-059	src/_scaffold/api.rs	877	read_packed_f64	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-060	src/_scaffold/api.rs	900	array_len	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-061	src/_scaffold/api.rs	984	put_string_variant	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-062	src/_scaffold/api.rs	1001	put_points_variant	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-063	src/_scaffold/api.rs	1040	write_dict	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-064	src/_scaffold/api.rs	1117	put_int_array_variant	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-065	src/_scaffold/api.rs	1151	write_result	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-066	src/_scaffold/api.rs	1160	put_f64_array_variant	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-067	src/_scaffold/api.rs	1197	path_calculate_call	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-068	src/_scaffold/api.rs	1260	path_calculate_mode_call	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-069	src/_scaffold/api.rs	1321	hit_test_call	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-070	src/_scaffold/api.rs	1379	level_obstacles_call	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-071	src/_scaffold/api.rs	1412	triples	C				src/_scaffold/gdext_mod.rs:201 `triples`	同上（两份实现）（覆盖文件级 A）	
+T72-072	src/_scaffold/api.rs	1420	build_table	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-073	src/_scaffold/api.rs	1439	table_ok	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-074	src/_scaffold/api.rs	1452	install_names	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	
+T72-075	src/_scaffold/api.rs	1467	register_path_method	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	C ABI/注册入口
+T72-076	src/_scaffold/api.rs	1574	register_path_mode_method	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	C ABI/注册入口
+T72-077	src/_scaffold/api.rs	1663	register_hit_test_method	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	C ABI/注册入口
+T72-078	src/_scaffold/api.rs	1750	register_level_obstacles_method	A					内核→C/GDScript 的 `variant_call` 面 + 薄转发（`docs/06` §86.8 正例 A01：`hit_test` 转发、无第二份实现）	C ABI/注册入口
+T72-079	src/_scaffold/audio_control_class.rs	53	slot_by_name	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-080	src/_scaffold/audio_control_class.rs	64	slot_name	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-081	src/_scaffold/audio_control_class.rs	77	init	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-082	src/_scaffold/audio_control_class.rs	86	slot_names	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-083	src/_scaffold/audio_control_class.rs	97	slot_path	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-084	src/_scaffold/audio_control_class.rs	106	slot_volume_db	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-085	src/_scaffold/audio_control_class.rs	117	slot_of_effect_kind	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-086	src/_scaffold/audio_control_class.rs	124	hum_mix_rate	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-087	src/_scaffold/audio_control_class.rs	130	hum_buffer_length	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-088	src/_scaffold/audio_control_class.rs	136	pcm_full_scale	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-089	src/_scaffold/audio_control_class.rs	142	hum_frames_per_buffer	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-090	src/_scaffold/audio_control_class.rs	151	decode_wav	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-091	src/_scaffold/audio_control_class.rs	182	effective_mute	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	
+T72-092	src/_scaffold/audio_control_class.rs	191	provenance	A					`GwAudioControl` 桥（壳名 `Gw*`；规则在 `graphwar_audio_control`，T58）	验收钩子
+T72-093	src/_scaffold/audio_wav.rs	66	message	A					WAV 解码（原版用 `hound` 这类第三方 crate，`docs/111` §4.4b）	
+T72-094	src/_scaffold/audio_wav.rs	82	le_u16	A					WAV 解码（原版用 `hound` 这类第三方 crate，`docs/111` §4.4b）	
+T72-095	src/_scaffold/audio_wav.rs	86	le_u32	A					WAV 解码（原版用 `hound` 这类第三方 crate，`docs/111` §4.4b）	
+T72-096	src/_scaffold/audio_wav.rs	90	chunk_id	A					WAV 解码（原版用 `hound` 这类第三方 crate，`docs/111` §4.4b）	
+T72-097	src/_scaffold/audio_wav.rs	97	decode_wav	A					WAV 解码（原版用 `hound` 这类第三方 crate，`docs/111` §4.4b）	
+T72-098	src/_scaffold/axis_drawer_class.rs	134	new	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-099	src/_scaffold/axis_drawer_class.rs	137	p	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-100	src/_scaffold/axis_drawer_class.rs	157	ifaces	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-101	src/_scaffold/axis_drawer_class.rs	198	instance_count	A					机判：无 GodotClass 派生的非原版模块文件	验收钩子
+T72-102	src/_scaffold/axis_drawer_class.rs	203	freed_count	A					机判：无 GodotClass 派生的非原版模块文件	验收钩子
+T72-103	src/_scaffold/axis_drawer_class.rs	208	mode_calls	A					机判：无 GodotClass 派生的非原版模块文件	验收钩子
+T72-104	src/_scaffold/axis_drawer_class.rs	216	line_count_calls	A					机判：无 GodotClass 派生的非原版模块文件	验收钩子
+T72-105	src/_scaffold/axis_drawer_class.rs	228	clamp_mode	C				src/_scaffold/gdext_mod.rs `clamp_mode`	**同一规则两份**（i64 收窄 vs i32 收窄；T57 §104.7-4 登记的 C 档小项）（覆盖文件级 A）	
+T72-106	src/_scaffold/axis_drawer_class.rs	234	line_primitive_count	C				src/_scaffold/gdext_mod.rs `line_primitive_count`	同一条计数规则两份（都经 `axis_drawer::axis_primitives`，但 filter/count 规则分成两处）（覆盖文件级 A）	
+T72-107	src/_scaffold/axis_drawer_class.rs	246	ctor	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-108	src/_scaffold/axis_drawer_class.rs	260	read_i64	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-109	src/_scaffold/axis_drawer_class.rs	287	write_int	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-110	src/_scaffold/axis_drawer_class.rs	299	instance_mut	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-111	src/_scaffold/axis_drawer_class.rs	311	create_instance	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-112	src/_scaffold/axis_drawer_class.rs	341	free_instance	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-113	src/_scaffold/axis_drawer_class.rs	352	set_axis_mode_call	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-114	src/_scaffold/axis_drawer_class.rs	372	get_axis_mode_call	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-115	src/_scaffold/axis_drawer_class.rs	390	axis_line_count_call	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-116	src/_scaffold/axis_drawer_class.rs	409	axis_line_count_formula_call	A					机判：无 GodotClass 派生的非原版模块文件	
+T72-117	src/_scaffold/axis_drawer_class.rs	431	sym	C				src/_scaffold/api.rs:681 `sym`	**逐字符相同**的符号查找助手两份（机判）（覆盖文件级 A）	
+T72-118	src/_scaffold/axis_drawer_class.rs	439	sn	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-119	src/_scaffold/axis_drawer_class.rs	449	add_method	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-120	src/_scaffold/axis_drawer_class.rs	521	add_property	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-121	src/_scaffold/axis_drawer_class.rs	565	register_axis_drawer_class	A					机判：无 GodotClass 派生的非原版模块文件	C ABI/注册入口
+T72-122	src/_scaffold/broker.rs	58	game_info_event	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-123	src/_scaffold/broker.rs	63	parse_game_info_event	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-124	src/_scaffold/broker.rs	76	game_removed_event	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-125	src/_scaffold/broker.rs	84	parse_game_removed_event	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-126	src/_scaffold/broker.rs	93	inner_object	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-127	src/_scaffold/broker.rs	149	new	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-128	src/_scaffold/broker.rs	154	upsert	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-129	src/_scaffold/broker.rs	164	touch	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-130	src/_scaffold/broker.rs	174	remove	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-131	src/_scaffold/broker.rs	179	remove_owner	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-132	src/_scaffold/broker.rs	193	expire	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-133	src/_scaffold/broker.rs	208	snapshot	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-134	src/_scaffold/broker.rs	214	len	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-135	src/_scaffold/broker.rs	218	is_empty	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-136	src/_scaffold/broker.rs	222	get	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-137	src/_scaffold/broker.rs	241	default	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-138	src/_scaffold/broker.rs	256	broadcast	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-139	src/_scaffold/broker.rs	272	send_to	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-140	src/_scaffold/broker.rs	288	bind	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-141	src/_scaffold/broker.rs	295	serve	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-142	src/_scaffold/broker.rs	300	serve_with	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-143	src/_scaffold/broker.rs	363	spawn	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-144	src/_scaffold/broker.rs	376	serve_conn	A					我方对局服务器/LAN broker（原版 broker 是独立进程，不在这个 crate 里）	
+T72-145	src/_scaffold/campaign_control_class.rs	61	init	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-146	src/_scaffold/campaign_control_class.rs	71	level_dict	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-147	src/_scaffold/campaign_control_class.rs	95	obstacle_code	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-148	src/_scaffold/campaign_control_class.rs	104	obstacle_name	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-149	src/_scaffold/campaign_control_class.rs	119	level_count	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	验收钩子
+T72-150	src/_scaffold/campaign_control_class.rs	125	level	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-151	src/_scaffold/campaign_control_class.rs	137	levels	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-152	src/_scaffold/campaign_control_class.rs	155	parse_level_key	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-153	src/_scaffold/campaign_control_class.rs	167	obstacle_modes	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	
+T72-154	src/_scaffold/campaign_control_class.rs	185	provenance	A					机判：`#[derive(GodotClass)] struct GwCampaignControl` 不是原版类名（我方类）	验收钩子
+T72-155	src/_scaffold/capi.rs	23	gw2_parse_len	A					`extern "C"` 导出面 `gw2_*`（原版没有 C ABI）	
+T72-156	src/_scaffold/capi.rs	41	gw2_shot_points	A					`extern "C"` 导出面 `gw2_*`（原版没有 C ABI）	
+T72-157	src/_scaffold/capi.rs	83	gw2_correction	A					`extern "C"` 导出面 `gw2_*`（原版没有 C ABI）	
+T72-158	src/_scaffold/capi.rs	138	gw2_rasterize	A					`extern "C"` 导出面 `gw2_*`（原版没有 C ABI）	薄转发（规则本体在 crate::<原版模块>）
+T72-159	src/_scaffold/capi.rs	159	gw2_is_occupied	A					`extern "C"` 导出面 `gw2_*`（原版没有 C ABI）	薄转发（规则本体在 crate::<原版模块>）
+T72-160	src/_scaffold/capi.rs	180	gw2_simulate	A					`extern "C"` 导出面 `gw2_*`（原版没有 C ABI）	薄转发（规则本体在 crate::<原版模块>）
+T72-161	src/_scaffold/client_link_class.rs	55	init	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-162	src/_scaffold/client_link_class.rs	69	state_id	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-163	src/_scaffold/client_link_class.rs	79	state_of	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-164	src/_scaffold/client_link_class.rs	87	state_disconnected	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-165	src/_scaffold/client_link_class.rs	93	state_connecting	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-166	src/_scaffold/client_link_class.rs	99	state_connected	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-167	src/_scaffold/client_link_class.rs	105	state_failed	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-168	src/_scaffold/client_link_class.rs	111	state_ids	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-169	src/_scaffold/client_link_class.rs	122	timeout_secs	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-170	src/_scaffold/client_link_class.rs	128	after_connect_attempt	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-171	src/_scaffold/client_link_class.rs	145	step	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-172	src/_scaffold/client_link_class.rs	185	tick	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-173	src/_scaffold/client_link_class.rs	210	game_state_on_connect_failed	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-174	src/_scaffold/client_link_class.rs	216	is_open	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-175	src/_scaffold/client_link_class.rs	222	is_busy	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-176	src/_scaffold/client_link_class.rs	228	disconnect_state	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-177	src/_scaffold/client_link_class.rs	235	handshake_event_name	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	
+T72-178	src/_scaffold/client_link_class.rs	241	provenance	A					机判：`#[derive(GodotClass)] struct GwClientLink` 不是原版类名（我方类）	验收钩子
+T72-179	src/_scaffold/color_manager_class.rs	49	to_byte	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-180	src/_scaffold/color_manager_class.rs	53	to_godot	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-181	src/_scaffold/color_manager_class.rs	72	init	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-182	src/_scaffold/color_manager_class.rs	81	pool_len	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-183	src/_scaffold/color_manager_class.rs	87	random_color_modulo	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-184	src/_scaffold/color_manager_class.rs	93	team_colors	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-185	src/_scaffold/color_manager_class.rs	116	pick	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	
+T72-186	src/_scaffold/color_manager_class.rs	145	provenance	A					`GwColorManager` 桥（规则在 `graphwar_color_manager`，T58 修了 `%180` 兜底）	验收钩子
+T72-187	src/_scaffold/diffconv.rs	64	mode_of	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-188	src/_scaffold/diffconv.rs	78	corrected_function	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-189	src/_scaffold/diffconv.rs	90	sampling_text	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-190	src/_scaffold/diffconv.rs	97	hole_point	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-191	src/_scaffold/diffconv.rs	113	unbalanced_brackets	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-192	src/_scaffold/diffconv.rs	153	explosion_point	C				src/game.rs 的爆炸点判定（`0x4741a0` 一带，`Match::entity_effects` 登记链）	爆炸点规则第二份：直接调 `math_function::parse/eval` 自己算（§86.5 C06 的同一族）（覆盖文件级 A）	
+T72-193	src/_scaffold/diffconv.rs	211	death_effect_type	C				src/game.rs:170/820/1238/1246（`SparkEffect`/`AshEffect`/`DeathEffect` 的登记规则）	皮肤名→特效类型的映射第二份（§86.5 C06）（覆盖文件级 A）	
+T72-194	src/_scaffold/diffconv.rs	220	new	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-195	src/_scaffold/diffconv.rs	240	fire	C				src/game.rs:1558 `Match::fire`	复刻开火入口：自己造 `ShotInput` 再走本文件的 `fire_batch` 链（§86.5 C06）（覆盖文件级 A）	
+T72-196	src/_scaffold/diffconv.rs	297	fire_batch	C				src/game.rs:1600 `Match::fire_batch`	复刻整批结算入口（§86.5 C06）（覆盖文件级 A）	
+T72-197	src/_scaffold/diffconv.rs	308	fire_batch_with	C				src/game.rs:1600 `Match::fire_batch` + `fire_functions`/`execute_results`	结算路径本体第二份（几何并行 + 判定 + 广播；§86.5 C06）（覆盖文件级 A）	
+T72-198	src/_scaffold/diffconv.rs	511	tick	C				src/game.rs:1523 `Match::tick`	**逐字相同**（`identical_body_groups()` 机判）；另一份在 game.rs（覆盖文件级 A）	
+T72-199	src/_scaffold/diffconv.rs	575	f64_eq_bits	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-200	src/_scaffold/diffconv.rs	583	probe_file	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-201	src/_scaffold/diffconv.rs	788	geom_exact	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-202	src/_scaffold/diffconv.rs	824	cause_name	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-203	src/_scaffold/diffconv.rs	841	state_gap	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-204	src/_scaffold/diffconv.rs	851	classify	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-205	src/_scaffold/diffconv.rs	920	strict_policy	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-206	src/_scaffold/diffconv.rs	928	run_file	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-207	src/_scaffold/diffconv.rs	1000	run_dir	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-208	src/_scaffold/diffconv.rs	1080	summary	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-209	src/_scaffold/diffconv.rs	1114	ok	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-210	src/_scaffold/diffconv.rs	1119	normal_shots	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-211	src/_scaffold/diffconv.rs	1124	bits_pair	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-212	src/_scaffold/diffconv.rs	1129	parity_file	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	薄转发（规则本体在 crate::<原版模块>）
+T72-213	src/_scaffold/diffconv.rs	1349	destroy_points	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-214	src/_scaffold/diffconv.rs	1361	explosion_points	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-215	src/_scaffold/diffconv.rs	1377	parity_dir	A					第三轴 `batch_conv` 收敛层对拍器（`docs/06` §86.5 C06：工具定位，数字必须带轴名）	
+T72-216	src/_scaffold/endgame_class.rs	44	team_of_byte	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	验收钩子
+T72-217	src/_scaffold/endgame_class.rs	56	banners_for	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	验收钩子
+T72-218	src/_scaffold/endgame_class.rs	93	init	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	
+T72-219	src/_scaffold/endgame_class.rs	109	winner_byte	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	薄转发（规则本体在 crate::<原版模块>）
+T72-220	src/_scaffold/endgame_class.rs	115	winner_team	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	
+T72-221	src/_scaffold/endgame_class.rs	126	label_texts	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	验收钩子
+T72-222	src/_scaffold/endgame_class.rs	153	show_victory_nodes	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	薄转发（规则本体在 crate::<原版模块>）
+T72-223	src/_scaffold/endgame_class.rs	186	show_victory_addrs	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	验收钩子
+T72-224	src/_scaffold/endgame_class.rs	197	victory_texts	A					`GwEndGame` 桥（`winner_byte` 转发 `turnstate`；T36 A02 正例）	验收钩子
+T72-225	src/_scaffold/function_input_rules_class.rs	116	key_text_impl	A					`GwFunctionEdit` 桥（规则在 `graphwar_function_input`，T42）	
+T72-226	src/_scaffold/function_input_rules_class.rs	153	apply_command_impl	A					`GwFunctionEdit` 桥（规则在 `graphwar_function_input`，T42）	
+T72-227	src/_scaffold/function_input_rules_class.rs	203	init	A					`GwFunctionEdit` 桥（规则在 `graphwar_function_input`，T42）	
+T72-228	src/_scaffold/function_input_rules_class.rs	220	apply_command	A					`GwFunctionEdit` 桥（规则在 `graphwar_function_input`，T42）	
+T72-229	src/_scaffold/function_input_rules_class.rs	237	key_text	A					`GwFunctionEdit` 桥（规则在 `graphwar_function_input`，T42）	
+T72-230	src/_scaffold/function_input_rules_class.rs	244	provenance	A					`GwFunctionEdit` 桥（规则在 `graphwar_function_input`，T42）	验收钩子
+T72-231	src/_scaffold/gdext.rs	74	proc_address	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	C ABI/注册入口
+T72-232	src/_scaffold/gdext.rs	79	init_entry_calls	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-233	src/_scaffold/gdext.rs	84	initialize_calls	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-234	src/_scaffold/gdext.rs	89	deinitialize_calls	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-235	src/_scaffold/gdext.rs	124	request	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	C ABI/注册入口
+T72-236	src/_scaffold/gdext.rs	143	on_initialize	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	C ABI/注册入口
+T72-237	src/_scaffold/gdext.rs	178	on_deinitialize	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	C ABI/注册入口
+T72-238	src/_scaffold/gdext.rs	188	gdext_rust_init	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	C ABI/注册入口
+T72-239	src/_scaffold/gdext.rs	215	gw2_rebuild_entry_calls	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-240	src/_scaffold/gdext.rs	221	gw2_rebuild_initialize_calls	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-241	src/_scaffold/gdext.rs	229	gw2_rebuild_requested_names	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	
+T72-242	src/_scaffold/gdext.rs	243	gw2_rebuild_resolved_count	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-243	src/_scaffold/gdext.rs	249	gw2_rebuild_deinitialize_calls	A					GDExtension 入口（`gdext_rust_init`/`proc_address`；原版是 `#[gdextension]` 直接生成）	验收钩子
+T72-244	src/_scaffold/gdext_class.rs	62	empty	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	
+T72-245	src/_scaffold/gdext_class.rs	96	instances	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	验收钩子
+T72-246	src/_scaffold/gdext_class.rs	99	registered	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	验收钩子
+T72-247	src/_scaffold/gdext_class.rs	108	sym	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	C ABI/注册入口
+T72-248	src/_scaffold/gdext_class.rs	115	create_instance	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	C ABI/注册入口
+T72-249	src/_scaffold/gdext_class.rs	144	free_instance	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	C ABI/注册入口
+T72-250	src/_scaffold/gdext_class.rs	158	register_class	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	C ABI/注册入口
+T72-251	src/_scaffold/gdext_class.rs	240	pings	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	验收钩子
+T72-252	src/_scaffold/gdext_class.rs	244	ping_call	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	验收钩子
+T72-253	src/_scaffold/gdext_class.rs	260	register_ping_method	A					手写 C ABI 类壳（`register_class`/`sym`/`create_instance`；原版用 `#[derive(GodotClass)]`）	C ABI/注册入口
+T72-254	src/_scaffold/gdext_mod.rs	52	v2	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-255	src/_scaffold/gdext_mod.rs	57	set_value	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-256	src/_scaffold/gdext_mod.rs	83	dict_of	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-257	src/_scaffold/gdext_mod.rs	123	init	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-258	src/_scaffold/gdext_mod.rs	132	ping	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-259	src/_scaffold/gdext_mod.rs	138	path_calculate	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-260	src/_scaffold/gdext_mod.rs	145	path_calculate_mode	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-261	src/_scaffold/gdext_mod.rs	159	hit_test	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-262	src/_scaffold/gdext_mod.rs	182	level_obstacles	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-263	src/_scaffold/gdext_mod.rs	189	binding_version	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-264	src/_scaffold/gdext_mod.rs	201	triples	C				src/_scaffold/api.rs:1412 `triples`	**逐字符相同**的 3 元组切分助手两份（机判）（覆盖文件级 A）	
+T72-265	src/_scaffold/gdext_mod.rs	212	bad_hit	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-266	src/_scaffold/gdext_mod.rs	267	clamp_mode	C				src/_scaffold/axis_drawer_class.rs:228 `clamp_mode`	同上（两份实现）（覆盖文件级 A）	
+T72-267	src/_scaffold/gdext_mod.rs	272	line_primitive_count	C				src/_scaffold/axis_drawer_class.rs `line_primitive_count`	同上（两份实现）（覆盖文件级 A）	
+T72-268	src/_scaffold/gdext_mod.rs	280	vec2_of	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-269	src/_scaffold/gdext_mod.rs	285	color_of	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-270	src/_scaffold/gdext_mod.rs	291	init#2	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-271	src/_scaffold/gdext_mod.rs	302	draw	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-272	src/_scaffold/gdext_mod.rs	352	axis_line_count	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	验收钩子
+T72-273	src/_scaffold/gdext_mod.rs	358	axis_line_count_formula	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-274	src/_scaffold/gdext_mod.rs	364	draw_call_count	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	验收钩子
+T72-275	src/_scaffold/gdext_mod.rs	370	drawn_line_total	A					`#[gdextension]` 入口类 `GW2Rebuild` + 演示类注册（原版入口由宏生成，无手写层）	
+T72-276	src/_scaffold/lan_v6_class.rs	71	init	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-277	src/_scaffold/lan_v6_class.rs	84	at	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-278	src/_scaffold/lan_v6_class.rs	93	parse_peer	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-279	src/_scaffold/lan_v6_class.rs	115	is_known_time_mode	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-280	src/_scaffold/lan_v6_class.rs	144	is_bare_object	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	薄转发（规则本体在 crate::<原版模块>）
+T72-281	src/_scaffold/lan_v6_class.rs	153	row_dict	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-282	src/_scaffold/lan_v6_class.rs	179	start	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-283	src/_scaffold/lan_v6_class.rs	186	stop	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-284	src/_scaffold/lan_v6_class.rs	194	clear_bind	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-285	src/_scaffold/lan_v6_class.rs	200	is_bound	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-286	src/_scaffold/lan_v6_class.rs	212	ingest	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-287	src/_scaffold/lan_v6_class.rs	251	expire_stale	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-288	src/_scaffold/lan_v6_class.rs	260	due_to_broadcast	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-289	src/_scaffold/lan_v6_class.rs	267	rooms	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-290	src/_scaffold/lan_v6_class.rs	289	room_count	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	验收钩子
+T72-291	src/_scaffold/lan_v6_class.rs	295	get_game_info	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-292	src/_scaffold/lan_v6_class.rs	318	set_room_info	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	薄转发（规则本体在 crate::<原版模块>）
+T72-293	src/_scaffold/lan_v6_class.rs	362	broadcast_payload	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-294	src/_scaffold/lan_v6_class.rs	371	local_address	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-295	src/_scaffold/lan_v6_class.rs	381	time_mode_known	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-296	src/_scaffold/lan_v6_class.rs	390	parse_broadcast	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-297	src/_scaffold/lan_v6_class.rs	418	counts	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	
+T72-298	src/_scaffold/lan_v6_class.rs	428	provenance	A					机判：`#[derive(GodotClass)] struct GwLanV6` 不是原版类名（我方类）	验收钩子
+T72-299	src/_scaffold/math_expr_class.rs	63	init	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	
+T72-300	src/_scaffold/math_expr_class.rs	75	parse	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	
+T72-301	src/_scaffold/math_expr_class.rs	94	error	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	
+T72-302	src/_scaffold/math_expr_class.rs	103	eval_at	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	
+T72-303	src/_scaffold/math_expr_class.rs	109	token_count	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	验收钩子
+T72-304	src/_scaffold/math_expr_class.rs	115	prefix_tags	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	
+T72-305	src/_scaffold/math_expr_class.rs	125	provenance	A					`GwMathExpr` 桥（解析/求值在 `math_function`：`0x4ed670`/`0x4eb9d0`）	验收钩子
+T72-306	src/_scaffold/net_constants_class.rs	52	init	A					`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）	
+T72-307	src/_scaffold/net_constants_class.rs	68	connect_timeout_secs	A					`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）	
+T72-308	src/_scaffold/net_constants_class.rs	81	entry_ttl_ms	A					`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）	
+T72-309	src/_scaffold/net_constants_class.rs	87	entry_ttl_secs	A					`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）	
+T72-310	src/_scaffold/net_constants_class.rs	97	broadcast_period_secs	A					`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）	
+T72-311	src/_scaffold/net_constants_class.rs	105	provenance	A					`GwNetConsts` 桥（常量来自 `graphwar_client_connection_handler` / `graphwar_lan_broadcaster_v6`，T42）	验收钩子
+T72-312	src/_scaffold/net_events_class.rs	105	dispatch_installed	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-313	src/_scaffold/net_events_class.rs	110	ensure_installed	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-314	src/_scaffold/net_events_class.rs	141	init	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-315	src/_scaffold/net_events_class.rs	157	reset	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-316	src/_scaffold/net_events_class.rs	167	installed	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-317	src/_scaffold/net_events_class.rs	173	applied	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-318	src/_scaffold/net_events_class.rs	179	applied_of	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-319	src/_scaffold/net_events_class.rs	186	last_calls	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-320	src/_scaffold/net_events_class.rs	192	new_connection	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-321	src/_scaffold/net_events_class.rs	198	player_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-322	src/_scaffold/net_events_class.rs	204	soldier_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-323	src/_scaffold/net_events_class.rs	210	target_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-324	src/_scaffold/net_events_class.rs	216	team_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-325	src/_scaffold/net_events_class.rs	222	remove_team	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-326	src/_scaffold/net_events_class.rs	228	entity_removed	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-327	src/_scaffold/net_events_class.rs	234	pos_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-328	src/_scaffold/net_events_class.rs	240	life_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-329	src/_scaffold/net_events_class.rs	246	life_queued_death	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-330	src/_scaffold/net_events_class.rs	252	add_obstacle	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-331	src/_scaffold/net_events_class.rs	258	clear_obstacles	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-332	src/_scaffold/net_events_class.rs	264	queue_destroy_obstacle	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-333	src/_scaffold/net_events_class.rs	270	destroy_obstacle	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-334	src/_scaffold/net_events_class.rs	276	turn_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-335	src/_scaffold/net_events_class.rs	282	turn_mode_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-336	src/_scaffold/net_events_class.rs	288	axis_mode_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-337	src/_scaffold/net_events_class.rs	294	function_mode_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-338	src/_scaffold/net_events_class.rs	300	time_mode_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-339	src/_scaffold/net_events_class.rs	306	skin_graphics_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-340	src/_scaffold/net_events_class.rs	315	face_graphics_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-341	src/_scaffold/net_events_class.rs	324	hat_graphics_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-342	src/_scaffold/net_events_class.rs	333	entity_effect_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-343	src/_scaffold/net_events_class.rs	339	name_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-344	src/_scaffold/net_events_class.rs	345	color_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-345	src/_scaffold/net_events_class.rs	356	function_fire	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-346	src/_scaffold/net_events_class.rs	362	function_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-347	src/_scaffold/net_events_class.rs	372	function_active	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-348	src/_scaffold/net_events_class.rs	378	function_points	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-349	src/_scaffold/net_events_class.rs	384	effect_info	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	
+T72-350	src/_scaffold/net_events_class.rs	408	dump	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-351	src/_scaffold/net_events_class.rs	551	record	A					`GwNetEvents` 的 40 个 `#[func]` = GDScript 侧报文门面 + thread-local 通道（T49 §97.7-4：原版没有，永远留 scaffold）	验收钩子
+T72-352	src/_scaffold/play_flow_class.rs	62	dict_int	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-353	src/_scaffold/play_flow_class.rs	67	dict_int_key	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-354	src/_scaffold/play_flow_class.rs	72	alive_at	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-355	src/_scaffold/play_flow_class.rs	83	int_array	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-356	src/_scaffold/play_flow_class.rs	120	init	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-357	src/_scaffold/play_flow_class.rs	130	from_campaign	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-358	src/_scaffold/play_flow_class.rs	141	from_versus	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-359	src/_scaffold/play_flow_class.rs	147	from_match	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-360	src/_scaffold/play_flow_class.rs	158	kind_name	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-361	src/_scaffold/play_flow_class.rs	163	turn_limit	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-362	src/_scaffold/play_flow_class.rs	168	targets_planned	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-363	src/_scaffold/play_flow_class.rs	173	level_index	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-364	src/_scaffold/play_flow_class.rs	178	human_team	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-365	src/_scaffold/play_flow_class.rs	183	has_targets	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-366	src/_scaffold/play_flow_class.rs	188	has_opponent_rule	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-367	src/_scaffold/play_flow_class.rs	202	evaluate	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-368	src/_scaffold/play_flow_class.rs	242	evaluate_soldiers	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-369	src/_scaffold/play_flow_class.rs	280	evaluate_state	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-370	src/_scaffold/play_flow_class.rs	293	snapshot	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-371	src/_scaffold/play_flow_class.rs	309	target_team	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-372	src/_scaffold/play_flow_class.rs	319	verdict_byte	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	薄转发（规则本体在 crate::<原版模块>）
+T72-373	src/_scaffold/play_flow_class.rs	367	init#2	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-374	src/_scaffold/play_flow_class.rs	378	setup	D					缺证据：`GwTurnDriver` 的初始化（谁是第一个射手）缺原版证据（B18：轮转顺序/起点未知）。（覆盖文件级 A）	
+T72-375	src/_scaffold/play_flow_class.rs	403	setup_flat	D					缺证据：扁平化的分组初始化：分组表形状是我方模型（B18/E01），缺原版容器证据。（覆盖文件级 A）	
+T72-376	src/_scaffold/play_flow_class.rs	429	push_group	D					缺证据：玩家分组表 `groups` 是我方模型（原版是 `HashMap<player, PlayerTurns>`）；缺原版容器形状证据（B18/E01）。（覆盖文件级 A）	
+T72-377	src/_scaffold/play_flow_class.rs	440	soldier_id_none	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-378	src/_scaffold/play_flow_class.rs	448	first_shooter	D					缺证据：轮转起点：`cursor` 的初值与语义无原版证据（B18，原版是 HashMap 迭代序）。（覆盖文件级 A）	
+T72-379	src/_scaffold/play_flow_class.rs	465	next_shooter	D					缺证据：玩家之间的**轮转顺序**未知（`docs/06` §86.4 B18：原版是 HashMap 迭代序）；本函数把顺序固定成调用方给的序，士兵级那半转发 `PlayerTurns::next_shooter`（有据）。缺：原版玩家轮转的指令/观测证据。（覆盖文件级 A）	
+T72-380	src/_scaffold/play_flow_class.rs	492	current_shooter	D					缺证据：「当前射手」由我方 `cursor` 决定；原版口径未知（B18）。（覆盖文件级 A）	
+T72-381	src/_scaffold/play_flow_class.rs	504	snapshot#2	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-382	src/_scaffold/play_flow_class.rs	529	round_open	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-383	src/_scaffold/play_flow_class.rs	543	round_submit	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-384	src/_scaffold/play_flow_class.rs	570	round_complete	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-385	src/_scaffold/play_flow_class.rs	576	round_waiting	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-386	src/_scaffold/play_flow_class.rs	585	round_reset	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-387	src/_scaffold/play_flow_class.rs	678	init#3	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-388	src/_scaffold/play_flow_class.rs	684	vec2_of	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-389	src/_scaffold/play_flow_class.rs	695	to_vec2	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-390	src/_scaffold/play_flow_class.rs	700	planned_kill_of	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-391	src/_scaffold/play_flow_class.rs	712	planned_kills_of	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-392	src/_scaffold/play_flow_class.rs	723	event_dict	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-393	src/_scaffold/play_flow_class.rs	750	reset	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	验收钩子
+T72-394	src/_scaffold/play_flow_class.rs	758	begin	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-395	src/_scaffold/play_flow_class.rs	779	advance	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-396	src/_scaffold/play_flow_class.rs	791	flush	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-397	src/_scaffold/play_flow_class.rs	803	land_all	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-398	src/_scaffold/play_flow_class.rs	814	settle	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-399	src/_scaffold/play_flow_class.rs	824	abort	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-400	src/_scaffold/play_flow_class.rs	829	in_flight	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-401	src/_scaffold/play_flow_class.rs	834	arrived	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-402	src/_scaffold/play_flow_class.rs	839	revealed	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-403	src/_scaffold/play_flow_class.rs	844	total_points	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-404	src/_scaffold/play_flow_class.rs	849	pending_kills	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-405	src/_scaffold/play_flow_class.rs	854	pending_targets	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-406	src/_scaffold/play_flow_class.rs	859	kills_landed	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-407	src/_scaffold/play_flow_class.rs	864	targets_landed	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-408	src/_scaffold/play_flow_class.rs	869	settled	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-409	src/_scaffold/play_flow_class.rs	874	turns_used	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-410	src/_scaffold/play_flow_class.rs	908	judge	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	薄转发（规则本体在 crate::<原版模块>）
+T72-411	src/_scaffold/play_flow_class.rs	1040	snapshot#3	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-412	src/_scaffold/play_flow_class.rs	1094	init#4	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-413	src/_scaffold/play_flow_class.rs	1104	parse_turn_event	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-414	src/_scaffold/play_flow_class.rs	1121	state	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-415	src/_scaffold/play_flow_class.rs	1127	state_byte	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-416	src/_scaffold/play_flow_class.rs	1133	apply	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	薄转发（规则本体在 crate::<原版模块>）
+T72-417	src/_scaffold/play_flow_class.rs	1152	can_fire	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-418	src/_scaffold/play_flow_class.rs	1158	is_setup	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-419	src/_scaffold/play_flow_class.rs	1164	is_ending	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-420	src/_scaffold/play_flow_class.rs	1174	reset#2	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	验收钩子
+T72-421	src/_scaffold/play_flow_class.rs	1180	snapshot#4	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-422	src/_scaffold/play_flow_class.rs	1216	init#5	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-423	src/_scaffold/play_flow_class.rs	1225	set_time_mode	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-424	src/_scaffold/play_flow_class.rs	1231	restart	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-425	src/_scaffold/play_flow_class.rs	1237	advance#2	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-426	src/_scaffold/play_flow_class.rs	1244	decide	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-427	src/_scaffold/play_flow_class.rs	1253	seconds_left	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-428	src/_scaffold/play_flow_class.rs	1259	has_deadline	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-429	src/_scaffold/play_flow_class.rs	1265	duration_ticks	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-430	src/_scaffold/play_flow_class.rs	1270	elapsed_ticks	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-431	src/_scaffold/play_flow_class.rs	1275	auto_fired_total	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-432	src/_scaffold/play_flow_class.rs	1281	snapshot#5	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-433	src/_scaffold/play_flow_class.rs	1312	init#6	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-434	src/_scaffold/play_flow_class.rs	1321	configure	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-435	src/_scaffold/play_flow_class.rs	1327	arm	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-436	src/_scaffold/play_flow_class.rs	1333	disarm	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-437	src/_scaffold/play_flow_class.rs	1338	armed	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-438	src/_scaffold/play_flow_class.rs	1343	think_left	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-439	src/_scaffold/play_flow_class.rs	1348	think_seconds	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-440	src/_scaffold/play_flow_class.rs	1354	tick	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	
+T72-441	src/_scaffold/play_flow_class.rs	1362	aim_expression	A					播放屏流程驱动的 4 个 `Gw*` 类（T36 §86.4a A03 正对照：`evaluate`/`next_shooter` 都转发；B18 见 D_LIST）	薄转发（规则本体在 crate::<原版模块>）
+T72-442	src/_scaffold/protocol.rs	30	encode	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-443	src/_scaffold/protocol.rs	41	decode	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-444	src/_scaffold/protocol.rs	66	parse_message	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-445	src/_scaffold/protocol.rs	94	json_object_text	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-446	src/_scaffold/protocol.rs	98	json_object_text#2	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-447	src/_scaffold/protocol.rs	104	json_object_text#3	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-448	src/_scaffold/protocol.rs	110	json_object_text#4	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-449	src/_scaffold/protocol.rs	116	get_str	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-450	src/_scaffold/protocol.rs	129	get_int	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-451	src/_scaffold/protocol.rs	140	get_color	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-452	src/_scaffold/protocol.rs	158	braces_balanced	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-453	src/_scaffold/protocol.rs	189	read_key	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-454	src/_scaffold/protocol.rs	203	read_object	A					报文装配：74 事件 `WIRE_SPEC`/编解码（原版是 serde 派生；本仓自造。C03 的 schema 重复见 note）	C03：事件 schema 与 events.rs 重复（本任务禁区）
+T72-455	src/_scaffold/replay_driver.rs	168	from_bytes	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-456	src/_scaffold/replay_driver.rs	174	load	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-457	src/_scaffold/replay_driver.rs	180	with_replay	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-458	src/_scaffold/replay_driver.rs	200	player	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-459	src/_scaffold/replay_driver.rs	204	first_tick	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-460	src/_scaffold/replay_driver.rs	208	last_tick	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-461	src/_scaffold/replay_driver.rs	213	tick	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-462	src/_scaffold/replay_driver.rs	218	cursor	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-463	src/_scaffold/replay_driver.rs	223	event_count	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	验收钩子
+T72-464	src/_scaffold/replay_driver.rs	227	progress	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-465	src/_scaffold/replay_driver.rs	231	finished	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-466	src/_scaffold/replay_driver.rs	235	playing	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-467	src/_scaffold/replay_driver.rs	239	speed	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-468	src/_scaffold/replay_driver.rs	243	set_speed	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-469	src/_scaffold/replay_driver.rs	247	stats	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-470	src/_scaffold/replay_driver.rs	252	batches	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-471	src/_scaffold/replay_driver.rs	257	batch_note	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-472	src/_scaffold/replay_driver.rs	262	batches_settled	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-473	src/_scaffold/replay_driver.rs	267	current_batch	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-474	src/_scaffold/replay_driver.rs	284	phase	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-475	src/_scaffold/replay_driver.rs	304	canonical	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-476	src/_scaffold/replay_driver.rs	309	summary	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-477	src/_scaffold/replay_driver.rs	322	play	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-478	src/_scaffold/replay_driver.rs	326	pause	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-479	src/_scaffold/replay_driver.rs	330	toggle	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-480	src/_scaffold/replay_driver.rs	336	seek	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-481	src/_scaffold/replay_driver.rs	343	step_event	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-482	src/_scaffold/replay_driver.rs	351	step_back_event	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-483	src/_scaffold/replay_driver.rs	365	drive_frame	C				src/graphwar_replay_player.rs:745 `advance_dt`	回放时钟两份：本文件整数 ns 定步 vs 模块侧 f64 累加（§86.5 C02；取整方式不同 ⇒ 永远差 ±1 tick）（覆盖文件级 A）	
+T72-484	src/_scaffold/replay_driver.rs	400	drive_ticks	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-485	src/_scaffold/replay_driver.rs	422	drive_ticks_inner	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-486	src/_scaffold/replay_driver.rs	445	mark_dirty	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-487	src/_scaffold/replay_driver.rs	460	settle_due	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-488	src/_scaffold/replay_driver.rs	471	fill_tail	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-489	src/_scaffold/replay_driver.rs	479	resync_batches	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-490	src/_scaffold/replay_driver.rs	486	split_settlement_batches	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-491	src/_scaffold/replay_driver.rs	540	wire_index	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-492	src/_scaffold/replay_driver.rs	551	axis_index	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-493	src/_scaffold/replay_driver.rs	556	function_index	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-494	src/_scaffold/replay_driver.rs	561	turn_index	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-495	src/_scaffold/replay_driver.rs	566	time_index	A					我方回放驱动 `ReplayDriver`（整数 ns 定步；原版时钟在 `graphwar_replay_player`，C02 见 note）	
+T72-496	src/_scaffold/replay_driver_class.rs	41	report_dict	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-497	src/_scaffold/replay_driver_class.rs	67	v2	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-498	src/_scaffold/replay_driver_class.rs	83	init	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-499	src/_scaffold/replay_driver_class.rs	97	load	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-500	src/_scaffold/replay_driver_class.rs	115	load_text	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-501	src/_scaffold/replay_driver_class.rs	131	ok	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-502	src/_scaffold/replay_driver_class.rs	137	error	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-503	src/_scaffold/replay_driver_class.rs	144	first_tick	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-504	src/_scaffold/replay_driver_class.rs	149	last_tick	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-505	src/_scaffold/replay_driver_class.rs	154	tick	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-506	src/_scaffold/replay_driver_class.rs	159	cursor	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-507	src/_scaffold/replay_driver_class.rs	164	event_count	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	验收钩子
+T72-508	src/_scaffold/replay_driver_class.rs	169	progress	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-509	src/_scaffold/replay_driver_class.rs	174	finished	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-510	src/_scaffold/replay_driver_class.rs	179	playing	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-511	src/_scaffold/replay_driver_class.rs	184	speed	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-512	src/_scaffold/replay_driver_class.rs	189	set_speed	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-513	src/_scaffold/replay_driver_class.rs	197	canonical	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-514	src/_scaffold/replay_driver_class.rs	203	summary	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-515	src/_scaffold/replay_driver_class.rs	210	stats	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-516	src/_scaffold/replay_driver_class.rs	222	phase	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-517	src/_scaffold/replay_driver_class.rs	230	snapshot	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-518	src/_scaffold/replay_driver_class.rs	281	actors	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-519	src/_scaffold/replay_driver_class.rs	322	obstacles	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-520	src/_scaffold/replay_driver_class.rs	338	target_positions	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-521	src/_scaffold/replay_driver_class.rs	354	last_shot	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-522	src/_scaffold/replay_driver_class.rs	373	team_index	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-523	src/_scaffold/replay_driver_class.rs	382	soldier_owner	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-524	src/_scaffold/replay_driver_class.rs	391	has_color	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-525	src/_scaffold/replay_driver_class.rs	400	color_of	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-526	src/_scaffold/replay_driver_class.rs	414	graphics	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-527	src/_scaffold/replay_driver_class.rs	428	functions	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-528	src/_scaffold/replay_driver_class.rs	441	function_of	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-529	src/_scaffold/replay_driver_class.rs	456	batches	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-530	src/_scaffold/replay_driver_class.rs	474	batch_count	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	验收钩子
+T72-531	src/_scaffold/replay_driver_class.rs	479	batches_settled	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-532	src/_scaffold/replay_driver_class.rs	485	batch_note	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-533	src/_scaffold/replay_driver_class.rs	493	advance_dt	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-534	src/_scaffold/replay_driver_class.rs	502	advance_ticks	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-535	src/_scaffold/replay_driver_class.rs	511	play	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-536	src/_scaffold/replay_driver_class.rs	518	pause	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-537	src/_scaffold/replay_driver_class.rs	525	toggle	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-538	src/_scaffold/replay_driver_class.rs	533	seek	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-539	src/_scaffold/replay_driver_class.rs	541	step_event	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-540	src/_scaffold/replay_driver_class.rs	547	step_back_event	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-541	src/_scaffold/replay_driver_class.rs	567	axis_index	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-542	src/_scaffold/replay_driver_class.rs	573	function_index	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-543	src/_scaffold/replay_driver_class.rs	579	turn_index	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-544	src/_scaffold/replay_driver_class.rs	585	time_index	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-545	src/_scaffold/replay_driver_class.rs	591	about	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-546	src/_scaffold/replay_driver_class.rs	602	error_text	A					`GwReplayDriver`：上面那份驱动的 GDExtension 壳（类名 `Gw*`，非原版类名）	
+T72-547	src/_scaffold/replay_inflate.rs	34	as_str	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-548	src/_scaffold/replay_inflate.rs	55	new	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-549	src/_scaffold/replay_inflate.rs	59	bit	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-550	src/_scaffold/replay_inflate.rs	70	bits	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-551	src/_scaffold/replay_inflate.rs	79	align	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-552	src/_scaffold/replay_inflate.rs	86	byte	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-553	src/_scaffold/replay_inflate.rs	107	build	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-554	src/_scaffold/replay_inflate.rs	141	decode	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-555	src/_scaffold/replay_inflate.rs	189	fixed_tables	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-556	src/_scaffold/replay_inflate.rs	203	dynamic_tables	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-557	src/_scaffold/replay_inflate.rs	253	inflate	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-558	src/_scaffold/replay_inflate.rs	263	inflate_with_consumed	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-559	src/_scaffold/replay_inflate.rs	328	is_gzip	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-560	src/_scaffold/replay_inflate.rs	333	gunzip	A					inflate/gzip 实现（原版用 `flate2` crate）	
+T72-561	src/_scaffold/replay_meta.rs	90	parse_head	D					缺证据：T36 §86.4 判 B16（回放头部解析属 `graphwar_replay_reader` 职责）、T57 §104.0 判 A（我方自造元数据）—— **两处结论冲突**。缺：原版「回放列表显示关卡名」那段的函数名/Location。（覆盖文件级 A）	
+T72-562	src/_scaffold/replay_meta.rs	96	parse_with_cap	D					缺证据：解析本体：T36 判 B16 / T57 判 A 冲突；缺原版元数据读取那段的函数名/Location。（覆盖文件级 A）	
+T72-563	src/_scaffold/replay_meta.rs	130	apply_line	D					缺证据：逐行归约（GameNameInfo + 四种模式字段）：T36 判 B16 / T57 判 A 冲突；缺原版那段的函数名/Location。（覆盖文件级 A）	
+T72-564	src/_scaffold/replay_meta.rs	164	string_field	D					缺证据：字段抽取：同上冲突（B16 vs A），缺原版证据。（覆盖文件级 A）	
+T72-565	src/_scaffold/replay_meta.rs	191	first_quoted	D					缺证据：字符串扫描器：同上冲突（B16 vs A），缺原版证据。（覆盖文件级 A）	
+T72-566	src/_scaffold/replay_meta.rs	199	from_raw	D					缺证据：原始文本 → 元数据：同上冲突（B16 vs A），缺原版证据。（覆盖文件级 A）	
+T72-567	src/_scaffold/replay_meta.rs	229	from_path	D					缺证据：读盘 + gzip 头：同上冲突（B16 vs A），缺原版证据。（覆盖文件级 A）	
+T72-568	src/_scaffold/replay_meta.rs	238	axis_icon	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-569	src/_scaffold/replay_meta.rs	248	function_icon	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-570	src/_scaffold/replay_meta.rs	256	turn_icon	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-571	src/_scaffold/replay_meta.rs	264	time_icon	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-572	src/_scaffold/replay_meta.rs	278	mode_icons	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-573	src/_scaffold/replay_meta.rs	288	timestamp_from_name	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-574	src/_scaffold/replay_meta.rs	299	format_utc	A					回放头部元数据解析（我方；T36 判 B16 / T57 判 A 的冲突见 D_LIST）	
+T72-575	src/_scaffold/replay_meta_class.rs	34	init	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-576	src/_scaffold/replay_meta_class.rs	46	read	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-577	src/_scaffold/replay_meta_class.rs	53	read_text	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-578	src/_scaffold/replay_meta_class.rs	61	ok	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-579	src/_scaffold/replay_meta_class.rs	66	error	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-580	src/_scaffold/replay_meta_class.rs	72	game_name	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-581	src/_scaffold/replay_meta_class.rs	77	axis_mode	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-582	src/_scaffold/replay_meta_class.rs	82	function_mode	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-583	src/_scaffold/replay_meta_class.rs	87	turn_mode	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-584	src/_scaffold/replay_meta_class.rs	92	time_mode	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-585	src/_scaffold/replay_meta_class.rs	100	mode_icons	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-586	src/_scaffold/replay_meta_class.rs	110	to_dict	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-587	src/_scaffold/replay_meta_class.rs	136	format_utc	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-588	src/_scaffold/replay_meta_class.rs	142	timestamp_from_name	A					`GwReplayMeta`：回放列表元数据的 GDExtension 壳（类名 `Gw*`）	
+T72-589	src/_scaffold/replaydiff.rs	34	fmt	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-590	src/_scaffold/replaydiff.rs	39	err	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-591	src/_scaffold/replaydiff.rs	45	crc32_table	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-592	src/_scaffold/replaydiff.rs	61	crc32	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-593	src/_scaffold/replaydiff.rs	80	new	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-594	src/_scaffold/replaydiff.rs	84	fill	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-595	src/_scaffold/replaydiff.rs	93	bits	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-596	src/_scaffold/replaydiff.rs	110	align	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-597	src/_scaffold/replaydiff.rs	125	new#2	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-598	src/_scaffold/replaydiff.rs	153	decode	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-599	src/_scaffold/replaydiff.rs	190	inflate	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-600	src/_scaffold/replaydiff.rs	285	inflate_block	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-601	src/_scaffold/replaydiff.rs	322	member	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-602	src/_scaffold/replaydiff.rs	382	gunzip	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-603	src/_scaffold/replaydiff.rs	415	is_gzip	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-604	src/_scaffold/replaydiff.rs	454	as_i64	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-605	src/_scaffold/replaydiff.rs	461	as_f64	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-606	src/_scaffold/replaydiff.rs	468	as_str	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-607	src/_scaffold/replaydiff.rs	475	text	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-608	src/_scaffold/replaydiff.rs	490	type_name	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-609	src/_scaffold/replaydiff.rs	504	quote	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-610	src/_scaffold/replaydiff.rs	526	fmt#2	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-611	src/_scaffold/replaydiff.rs	538	new#3	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-612	src/_scaffold/replaydiff.rs	541	peek	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-613	src/_scaffold/replaydiff.rs	544	skip_ws	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-614	src/_scaffold/replaydiff.rs	549	eat	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-615	src/_scaffold/replaydiff.rs	562	value	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-616	src/_scaffold/replaydiff.rs	669	literal	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-617	src/_scaffold/replaydiff.rs	677	number	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-618	src/_scaffold/replaydiff.rs	705	string	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-619	src/_scaffold/replaydiff.rs	786	parse_wire	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-620	src/_scaffold/replaydiff.rs	810	parse_line	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-621	src/_scaffold/replaydiff.rs	843	canonical	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-622	src/_scaffold/replaydiff.rs	847	get	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-623	src/_scaffold/replaydiff.rs	851	get_i64	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-624	src/_scaffold/replaydiff.rs	855	get_f64	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-625	src/_scaffold/replaydiff.rs	859	get_str	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-626	src/_scaffold/replaydiff.rs	865	signature	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-627	src/_scaffold/replaydiff.rs	889	load	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-628	src/_scaffold/replaydiff.rs	894	from_bytes	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-629	src/_scaffold/replaydiff.rs	916	kind_histogram	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-630	src/_scaffold/replaydiff.rs	951	default	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-631	src/_scaffold/replaydiff.rs	988	is_unproduced	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-632	src/_scaffold/replaydiff.rs	1000	is_unobserved	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-633	src/_scaffold/replaydiff.rs	1044	fmt#3	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-634	src/_scaffold/replaydiff.rs	1087	split_batches	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-635	src/_scaffold/replaydiff.rs	1162	last_function_before	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-636	src/_scaffold/replaydiff.rs	1172	last_team_before	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-637	src/_scaffold/replaydiff.rs	1206	scan	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-638	src/_scaffold/replaydiff.rs	1308	new#4	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	薄转发（规则本体在 crate::<原版模块>）
+T72-639	src/_scaffold/replaydiff.rs	1359	sync_mode	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-640	src/_scaffold/replaydiff.rs	1385	predict	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-641	src/_scaffold/replaydiff.rs	1477	normalize	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-642	src/_scaffold/replaydiff.rs	1491	ulp_diff	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-643	src/_scaffold/replaydiff.rs	1492	ord	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-644	src/_scaffold/replaydiff.rs	1504	compare_msg	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-645	src/_scaffold/replaydiff.rs	1560	kind_of	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-646	src/_scaffold/replaydiff.rs	1568	brief	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-647	src/_scaffold/replaydiff.rs	1578	compare_batch	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-648	src/_scaffold/replaydiff.rs	1629	blocks	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-649	src/_scaffold/replaydiff.rs	1700	collect_block_diffs	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-650	src/_scaffold/replaydiff.rs	1864	total	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-651	src/_scaffold/replaydiff.rs	1926	first_by_path	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-652	src/_scaffold/replaydiff.rs	1937	first_by_kind	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-653	src/_scaffold/replaydiff.rs	1948	first_by_class	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-654	src/_scaffold/replaydiff.rs	1959	class_name	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-655	src/_scaffold/replaydiff.rs	2010	default_corpus_dir	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-656	src/_scaffold/replaydiff.rs	2024	godot_user_replays	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-657	src/_scaffold/replaydiff.rs	2036	godot_user_replays#2	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-658	src/_scaffold/replaydiff.rs	2052	run_file	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	薄转发（规则本体在 crate::<原版模块>）
+T72-659	src/_scaffold/replaydiff.rs	2364	fmt_f64	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-660	src/_scaffold/replaydiff.rs	2371	fmt_stop	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-661	src/_scaffold/replaydiff.rs	2376	tail_state	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-662	src/_scaffold/replaydiff.rs	2407	run_dir	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-663	src/_scaffold/replaydiff.rs	2443	new#5	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	薄转发（规则本体在 crate::<原版模块>）
+T72-664	src/_scaffold/replaydiff.rs	2447	without_ring	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-665	src/_scaffold/replaydiff.rs	2451	draw	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	薄转发（规则本体在 crate::<原版模块>）
+T72-666	src/_scaffold/replaydiff.rs	2477	apply	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	薄转发（规则本体在 crate::<原版模块>）
+T72-667	src/_scaffold/replaydiff.rs	2505	mask	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-668	src/_scaffold/replaydiff.rs	2534	add	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-669	src/_scaffold/replaydiff.rs	2553	total#2	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-670	src/_scaffold/replaydiff.rs	2557	merge	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-671	src/_scaffold/replaydiff.rs	2566	within_small	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-672	src/_scaffold/replaydiff.rs	2572	fmt#4	A					回放对拍器（`examples/replay_diff`；原版没有这个工具）	
+T72-673	src/_scaffold/rng.rs	13	rotl	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-674	src/_scaffold/rng.rs	18	quarter	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-675	src/_scaffold/rng.rs	39	from_seed	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-676	src/_scaffold/rng.rs	52	block	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-677	src/_scaffold/rng.rs	87	next_u32	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-678	src/_scaffold/rng.rs	101	next_u64	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-679	src/_scaffold/rng.rs	122	seed_from_os	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-680	src/_scaffold/rng.rs	146	os_entropy	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-681	src/_scaffold/rng.rs	162	os_entropy#2	A					ChaCha12 实现（原版用 `rand_chacha` crate，二进制里没有这个源文件）	
+T72-682	src/_scaffold/root_node_class.rs	76	visible_code	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-683	src/_scaffold/root_node_class.rs	85	plan_for	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-684	src/_scaffold/root_node_class.rs	106	init	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-685	src/_scaffold/root_node_class.rs	117	base_screen_names	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-686	src/_scaffold/root_node_class.rs	130	all_screen_names	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-687	src/_scaffold/root_node_class.rs	143	screen_table	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-688	src/_scaffold/root_node_class.rs	158	screen_addr	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-689	src/_scaffold/root_node_class.rs	177	show_plan	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-690	src/_scaffold/root_node_class.rs	185	show_plan_for	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-691	src/_scaffold/root_node_class.rs	201	command_kind	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-692	src/_scaffold/root_node_class.rs	210	command_keys	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-693	src/_scaffold/root_node_class.rs	222	command_evidence	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	
+T72-694	src/_scaffold/root_node_class.rs	238	provenance	A					机判：`#[derive(GodotClass)] struct GwRootNode` 不是原版类名（我方类）	验收钩子
+T72-695	src/_scaffold/root_wiring.rs	338	new_note	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-696	src/_scaffold/root_wiring.rs	533	type_name	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-697	src/_scaffold/root_wiring.rs	561	module_path	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-698	src/_scaffold/root_wiring.rs	589	kind	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-699	src/_scaffold/root_wiring.rs	625	status	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-700	src/_scaffold/root_wiring.rs	663	slot	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-701	src/_scaffold/root_wiring.rs	668	from_type_name	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-702	src/_scaffold/root_wiring.rs	673	from_module_path	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-703	src/_scaffold/root_wiring.rs	682	is_wired_name	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-704	src/_scaffold/root_wiring.rs	687	is_module_type_name	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-705	src/_scaffold/root_wiring.rs	695	slot_status	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-706	src/_scaffold/root_wiring.rs	890	demo_room	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-707	src/_scaffold/root_wiring.rs	914	demo_targets	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-708	src/_scaffold/root_wiring.rs	938	add	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-709	src/_scaffold/root_wiring.rs	944	empty	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-710	src/_scaffold/root_wiring.rs	958	assemble_demo	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-711	src/_scaffold/root_wiring.rs	972	assemble_demo_with_queue	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-712	src/_scaffold/root_wiring.rs	1117	container	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-713	src/_scaffold/root_wiring.rs	1122	len	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-714	src/_scaffold/root_wiring.rs	1127	is_empty	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-715	src/_scaffold/root_wiring.rs	1135	has	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-716	src/_scaffold/root_wiring.rs	1168	retrievable	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-717	src/_scaffold/root_wiring.rs	1197	has_name	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-718	src/_scaffold/root_wiring.rs	1205	retrievable_name	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-719	src/_scaffold/root_wiring.rs	1213	registered	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-720	src/_scaffold/root_wiring.rs	1218	registered_names	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-721	src/_scaffold/root_wiring.rs	1225	real_managers	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-722	src/_scaffold/root_wiring.rs	1232	stub_managers	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-723	src/_scaffold/root_wiring.rs	1237	game_state	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-724	src/_scaffold/root_wiring.rs	1242	turn_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-725	src/_scaffold/root_wiring.rs	1247	player_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-726	src/_scaffold/root_wiring.rs	1252	soldier_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-727	src/_scaffold/root_wiring.rs	1257	team_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-728	src/_scaffold/root_wiring.rs	1262	mode_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-729	src/_scaffold/root_wiring.rs	1274	tick_handler	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-730	src/_scaffold/root_wiring.rs	1279	life_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-731	src/_scaffold/root_wiring.rs	1284	target_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-732	src/_scaffold/root_wiring.rs	1290	function_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-733	src/_scaffold/root_wiring.rs	1296	obstacle_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-734	src/_scaffold/root_wiring.rs	1303	plane_pos_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-735	src/_scaffold/root_wiring.rs	1311	graphics_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-736	src/_scaffold/root_wiring.rs	1316	effect_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-737	src/_scaffold/root_wiring.rs	1321	entity_effect_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-738	src/_scaffold/root_wiring.rs	1328	rank_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-739	src/_scaffold/root_wiring.rs	1334	name_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-740	src/_scaffold/root_wiring.rs	1340	local_player_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-741	src/_scaffold/root_wiring.rs	1345	computer_player_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-742	src/_scaffold/root_wiring.rs	1352	color_manager	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-743	src/_scaffold/root_wiring.rs	1357	history	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-744	src/_scaffold/root_wiring.rs	1381	interaction_selftest	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-745	src/_scaffold/root_wiring.rs	2018	interaction_selftest_strings	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-746	src/_scaffold/root_wiring.rs	2093	queue	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-747	src/_scaffold/root_wiring.rs	2098	wiring	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-748	src/_scaffold/root_wiring.rs	2107	subscribe	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-749	src/_scaffold/root_wiring.rs	2112	subscriber_count	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-750	src/_scaffold/root_wiring.rs	2117	subscribers	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-751	src/_scaffold/root_wiring.rs	2126	pump	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-752	src/_scaffold/root_wiring.rs	2132	delivered	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-753	src/_scaffold/root_wiring.rs	2137	pumps	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-754	src/_scaffold/root_wiring.rs	2142	queue_len	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-755	src/_scaffold/root_wiring.rs	2151	set_position	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-756	src/_scaffold/root_wiring.rs	2165	set_graphics	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-757	src/_scaffold/root_wiring.rs	2188	positions	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-758	src/_scaffold/root_wiring.rs	2201	graphics	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-759	src/_scaffold/root_wiring.rs	2211	fractional_tick	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-760	src/_scaffold/root_wiring.rs	2224	set_clock	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-761	src/_scaffold/root_wiring.rs	2229	clock_source	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-762	src/_scaffold/root_wiring.rs	2247	time_to_tick	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	薄转发（规则本体在 crate::<原版模块>）
+T72-763	src/_scaffold/root_wiring.rs	2264	tick	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-764	src/_scaffold/root_wiring.rs	2281	process_events	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-765	src/_scaffold/root_wiring.rs	2304	drive_frame	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	薄转发（规则本体在 crate::<原版模块>）
+T72-766	src/_scaffold/root_wiring.rs	2310	frames	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-767	src/_scaffold/root_wiring.rs	2315	ticks	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-768	src/_scaffold/root_wiring.rs	2322	probes	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-769	src/_scaffold/root_wiring.rs	2343	install_kernel_bus	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-770	src/_scaffold/root_wiring.rs	2376	anchor_tick_handler_to_now	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-771	src/_scaffold/root_wiring.rs	2392	kernel_bus	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-772	src/_scaffold/root_wiring.rs	2397	uninstall_kernel_bus	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-773	src/_scaffold/root_wiring.rs	3383	init	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-774	src/_scaffold/root_wiring.rs	3392	reset	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-775	src/_scaffold/root_wiring.rs	3402	subscribe#2	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-776	src/_scaffold/root_wiring.rs	3411	subscriber_count#2	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-777	src/_scaffold/root_wiring.rs	3420	set_elapsed_nanos	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-778	src/_scaffold/root_wiring.rs	3439	elapsed_nanos	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-779	src/_scaffold/root_wiring.rs	3447	drive_frame#2	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-780	src/_scaffold/root_wiring.rs	3456	last_probes	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-781	src/_scaffold/root_wiring.rs	3462	last_ticks	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-782	src/_scaffold/root_wiring.rs	3468	last_pumps	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-783	src/_scaffold/root_wiring.rs	3474	ticks_total	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-784	src/_scaffold/root_wiring.rs	3483	tick_handler_tick	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-785	src/_scaffold/root_wiring.rs	3495	frames#2	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-786	src/_scaffold/root_wiring.rs	3504	probes_total	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-787	src/_scaffold/root_wiring.rs	3513	pumps_total	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-788	src/_scaffold/root_wiring.rs	3524	time_to_tick_nanos	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-789	src/_scaffold/root_wiring.rs	3541	due_sentinel_nanos	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-790	src/_scaffold/root_wiring.rs	3547	fractional_tick#2	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-791	src/_scaffold/root_wiring.rs	3556	queue_len#2	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-792	src/_scaffold/root_wiring.rs	3565	delivered_tags	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	
+T72-793	src/_scaffold/root_wiring.rs	3577	delivered_count	A					我方接线容器 `RootWiring` + 替身事件通道 `KernelBus`（原版对象图是 节点→Backend→容器，T49 §97.7-1）	验收钩子
+T72-794	src/_scaffold/stream_buffer_class.rs	58	init	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-795	src/_scaffold/stream_buffer_class.rs	67	length_prefix_len	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-796	src/_scaffold/stream_buffer_class.rs	73	max_payload	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-797	src/_scaffold/stream_buffer_class.rs	81	max_read_len	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-798	src/_scaffold/stream_buffer_class.rs	88	encode_frame	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-799	src/_scaffold/stream_buffer_class.rs	102	encode_frames	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-800	src/_scaffold/stream_buffer_class.rs	126	decode_one	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-801	src/_scaffold/stream_buffer_class.rs	181	error_messages	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	
+T72-802	src/_scaffold/stream_buffer_class.rs	193	provenance	A					`GwStream` 桥（规则在 `graphwar_stream_buffer`，T58）	验收钩子
