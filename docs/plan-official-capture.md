@@ -73,3 +73,21 @@ boundary_audit --check mismatch 0
 ## 5. 交付报告
 ① 抓到几类/各几帧 ② 与文档/WIRE_SPEC 的逐项差异 ③ 升档了哪些、哪些仍抓不到（缺什么触发条件）
 ④ 9 条自洽断言换了几条 ⑤ 门槛读数 ⑥ 复跑命令 ⑦ 遗留 + §我写错了
+
+---
+
+## 6. 已实测的连通性（2026-11-27，lead 亲手跑）
+
+```
+$ curl https://graphwar.com/graphwar_II_ip.txt
+69.164.213.144:42970          ← 真 broker 地址（TCP 42970，与客户端默认端口一致）
+$ curl https://example.com    → http 200（本机可出网）
+```
+⇒ **任务可执行**，前置核查的第 1 步已完成。官方客户端启动方式：`.reference/game/start_graphwar.sh`
+（它内部 `unset LC_ALL` + `export LC_CTYPE=C.UTF-8` 再 exec `Graphwar.x86_64`）。
+
+**做这件事时注意三条与平时相反的规矩**：
+1. **不要用私有 netns**（平时为了躲 UDP 42968 泄漏才用 `bwrap --unshare-net`；抓包**必须**有真网络）；
+2. **不要碰仓库里的 `client/`**：要跑的是 `.reference/game/` 那套**官方原件**；
+3 . 抓到的字节**只提交解析后的文本**（`fixtures/protocol_live_frames.jsonl` 等），pcap/二进制一律不进仓库。
+
