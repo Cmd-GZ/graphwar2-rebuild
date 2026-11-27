@@ -250,4 +250,26 @@ $PY tools/docsec.py check docs/06-verification.md
 * 我方 23 字段的 `GraphwarPlane` 与原版字段集的**逐字段**对齐（缺 E2 字段名证据）——本轮只给尺寸/构造点。
 
 ## 9. 追记（预注册**之后**发生的事；判据/期望一个字没改，只记事实）
-（本节在跑完后补：范围偏差、预测 vs 实际、门槛读数。）
+
+* **范围偏差（lead 已授权）**：§2 的 `AxisMode` 收敛**必须**动 `src/axis_drawer.rs`（定义在那里，清单里没有它）。
+  我先按"只做在范围内的那一半（`TimeMode`）"推进，同时把裁定请求发给 lead；lead 回**①授权**并给了四条附加条件
+  （单独 commit + 单测钉行为 + 门槛全绿 + docs 写明回退牵连），四条都照做了（见 §2.2 P-B1..P-B7 与 `docs/06` §120.1）。
+  ⇒ **`src/axis_drawer.rs` 的改动是唯一一处清单外改动**，其余文件与清单一致。
+* **两个 commit**：`TimeMode` 一个、`AxisMode` 一个（lead 条件①）。为什么不是一个大 commit：
+  两条收敛**都能独立回退**，`AxisMode` 那条会连带 `const ALL` 的删除。
+* **§1.2 的 E8b 落地情况**：E8b-1（分配尺寸立即数）与 E8b-2（定长拷贝）在 `GraphwarPlane` 上**同时成立且相等**
+  （`__rust_alloc(0x140,8)` + 数据在 +0x30 + 两处 `memcpy(…,0x110)` ⇒ 0x110）；E8b-3（`drop_in_place` 链）没用上。
+  0x50 的临时栈缓冲（`0x4126d2` 那处 `memcpy(0x110)` 之前还有一次 0x110 拷贝到栈）说明**同一条链上有两份 0x110**
+  （栈上临时 + 堆上实例），不矛盾。
+* **§5 的预测 vs 实际**：7 条里 5 条完全命中、1 条半命中（P5 的 E8b 精确尺寸没取到）、1 条**偏保守**
+  （P7 我以为只能维持 `mismatch`+存疑，实际两条独立证据足以把那个 `mismatch` **判掉**）。
+  逐条对照写在 `docs/06` §120.8。
+* **§6 门槛的读数**：`cargo`/`gdext` 从 1520/1650 起，两次 commit 后是 **1539/1669**（+19 条新增 pin 测试，
+  **没有一条断言被删改**）；三轴 647/647/637 未动；`boundary_audit --check` mismatch 0；
+  `struct_audit.py tsv/tsv2/tsv4 --check` 全 OK（`tsv2` 因行号漂移重算过两次、`tsv4` 是本轮新增）。
+* **§7 里说的 `tools/struct_audit.py tsv4` 真的加了**：新增 `tsv4` 子命令 + `_cite`/`_check_cites`/`_width_window`
+  三个小助手（仍是同一个脚本，没有第二个）。`tsv4` 的两条自我约束：①判定列由**现场重算**的窗口/定义处个数驱动；
+  ②表里 **18 条地址引文在写表与 `--check` 时都会重新反汇编复核**，对不上直接红。
+* **本节以外的变更**：`fixtures/struct_audit2.tsv` 与 `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md`
+  是**生成物**（行号/条数随源码变），两次 commit 各重跑一次，属正常跟随。
+

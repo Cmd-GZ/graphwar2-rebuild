@@ -1389,6 +1389,281 @@ def cmd_tsv2(p, args):
 
 
 # ---------------------------------------------------------------------------
+# 第四轮审计表：fixtures/struct_audit4.tsv（T78）
+# ---------------------------------------------------------------------------
+# 与 tsv2 的分工：tsv2 回答「**serde 负载/枚举** 对不对得上」；本表回答
+# `docs/06` §119.9 留下的 **6 条数据结构遗留**（枚举收敛 / 构造点 / 可达性 /
+# 字段数 / 地址字段身份 / 窗口归属）。
+#
+# 判定列与档位列是**人的事**（本工具不给结论）；但本表里的**每一个地址引文都由
+# 工具现场复核**：`tsv4 --check` 会把每条引文的 `(地址, 期望操作数片段)` 重新反汇编
+# 一遍，对不上就红。这就是这张表能当证据链用的原因。
+#
+# 引用格式：`"0x4b7380|A"`… 见 `_cite`；`CITES` 里每条 = (vaddr, 期望出现的操作数/助记符片段)。
+
+
+def _cite(p, va):
+    """反汇编**单条**指令（用于逐条复核引文）。返回 (mnemonic, op_str) 或 None。"""
+    try:
+        b = p.elf.read(va, 15)
+    except Exception:
+        return None
+    if not b:
+        return None
+    for ins in p.cs.disasm(b, va):
+        return (ins.mnemonic, ins.op_str)
+    return None
+
+
+def _check_cites(p, cites):
+    """复核一组引文：每条形如 `"0x4b7380|mov edi, 0x140"`（地址|期望片段）。
+
+    返回 (ok, txt)：ok=False 时 txt 里点名**哪一条**对不上、实际指令是什么。
+    """
+    ok, bad, shown = True, [], []
+    for c in cites:
+        a, want = c.split("|", 1)
+        got = _cite(p, int(a, 0))
+        if got is None:
+            ok = False
+            bad.append("%s 读不出指令" % a)
+            continue
+        text = ("%s %s" % got).strip()
+        if want.strip() not in text:
+            ok = False
+            bad.append("%s 期望含 `%s`，实际 `%s`" % (a, want, text))
+        shown.append("%s `%s`" % (a, text))
+    return ok, ("；".join(bad) if bad else "；".join(shown))
+
+
+def _width_window(p, va, base=None):
+    """同 `_struct_window`，但连**每个偏移的访问宽度**一起给（E7 + 宽度）。
+
+    返回 (基址, ["0x0/8", "0x8/8", …], 下界) 或 None。`base` 指定基址寄存器时只取那一个。
+    """
+    acc = {}
+    for x in _insn_list(p, va):
+        if x.mnemonic not in ("mov", "movsd", "movss", "movaps", "movdqu", "movups",
+                              "vmovaps", "vmovdqu", "vmovups", "movzx"):
+            continue
+        for op in x.operands:
+            if op.type != X86_OP_MEM or op.mem.base == X86_REG_RIP:
+                continue
+            reg = x.reg_name(op.mem.base)
+            if reg in ("rsp", "rbp", "rip") or not (0 <= op.mem.disp < 0x800):
+                continue
+            if base and reg != base:
+                continue
+            acc.setdefault(reg, set()).add((op.mem.disp, op.size))
+    if not acc:
+        return None
+    reg, s = max(acc.items(), key=lambda kv: len(kv[1]))
+    offs = sorted(s)
+    return (reg, ["0x%x/%d" % (d, w) for d, w in offs], max(d + w for d, w in s))
+
+
+def cmd_tsv4(p, args):
+    """写/校验 `fixtures/struct_audit4.tsv`（T78 第四轮：6 条遗留的结案表）。"""
+    import csv  # noqa: F401  （保持与 tsv2 相同的解析口径）
+    src = os.path.join(REPO, "src")
+    files = [os.path.join(src, f) for f in sorted(os.listdir(src)) if f.endswith(".rs")]
+
+    def enum_defs(name):
+        """全 `src/` 里该 `pub enum` 的定义处（= 判「还有没有重复定义」的唯一依据）。"""
+        return [loc for nm, loc, _vs in rust_enums(files) if nm == name]
+
+    def struct_of(path, name):
+        lay = _ours_layout(os.path.join(REPO, path), name)
+        if lay is None:
+            return None, "（该文件**没有**名为 `%s` 的结构体）" % name
+        loc, fields = lay
+        return len(fields), "%s（%s）%d 字段：%s" % (
+            loc, name, len(fields), ", ".join("%s: %s" % f for f in fields))
+
+    rows = []
+    all_cites = []   # 每条 `0xADDR|期望片段`，在写表/校验前**统一逐条复核**（对不上直接红）
+
+    # ---- ① 枚举收敛（两处）----
+    for name, want_one in (("AxisMode", 1), ("TimeMode", 1)):
+        defs = enum_defs(name)
+        win, _ = _struct_window(p, 0x3CB560 if name == "AxisMode" else 0x3CBCE0), None
+        ok = (len(defs) == want_one)
+        rows.append([
+            "① 枚举收敛 `%s`" % name,
+            "定义处 %d 个：%s" % (len(defs), "、".join(defs)),
+            "E5/E6：单态 %s + 跳表变体名（tsv2 该行 `match`）；本轮判据只查**定义处个数**"
+            % ("0x3cb560" if name == "AxisMode" else "0x3cbce0"),
+            "match" if ok else "mismatch",
+            "逐位（变体集合/判别值，见 tsv2）" if ok else "—",
+            "T78 已收敛：`pub use crate::graphwar_mode_manager::%s;` + 固有项合并（`ALL` 只留一处）"
+            % name,
+        ])
+
+    # ---- ② GraphwarPlane 构造点（E8b 完整版）----
+    nf, ours = struct_of("src/graphwar_plane.rs", "GraphwarPlane")
+    all_cites += [
+        "0x4b7380|push rbp",           # IControl>::init 入口（函数存在 = 构造点存在）
+        "0x420dc7|mov rsi, rsp",
+        "0x420dca|call qword ptr [rip + 0x59a960]",
+        "0x420dde|mov edx, 0xf8",
+        "0x4126df|mov edx, 0x110",
+        "0x412704|mov edi, 0x140",
+        "0x412709|mov esi, 8",
+        "0x412723|add r14, 0x30",
+        "0x41272f|mov edx, 0x110",
+    ]
+    rows.append([
+        "② `GraphwarPlane` 构造点 / 尺寸",
+        ours or "?",
+        "构造链：`IControl>::init` **0x4b7380** ← 槽 `0x9bb730`（唯一引用）← 填实例函数 **0x420d80**"
+        "（`lea rdi,[rsp+0x18]` 收 init 返回、按 8+16+`0xf8` 三段拷进 `[rbx]/[rbx+8]/[rbx+0x18]`）"
+        "← 调用者 **0x412510 / 0x414ba0**（后者 = `Gd::new_gd` 链）；"
+        "`0x412510` 里 `__rust_alloc(0x140, 8)` @0x412704，数据指针 = 返回值+0x30，"
+        "随后两次 `memcpy(…, 0x110)` @0x4126df/0x41272f ⇒ **对象数据 0x110 字节 = 272**"
+        "（E8b-1 分配立即数 + E8b-2 定长拷贝，两源一致；E7 下界 0xa0 ≤ 0x110 ✓）",
+        "观测（E8b 精确尺寸）",
+        "观测 E8b-1+E8b-2",
+        "精确尺寸 **0x110**；我方 23 字段的**逐字段**边界仍无 E2 字段名证据 ⇒ 只给尺寸，不裁字段",
+    ])
+
+    # ---- ③ ShotCalculator ----
+    w3 = _width_window(p, 0x3C2BC0)
+    rows.append([
+        "③ `ShotCalculator` 构造点 / 窗口归属",
+        struct_of("src/graphwar_shot_calculator.rs", "ShotCalculator")[1],
+        "锚点 = `GraphwarShotCalculator::calculate_shot_results` **0x3c2bc0**（符号桥 `name_to_addr_v2.tsv`）；"
+        "**符号桥里它只有 `calculate_*` 与 `drop_in_place`，没有 `new`/`init`** ⇒ 无构造点可追（E8b 卡点）；"
+        "派发 = 槽 `0x9bacb0` 2 处（`0x471825` in `0x470eb0`、`0x51a9a1` in `0x51a750`）；"
+        "E7 窗口基址 %s 的 `%s`（含 `0x0/0x8/0x10` = `Vec` 头 + 步长 0x20 的成串偏移：`0x30,0x50,…,0xf0`）"
+        "⇒ **多对象混采**（数组元素基址），不是单个结构体" % (
+            w3[0] if w3 else "?", " ".join(w3[1][:12]) if w3 else "?"),
+        "unknown",
+        "观测 E7+槽 / 推断 窗口归属",
+        "卡点：该类型**没有 `new`/`init` 符号**（arm64 `.symtab` 实证）⇒ 拿不到 E8b；"
+        "E8c `U=0x148` 是**函数自己的栈工作区**（`rcx=[rsp+0xb0]`），不能当结构体上界",
+    ])
+
+    # ---- ④ AxisDrawer / GraphicsManager 可达性（正对照）----
+    all_cites += [
+        "0x4b5df0|push rbp",           # 正对照锚点（GraphwarPlane::draw）入口
+        "0x4e05b0|push rbp",           # AxisDrawer::IControl::draw 入口
+        "0x4e01f0|push rbx",           # AxisDrawer 的 __virtual_call::virtual_fn thunk 入口
+        "0x469390|push r15",           # GraphwarGraphicsManager::new 入口
+    ]
+    rows.append([
+        "④ `AxisDrawer` / `GraphicsManager` 可达性",
+        "`AxisDrawer`（`src/_scaffold/gdext_mod.rs:248`，gdext 类）/ "
+        "`GraphicsManager`（我方**没有**该结构体；有 `GraphwarGraphicsManager`）",
+        "**正对照（先做）**：`addr_probe.py callers 0x4b5df0` ⇒ 槽 `0x9bb7f0` 1 个使用点 **0x42937a**"
+        "（= T66 §119.4 已知派发点）⇒ 扫描器有效。"
+        "`AxisDrawer` 是 **Godot 类**：`IControl>::draw` **0x4e05b0**、`__register_methods` **0x3e9a30**、"
+        "`ImplementsGodotVirtual::__virtual_call::virtual_fn` **0x4e01f0**（体内是 `AxisDrawer`/`process`/"
+        "`upcast_ref` 名字派发器）⇒ 引擎经 `virtual_fn` 回调，**静态 `.data.rel.ro` 槽上本来就没有它**。"
+        "`GraphwarGraphicsManager::new` **0x469390**（普通结构体）有 2 个直接调用者：`0x451303` in `0x4500c0`、"
+        "`0x517d73` in `0x517690` ⇒ 「0 可直接调用」只针对 E7 锚点 `0x468d80`，不是这个类整体",
+        "match（可达性已证）",
+        "观测（指令/槽）",
+        "T66 的「0 直接调用 + 0 槽」是**扫描边界**造成的假象（只扫了 527 个 Location 锚函数）；"
+        "本轮正对照通过后再下结论",
+    ])
+
+    # ---- ⑤ GraphwarGameRecorder ----
+    nf5, ours5 = struct_of("src/graphwar_game_recorder.rs", "GraphwarGameRecorder")
+    w5 = _width_window(p, 0x3D5260)
+    all_cites += [
+        "0x3d50a7|lea rcx, [r13*4]",   # EventInfo 步长 ×5
+        "0x3d50af|add rcx, r13",
+        "0x3d50b2|shl rcx, 4",         # ×16 ⇒ 元素 0x50
+        "0x3cbac7|cmp byte ptr [rdi + 8], 1",   # address 单态的 1 字节 tag
+        "0x3cbadd|mov byte ptr [rax + rsi], 0x2c",  # 追加 ','
+    ]
+    rows.append([
+        "⑤ `GraphwarGameRecorder` 字段/偏移",
+        ours5 or "?",
+        "`new` **0x3d5260** 的窗口基址 %s：`%s` ⇒ **8 个 qword(0x00..0x40) + 1 个 byte@0x48**"
+        "（0x48+1=0x49，8 对齐 ⇒ 尺寸 **0x50**）；E7 锚点 `0x3d4fa0`（`save_event`）只碰 "
+        "`0x0/0x8/0x10`(Vec₁) + `0x20/0x28` + `0x48`；元素步长 **0x50**（`lea rcx,[r13*4]` + "
+        "`add rcx,r13` + `shl rcx,4` @0x3d50a7..0x3d50b2 ⇒ ×5×16）⇒ `EventInfo` 0x50 字节" % (
+            w5[0] if w5 else "?", " ".join(w5[1]) if w5 else "?"),
+        "mismatch",
+        "观测（E7+宽度，指令级）",
+        "我方 `events: Vec`(0x0) / `last_state: u8`(**0x18**) / `subscribed: Vec`(0x20) / `saves: usize`(0x38) = **0x40**；"
+        "原版是 **3 个 24 字节字段(0x0/0x18/0x30) + 1 个 byte@0x48** = **0x50** ⇒ 我方 `last_state` 错位到 0x18"
+        "（我方自己的文档注释写的是「原版 `+0x48`」，与字段顺序**自相矛盾**）+ 多一个 `saves`、少一个 24 字节字段。"
+        "E8b 精确尺寸未取到（Rc/RefCell 的分配点不在 `new` 的两个调用者里），但 10 个槽 + 0x48/1 已经夹死 0x50",
+    ])
+
+    # ---- ⑥ address 身份 ----
+    rows.append([
+        "⑥ `GameInfo.address` 身份",
+        "`src/events.rs` 的 `GameInfo::address: String`（24B）",
+        "E3 `layout 0x5060d0`：`address` off=**0x18**、类型类单态 **0x3cbab0**（`layout` 判「未命中已知指纹」）；"
+        "0x18 起的下一个字段 `current_player_count` off=**0x38** ⇒ 占 **0x18..0x38 = 32 字节**（E3 逐位）；"
+        "单态体 **0x3cbab0**：`cmp byte ptr [rdi+8], 1`（**1 字节判别/状态**）、"
+        "`mov byte ptr [rax+rsi], 0x2c`（向 String 追加 `','` 分隔符）、`mov byte ptr [rdi+8], 2`"
+        "⇒ 被序列化的是一个**带 1 字节 tag 的复合值**（不是裸 `String`）",
+        "推断",
+        "观测（形状）+ 推断（身份）",
+        "身份 `SocketAddr` **仍未证**：缺 ① x86 侧 `core::net::socket_addr::*` 的名字映射"
+        "（arm64 `.symtab` 有这些名，但现成符号桥 `sym_match.py` 只匹配提到 `graphwarrust` 的符号，"
+        "扩它会变成第二个工具 ⇒ 本轮不做）；② 构造点把 32 字节当整体读写的指令（两个已知 GameInfo 调用者"
+        "`0x3cbdb0`/`0x457790` 里都没有 32 字节整体写）⇒ **不许写成结论**",
+    ])
+
+    # ---- ⑦ PatternSegment 窗口归属 ----
+    w7 = _width_window(p, 0x466D20, base="rax")
+    rows.append([
+        "⑦ `PatternSegment` 窗口归属",
+        struct_of("src/graphwar_level_generator.rs", "PatternSegment")[1],
+        "锚点 `0x466d20` = `GraphwarLevelGenerator::generate_level_custom`（`name_to_addr_v2.tsv`）；"
+        "基址 rax 的窗口 `%s` ⇒ 前三个是 **`Vec<T>` 头(ptr/len/cap)**、第 4 个是 **8 字节** @0x48；"
+        "E8a：三个调用者 `lea rdi,[rsp+0x68]`（frame `0xb8`）⇒ `U=0x50`，且 `0x68+0x50=0xb8` = **整帧尾部**"
+        " ⇒ 被传进来的是**一个 0x50 字节、以 `Vec` 开头的父结构体**" % (" ".join(w7[1]) if w7 else "?"),
+        "unknown",
+        "观测（E7+宽度+E8a，指令级）",
+        "⇒ **窗口归属证伪**：这个窗口不是 `PatternSegment`（7 个数值字段、无 `Vec`）⇒ T66 的 `mismatch` "
+        "**作废**，改判 `unknown`；`PatternSegment` 自身布局仍无独立证据（元素步长没找到："
+        "`generate_level_custom`/`generate_level::{{closure}}` 里没有 `×0x30` 的 stride 模式）",
+    ])
+
+    head = [
+        "# struct_audit4.tsv —— T78 数据结构审计表（第四轮：`docs/06` §119.9 的 6 条遗留）",
+        "# 重算/校验：`../.reference/venv/bin/python tools/struct_audit.py tsv4` / `tsv4 --check`",
+        "# 预注册：fixtures/struct_audit_plan4.txt（判据 E1–E8 + 本轮 E8b 完整版 + 期望值，先于本表提交）",
+        "#",
+        "# 列：目标 | 我方 | 二进制证据（地址→指令/槽/单态） | 判定 | 依据档 | 卡点/下一步",
+        "# 判定口径：match = 两边可复核地一致；mismatch = 有指令级证据且不一致；unknown = 只拿到部分证据；",
+        "# 档位：逐位 = 编译期常量逐项校验；观测 = 指令级（地址可复跑）；推断 = 有依据未证。",
+        "# 地址口径：ELF vaddr（RVA）；Ghidra/REA 地址 = 本表地址 + 0x100000（只加一次）。",
+        "# `tsv4 --check` 会把「二进制证据」列里带 `0x…|片段` 的引文**逐条重新反汇编复核**（见 tools/struct_audit.py 的 _check_cites）。",
+    ]
+    cite_ok, cite_txt = _check_cites(p, all_cites)
+    if not cite_ok:
+        print("❌ 引文复核失败（本表的地址引文必须逐条能重新反汇编出期望片段）：", file=sys.stderr)
+        print("   " + cite_txt, file=sys.stderr)
+        return 1
+    text = "\n".join(head + ["\t".join(r) for r in rows]) + "\n"
+    path = os.path.join(REPO, "fixtures", "struct_audit4.tsv")
+    if args.check:
+        old = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+        if old != text:
+            print("struct_audit4.tsv 与二进制不一致（重算即可更新）", file=sys.stderr)
+            import difflib
+            for d in list(difflib.unified_diff(old.splitlines(), text.splitlines(),
+                                               "disk", "recomputed", lineterm=""))[:40]:
+                print(d)
+            return 1
+        print("struct_audit4.tsv OK（%d 行数据；%d 条地址引文逐条复核通过）" % (len(rows), len(all_cites)))
+        return 0
+    open(path, "w", encoding="utf-8").write(text)
+    print("wrote %s：%d 行（%d 条地址引文逐条复核通过）" % (
+        os.path.relpath(path, REPO), len(rows), len(all_cites)))
+    from collections import Counter
+    print("判定：", dict(Counter(r[3] for r in rows)))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # E8 上界夹逼（T66；判据预先写死在 fixtures/struct_audit_plan3.txt §1.2，跑完不许改）
 # ---------------------------------------------------------------------------
 # 三条源，全部**指令级**，且都只证明"某块缓冲有多大"，不证明"那就是这个结构体"⇒ 推断：
@@ -1597,6 +1872,8 @@ def main(argv):
 
     s = sub.add_parser("tsv2"); s.add_argument("--check", action="store_true")
     s.set_defaults(fn=cmd_tsv2)
+    s = sub.add_parser("tsv4"); s.add_argument("--check", action="store_true")
+    s.set_defaults(fn=cmd_tsv4)
 
     s = sub.add_parser("bounds")
     s.add_argument("addr", nargs="+")
