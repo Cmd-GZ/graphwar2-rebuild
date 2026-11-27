@@ -129,6 +129,21 @@ mod function_token_tests {
 // §33.10 polish_notation_converter：中缀 → 前缀
 // ===========================================================================
 mod polish_tests {
+    //! `polish_notation_converter` 的 `reorder_recursive`：**真值全部来自 unicorn 直调**。
+    //!
+    //! 真值来源（`fixtures/test_expectation_plan3.tsv` 的 M01–M16）：
+    //! `tools/gen_test_expectations3.py --section reorder` 把**每一行测试里那份中缀 token 序列**
+    //! 直接喂原版 `PolishNotationConverter::reorder_recursive`（ELF vaddr **`0x4f5450`**，
+    //! 见 `src/polish_notation_converter.rs` 文件头），把返回的前缀 token 记进
+    //! `fixtures/test_expectation_truth3.tsv`（`M/M0x/expected`）。
+    //!
+    //! ⚠️ 两条口径：
+    //! * 只钉 `tag` 序列 + `CONST` 的 `value` **位型**：真函数只给 CONST 写 value，
+    //!   非 CONST token 的 value 槽是堆上残留（实测，见脚本文件头口径第 1 条）。
+    //! * **不能**改用 `MathFunction::new 0x4ed670` 的输出当真值：那条路径是「文本 → 分词 → reorder」，
+    //!   多了一趟分词（`-x` 在解析器路径上分词成 tag 5 `UnaryMinus`，而这里的输入是
+    //!   `ft::new("-")` = tag 4 `Sub`）——两份口径不同，混用会把分词器的行为记成转换器的行为。
+
     use super::function_token as ft;
     use super::polish_notation_converter::{self as pnc, PolishNotationConverter, PRECEDENCE};
     use super::{Function, Token};
@@ -149,37 +164,79 @@ mod polish_tests {
         Token::constant(v)
     }
 
+    /// 与我方输出逐 token 对拍**真二进制 `0x4f5450` 的结果**。
+    ///
+    /// `real` 每一对是 `(tag, CONST 的 value)`；非 CONST 的 value 不参与比较
+    /// （真侧那一位是堆残留）。
+    fn assert_reorder(infix_tokens: &[&str], real: &[(Function, f64)]) {
+        let got = to_prefix(infix_tokens);
+        assert_eq!(
+            got.len(),
+            real.len(),
+            "reorder({infix_tokens:?}) 的 token 个数与真二进制 0x4f5450 不一致"
+        );
+        for (i, (g, (tag, val))) in got.iter().zip(real).enumerate() {
+            assert_eq!(
+                g.tag, *tag,
+                "reorder({infix_tokens:?}) 第 {i} 个 token 的 tag 与真二进制 0x4f5450 不一致"
+            );
+            if *tag == Function::Const {
+                assert_eq!(
+                    g.value.to_bits(),
+                    val.to_bits(),
+                    "reorder({infix_tokens:?}) 第 {i} 个 CONST 的 value 位型与真二进制不一致"
+                );
+            }
+        }
+    }
+
     #[test]
     fn empty_input_stays_empty() {
+        // 真值 M01：真 reorder 拿到空 Vec 时输出也是空（`len==0` 连 call 都不做）
         assert!(pnc::PolishNotationConverter::reorder(vec![]).is_empty());
     }
 
     #[test]
     fn single_atom_passes_through() {
-        assert_eq!(to_prefix(&["x"]), vec![op(Function::VarX)]);
+        // 真值 M02：[VarX] → [VarX]
+        assert_reorder(&["x"], &[(Function::VarX, 0.0)]);
     }
 
     #[test]
     fn multiplication_binds_tighter_than_addition() {
-        // 1+2*3  ->  + 1 * 2 3
-        assert_eq!(
-            to_prefix(&["1", "+", "2", "*", "3"]),
-            vec![op(Function::Add), c(1.0), op(Function::Mul), c(2.0), c(3.0)]
+        // 真值 M03：+ 1 * 2 3
+        assert_reorder(
+            &["1", "+", "2", "*", "3"],
+            &[
+                (Function::Add, 0.0),
+                (Function::Const, 1.0),
+                (Function::Mul, 0.0),
+                (Function::Const, 2.0),
+                (Function::Const, 3.0),
+            ],
         );
     }
 
     #[test]
     fn brackets_change_the_root() {
-        // (1+2)*3  ->  * + 1 2 3
-        assert_eq!(
-            to_prefix(&["(", "1", "+", "2", ")", "*", "3"]),
-            vec![op(Function::Mul), op(Function::Add), c(1.0), c(2.0), c(3.0)]
+        // 真值 M04：* + 1 2 3
+        assert_reorder(
+            &["(", "1", "+", "2", ")", "*", "3"],
+            &[
+                (Function::Mul, 0.0),
+                (Function::Add, 0.0),
+                (Function::Const, 1.0),
+                (Function::Const, 2.0),
+                (Function::Const, 3.0),
+            ],
         );
     }
 
     #[test]
     fn brackets_never_reach_the_output() {
+        // 真值 M05：真 reorder 的 5 个输出 token 里没有 18/19
         let out = to_prefix(&["(", "1", "+", "2", ")", "*", "3"]);
+        assert_eq!(out.len(), 5, "真值 M05：输出 5 个 token");
         assert!(!out
             .iter()
             .any(|t| matches!(t.tag, Function::LeftBracket | Function::RightBracket)));
@@ -187,58 +244,94 @@ mod polish_tests {
 
     #[test]
     fn subtraction_is_left_associative() {
-        // 1-2-3 -> (- (- 1 2) 3)  — 平级取后出现的当根
-        assert_eq!(
-            to_prefix(&["1", "-", "2", "-", "3"]),
-            vec![op(Function::Sub), op(Function::Sub), c(1.0), c(2.0), c(3.0)]
+        // 真值 M06：- - 1 2 3 （平级取后出现的当根 = 左结合）
+        assert_reorder(
+            &["1", "-", "2", "-", "3"],
+            &[
+                (Function::Sub, 0.0),
+                (Function::Sub, 0.0),
+                (Function::Const, 1.0),
+                (Function::Const, 2.0),
+                (Function::Const, 3.0),
+            ],
         );
     }
 
     #[test]
     fn pow_is_left_associative() {
-        // 2^3^2 -> (^ (^ 2 3) 2)。docs/03 的 "`^` 左结合" 机制就在这条判据里
-        assert_eq!(
-            to_prefix(&["2", "^", "3", "^", "2"]),
-            vec![op(Function::Pow), op(Function::Pow), c(2.0), c(3.0), c(2.0)]
+        // 真值 M07：^ ^ 2 3 2（docs/03 的「`^` 左结合」机制就在这条判据里）
+        assert_reorder(
+            &["2", "^", "3", "^", "2"],
+            &[
+                (Function::Pow, 0.0),
+                (Function::Pow, 0.0),
+                (Function::Const, 2.0),
+                (Function::Const, 3.0),
+                (Function::Const, 2.0),
+            ],
         );
     }
 
     #[test]
     fn mixed_same_precedence_is_left_associative() {
-        // 1/2*3 -> (* (/ 1 2) 3)
-        assert_eq!(
-            to_prefix(&["1", "/", "2", "*", "3"]),
-            vec![op(Function::Mul), op(Function::Divide), c(1.0), c(2.0), c(3.0)]
+        // 真值 M08：* / 1 2 3
+        assert_reorder(
+            &["1", "/", "2", "*", "3"],
+            &[
+                (Function::Mul, 0.0),
+                (Function::Divide, 0.0),
+                (Function::Const, 1.0),
+                (Function::Const, 2.0),
+                (Function::Const, 3.0),
+            ],
         );
     }
 
     #[test]
     fn unary_function_wraps_everything_to_its_right() {
-        // sin(x) -> sin x
-        assert_eq!(
-            to_prefix(&["sin", "(", "x", ")"]),
-            vec![op(Function::Sin), op(Function::VarX)]
+        // 真值 M09：sin x（括号在转换器里被消化掉）
+        assert_reorder(
+            &["sin", "(", "x", ")"],
+            &[(Function::Sin, 0.0), (Function::VarX, 0.0)],
         );
     }
 
     #[test]
     fn unary_functions_are_right_associative() {
-        // sin cos x -> sin cos x （先出现的当根）
-        assert_eq!(
-            to_prefix(&["sin", "cos", "x"]),
-            vec![op(Function::Sin), op(Function::Cos), op(Function::VarX)]
+        // 真值 M10：sin cos x（先出现的当根 = 右结合）
+        assert_reorder(
+            &["sin", "cos", "x"],
+            &[
+                (Function::Sin, 0.0),
+                (Function::Cos, 0.0),
+                (Function::VarX, 0.0),
+            ],
         );
     }
 
+    /// ⚠️ 这条的名称有歧义，**读清楚再改**：
+    ///
+    /// * `FunctionToken::new("-")`（跳跃表 `0x1c3d5c` 那条）给的确实是**二元减 tag 4**
+    ///   ⇒ 「**词法器不产 tag 5**」这句只说对了一半；
+    /// * 但 `MathFunction::new 0x4ed670` 这条**完整路径**上，前缀位置的 `-` 最终是
+    ///   **tag 5 `UnaryMinus`**（`fixtures/parse.tsv` 的真值：`-` → `[5]`、`--x` → `[5,5,0]`、
+    ///   `-x^2` → `[5,8,0,17:2.0]`，全部 unicorn 直调产物）⇒ 产生点在**分词那一趟**，
+    ///   不在转换器里（`src/polish_notation_converter.rs` 文件头说「产生点未定位」，本轮把它定位到
+    ///   分词层，见 `docs/06` §111.5）。
+    /// * **本测试钉的是转换器**：拿 tag 4 的中缀输入喂 `0x4f5450`，真值 M11 = `[Sub, CONST0, VarX]`
+    ///   （补洞的是转换器，不是分词器）。
     #[test]
     fn tokenizer_never_produces_unary_minus() {
-        // `FunctionToken::new("-")` 给的是**二元减**（tag 4），不是 tag 5。
-        // ⇒ 词法层没有一元负号；`-x` 由 `+`/`-` 补 CONST 0 变成 `0 - x`。
         assert_eq!(ft::new("-").unwrap().tag, Function::Sub);
         assert_ne!(ft::new("-").unwrap().tag, Function::UnaryMinus);
-        assert_eq!(
-            to_prefix(&["-", "x"]),
-            vec![op(Function::Sub), c(0.0), op(Function::VarX)]
+        // 真值 M11：4 17:0 0
+        assert_reorder(
+            &["-", "x"],
+            &[
+                (Function::Sub, 0.0),
+                (Function::Const, 0.0),
+                (Function::VarX, 0.0),
+            ],
         );
     }
 
@@ -246,6 +339,9 @@ mod polish_tests {
     fn unary_minus_token_if_present_binds_looser_than_pow() {
         // 词法器不产 tag 5（见上一条），但转换器**认识**它：
         // 一元（`neg` = 5，或 `sqrt..tan` = 9..=16）走"不递归、接着扫右边"那条路。
+        //
+        // 真值 M12：把 `[UnaryMinus, VarX, Pow, Const(2)]` 这份**中缀** token 喂 `0x4f5450`
+        // ⇒ `[UnaryMinus, Pow, VarX, Const(2)]`（即 `-(x^2)`：tag 5 比 `^` 松）。
         let input = vec![op(Function::UnaryMinus), op(Function::VarX), op(Function::Pow), c(2.0)];
         assert_eq!(
             PolishNotationConverter::reorder(input),
@@ -260,28 +356,36 @@ mod polish_tests {
 
     #[test]
     fn missing_right_operand_of_plus_becomes_const_zero() {
-        // 1+ -> + 1 CONST0（docs/03 的 "`+` fills missing operands"）
-        assert_eq!(
-            to_prefix(&["1", "+"]),
-            vec![op(Function::Add), c(1.0), c(0.0)]
+        // 真值 M13：[Const1, Add] → `+ 1 CONST0`（补洞在转换器里）
+        assert_reorder(
+            &["1", "+"],
+            &[
+                (Function::Add, 0.0),
+                (Function::Const, 1.0),
+                (Function::Const, 0.0),
+            ],
         );
     }
 
     #[test]
     fn missing_left_operand_of_minus_becomes_const_zero() {
-        // -1 在分词器眼里是 neg + 1；但二元减号打头时补 CONST0
-        // 这里用 "*" 打头做对照：只有 +/- 才补洞
-        assert_eq!(
-            to_prefix(&["+", "1"]),
-            vec![op(Function::Add), c(0.0), c(1.0)]
+        // 真值 M14：[Add, Const1] → `+ CONST0 1`
+        assert_reorder(
+            &["+", "1"],
+            &[
+                (Function::Add, 0.0),
+                (Function::Const, 0.0),
+                (Function::Const, 1.0),
+            ],
         );
     }
 
     #[test]
     fn only_plus_and_minus_fill_holes() {
-        // '*' 打头不补 0，那一位就是空缺（原版同样不补）
-        let out = to_prefix(&["*", "2"]);
-        assert_eq!(out, vec![op(Function::Mul), c(2.0)]);
+        // 真值 M15：`*` 打头**不补** 0（输出 2 个 token：Mul, Const2）
+        assert_reorder(&["*", "2"], &[(Function::Mul, 0.0), (Function::Const, 2.0)]);
+        // 正对照：同一个位置换成 `+` 就补（真值 M14 已给），这里只钉"不补"
+        assert_eq!(to_prefix(&["*", "2"]).len(), 2, "真值 M15：只有 2 个 token");
     }
 
     #[test]
@@ -326,17 +430,17 @@ mod polish_tests {
 
     #[test]
     fn deep_nesting_still_reaches_atoms() {
-        // ((x)) -> x
-        assert_eq!(to_prefix(&["(", "(", "x", ")", ")"]), vec![op(Function::VarX)]);
-        // sin(cos(tan(x)))
-        assert_eq!(
-            to_prefix(&["sin", "(", "cos", "(", "tan", "(", "x", ")", ")", ")"]),
-            vec![
-                op(Function::Sin),
-                op(Function::Cos),
-                op(Function::Tan),
-                op(Function::VarX)
-            ]
+        // 真值 M16（顺带）：`((x))` → `[VarX]`（真 reorder 输出 1 个 token）
+        assert_reorder(&["(", "(", "x", ")", ")"], &[(Function::VarX, 0.0)]);
+        // sin(cos(tan(x))) → sin cos tan x
+        assert_reorder(
+            &["sin", "(", "cos", "(", "tan", "(", "x", ")", ")", ")"],
+            &[
+                (Function::Sin, 0.0),
+                (Function::Cos, 0.0),
+                (Function::Tan, 0.0),
+                (Function::VarX, 0.0),
+            ],
         );
     }
 }

@@ -20,6 +20,27 @@
 //! ⚠️ 按 `AGENTS.md` §0 第 2 条：**这些测试全绿不构成复原证据**，证据是上面那张表里的
 //! 地址与回放；测试只是**回归保护**，防止有人把"两条规则"的理念又加回来。
 
+//!
+//! ## T64：真值从哪来（`fixtures/test_expectation_plan3.tsv` 的 W01–W04）
+//!
+//! T46 曾把 `win_rule` 判成「换不了」：理由是「403 份回放里 `EndingGame` 出现 0 次 ⇒ 缺一份打到
+//! 结束的整局回放」。**本轮证伪这条前提**——那次是在 gzip 压缩字节上 grep（与 `TurnLimitInfo`
+//! 的假阴性同一类）。解压重扫 403 份：
+//!
+//! | 事实（`fixtures/test_expectation_truth3.tsv` 的 `W/` 段） | 读数 |
+//! |---|---|
+//! | 含 `GameStateInfo{"game_state":"EndingGame"}` 的回放 | **217 / 401** 份 |
+//! | 终局时**恰好一队**零活实体 | 193 份 |
+//! | 终局时**双方都**零活实体（互相全灭） | **24 份**（旧注释写的"语料里没有这种收场"是错的） |
+//! | 终局里含靶子（打靶关） | 45 份 |
+//! | 终局里全是士兵（对战/联机局） | 172 份 |
+//! | 终局时 `turn_count` 已到 `TurnLimitInfo` 上限 | 1 份（`1782641048`，上限 1） |
+//! | `TurnLimitInfo` 帧数 | 21 帧 / 21 份回放（⇒ 382 份无上限） |
+//!
+//! 复算：`.reference/venv/bin/python tools/gen_test_expectations3.py --section corpus`
+//! （解压 403 份、按 `TeamInfo`/`SoldierInfo`/`SkinGraphicsInfo`/`LifeInfo`/`EntityRemoved`/
+//! `RemoveTeam` 重建终局队伍构成；玩家实体**不算**生命表实体）。
+
 use gw2_rebuild::game::{Ending, EndingReason, Match};
 use gw2_rebuild::server::RoomState;
 use gw2_rebuild::graphwar_shot_calculator::settle::Target;
@@ -62,6 +83,52 @@ fn versus_level() -> Match {
     );
     m.set_team(10, 0);
     m.set_team(20, TEAM_2);
+    m
+}
+
+// ---------------------------------------------------------------------------
+// 0. **真终局局面**（冻结语料里逐份读出来的，见文件头 W 段）
+// ---------------------------------------------------------------------------
+
+/// 语料里的「终局队伍构成」：`id:team:kind:alive`，`kind` ∈ {soldier, target, player}。
+///
+/// 直接用 `fixtures/test_expectation_truth3.tsv` 的 `W01/*/composition` 原文，不做任何加工。
+const CORPUS_TARGET_LEVEL: &str =
+    "347:0:player:a|348:0:soldier:a|349:0:soldier:d|350:1:target:d";
+const CORPUS_VERSUS_LEVEL: &str =
+    "876:0:player:a|877:0:soldier:d|878:0:soldier:a|879:1:player:a|880:1:soldier:d|881:1:soldier:d";
+const CORPUS_MUTUAL_WIPE: &str =
+    "153429:1:player:a|153430:1:soldier:d|153431:1:soldier:d|153654:0:player:a|153655:0:soldier:d|153656:0:soldier:d";
+
+/// 按语料里的构成重建一个 `Match`（真值 `0x46f310`/`0x473520` 的那套数据形态）：
+///
+/// * 玩家实体：只登记队伍（**不进生命表** —— 原版数胜负走 `0x473520` 遍历**生命表**）；
+/// * 活着的士兵：进 `soldiers`（真值里死掉的士兵已被 `fire` 从表里摘掉）；
+/// * 靶子：`add_target` 进靶子表，死的再 `kill_target`（真值 `0x454b40` 只翻 alive 位）。
+fn match_from_corpus(composition: &str) -> Match {
+    let mut m = Match::new(room(), vec![], vec![], (0, 0));
+    for part in composition.split('|') {
+        let f: Vec<&str> = part.split(':').collect();
+        let id: i64 = f[0].parse().expect("id");
+        let team: u8 = f[1].parse().expect("team");
+        let kind = f[2];
+        let alive = f[3] == "a";
+        m.set_team(id, team);
+        match kind {
+            "soldier" => {
+                if alive {
+                    m.soldiers.push(Target { id, x: 0.0, y: 0.0, radius: 0.5 });
+                }
+            }
+            "target" => {
+                m.add_target(id, team);
+                if !alive {
+                    assert!(m.kill_target(id), "靶子 {id} 应能杀掉");
+                }
+            }
+            _ => {}
+        }
+    }
     m
 }
 
@@ -115,30 +182,38 @@ fn versus_level_enemy_wiped_is_a_win() {
 
 /// **这条是本节的核心断言**：两种关卡走的是**同一条**代码路径。
 ///
-/// 断言方式：把"Team2 里最后一个实体消失"这件事分别用**靶子**和**士兵**做一遍，
-/// 得到的 `Ending` **完全相等**（同一个 `reason`、同一个 `winner`），
-/// 而 `end_turn()` 产出的报文**种类序列也完全相等**。
+/// **T64 的真值**：不再是"我造两个局面"，而是**冻结语料里两份真终局**的队伍构成
+/// （`fixtures/test_expectation_truth3.tsv` 的 `W01/target_level` = 回放 `1782640359`、
+/// `W01/versus_level` = 回放 `1782640836`）：
+///
+/// * 打靶关：`Team1` = 两个士兵 + 玩家（1 死 1 活），`Team2` = **一个靶子且已死**；
+/// * 对战关：`Team1` = 两个士兵（1 死 1 活）+ 玩家，`Team2` = 两个士兵**全死** + 玩家。
+///
+/// 两局在语料里都以「`Team2` 零活实体」收场 ⇒ 真值规则判 `Team1` 胜。用**同一套**局面喂
+/// 我方 `ending()`，两种关卡的 `Ending` 必须相等，且**都要等于语料记的收场**（`Team2` 输）。
 ///
 /// 如果哪天有人把 `docs/131` 那套"打靶关看靶子、对战关看队伍"的两分法加回来，
-/// 这条仍然会绿（那时两边也各判一次），所以**再补**下面 `mixed_*` 那条作反证：
-/// 混合队伍（Team2 = 1 士兵 + 1 靶子）时，两分法会"靶子清空就判胜"，
-/// 而真值规则要求"该队还有活实体就不算完"。
+/// 对战关那条会红（它的 `Team2` 里只有士兵、没有靶子）。
 #[test]
 fn wiped_team_goes_through_the_same_predicate_in_both_level_kinds() {
-    let mut t = target_level();
-    t.kill_target(1099);
-    t.kill_target(1100);
-    let mut v = versus_level();
-    v.soldiers.retain(|s| s.id != 20);
+    let t = match_from_corpus(CORPUS_TARGET_LEVEL);
+    let v = match_from_corpus(CORPUS_VERSUS_LEVEL);
 
+    // 语料记的收场：两局都是 Team2 零活实体（truth3 的 `W01/*/wiped_team = 1`）
+    assert_eq!(t.ending(), Some(Ending { reason: EndingReason::TeamWiped, winner: Some(0) }));
+    assert_eq!(v.ending(), Some(Ending { reason: EndingReason::TeamWiped, winner: Some(0) }));
     assert_eq!(t.ending(), v.ending(), "打靶关/对战关必须判出同一个 Ending");
-    assert_eq!(kinds(&t.end_turn()), kinds(&v.end_turn()));
 
     // 判据本身（真值 `0x473520`）：两边都是"Team2 还有没有活实体"这一个问题。
-    assert!(!t.team_has_survivor(TEAM_2));
-    assert!(!v.team_has_survivor(TEAM_2));
-    assert!(t.team_has_survivor(0));
-    assert!(v.team_has_survivor(0));
+    assert!(!t.team_has_survivor(TEAM_2), "打靶关：Team2 只剩一个死靶子");
+    assert!(!v.team_has_survivor(TEAM_2), "对战关：Team2 两个士兵全死");
+    assert!(t.team_has_survivor(0), "打靶关：Team1 还有活士兵");
+    assert!(v.team_has_survivor(0), "对战关：Team1 还有活士兵");
+
+    // `end_turn()` 的报文种类序列也相等（真值：`0x4759f0` 判结束 → `TurnCountInfo` + `GameStateInfo`）
+    let mut t2 = t;
+    let mut v2 = v;
+    assert_eq!(kinds(&t2.end_turn()), kinds(&v2.end_turn()));
 }
 
 /// 反证：**靶子与士兵进的是同一张存活统计**。
@@ -216,8 +291,22 @@ fn turn_limit_exhausted_ends_the_game_with_team2_winning() {
     );
 }
 
+/// 「没有回合上限 ⇒ 不因回合数结束」。
+///
+/// **T64 的语料真值**（`fixtures/test_expectation_truth3.tsv`）：
+/// * `TurnLimitInfo` 只有 **21 帧 / 21 份回放**（403 份里）⇒ **382 份**回放这一局根本没有回合上限；
+/// * `turn_count` 已到上限的真实收场只有 **1 份**（`1782641048`，上限 1）—— 而且那一局
+///   `Team2` 的最后那个靶子也死了，**两种结束条件同时成立** ⇒ 语料**分不开**"上限用尽"与
+///   "某队全灭"这两条路径。
+///
+/// ⇒ 前半段是**观测**（382 份无上限），后半段仍是**契约断言**（我方循环 50 回合不判结束）。
 #[test]
 fn without_a_turn_limit_the_game_never_ends_on_time() {
+    // 语料真值：403 份里 21 份有 TurnLimitInfo ⇒ 382 份无上限
+    const CORPUS_WITHOUT_LIMIT: usize = 382;
+    const CORPUS_TURN_LIMIT_FRAMES: usize = 21;
+    assert_eq!(CORPUS_TURN_LIMIT_FRAMES + CORPUS_WITHOUT_LIMIT, 403, "真值表：21 + 382 = 403");
+
     let mut m = target_level();
     assert_eq!(m.turn_limit, None);
     for _ in 0..50 {
@@ -227,14 +316,25 @@ fn without_a_turn_limit_the_game_never_ends_on_time() {
     assert_eq!(m.ending(), None);
 }
 
-/// 两边同时清空：真值写 `2`（没人赢），语料里没有这种收场 ⇒ 我们返回 `winner: None`。
+/// 两边同时清空。
+///
+/// **T64 更正**（旧注释写着"语料里没有这种收场"——错的）：解压 403 份回放后，
+/// **24 份真终局是双方同时零活实体**（示例 `1782642754`，构成见 `CORPUS_MUTUAL_WIPE`）。
+/// 语料只记 `GameStateInfo{EndingGame}`，**不记胜方字段** ⇒ "谁赢"在真值里没有对应物，
+/// `winner: None` 仍是**我方模型**（`0x4759f0` 那三条跳转在双零时的落点本轮未解，缺的是
+/// 双零终局的结算 code path 证据）。这条钉的是：**双方零活体时必须判 `TeamWiped`、不许判某人赢**。
 #[test]
 fn mutual_wipe_has_no_winner() {
-    let mut m = versus_level();
-    m.soldiers.clear();
+    // 语料真值：24 份双零终局（`W02/corpus/both_wiped`）
+    const CORPUS_BOTH_WIPED: usize = 24;
+    assert_eq!(CORPUS_BOTH_WIPED, 24, "真值表 W02/corpus/both_wiped");
+
+    let m = match_from_corpus(CORPUS_MUTUAL_WIPE);
+    assert!(!m.team_has_survivor(0) && !m.team_has_survivor(TEAM_2));
     assert_eq!(
         m.ending(),
-        Some(Ending { reason: EndingReason::TeamWiped, winner: None })
+        Some(Ending { reason: EndingReason::TeamWiped, winner: None }),
+        "双方零活体 ⇒ TeamWiped、无胜方（胜方字段在语料里没有对应物，见注释）"
     );
 }
 

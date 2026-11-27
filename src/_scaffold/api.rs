@@ -1824,6 +1824,34 @@ pub unsafe fn register_level_obstacles_method(get: GetProc, library: *mut c_void
 // 7. 测试
 // ---------------------------------------------------------------------------
 
+/// # ⚠️ 这 43 条断言**不构成复原证据**（T64 口径登记，`fixtures/test_expectation_plan3.tsv` B01）
+///
+/// `api` 是**我方自造的 C ABI 接缝**：原版没有这个模块（`src/_scaffold/` 按 `AGENTS.md` §4
+/// 就是「原版没有对应物」的地方）⇒ 它的期望值**只能由我方定义**，换不了外部真值。
+/// T37 审计（`docs/06` §85）把本文件 43 条全判成 `S-self`。
+///
+/// 本模块的断言分四类，**读代码的人请按类理解**（不是所有条都一样空）：
+///
+/// | 类 | 条数 | 断言在证明什么 | 能不能当修复依据 |
+/// |---|---|---|---|
+/// | `parity`（我方 A vs 我方 B） | 6 | `api::calculate_path` 与 `graphwar_shot_calculator::shot_points`
+///   一致（`matches_shot_points_pipeline`）、`normal_mode_is_bit_identical_to_calculate_path`、
+///   `ode_matches_shot_points_without_correction`、`direction_mapping_matches_the_client`、
+///   `obstacle_mask_uses_the_same_board_to_pixel_mapping`、`hit_test_does_not_treat_board_coordinates_as_pixels` | **不能**（两条都是我们自己的实现） |
+/// | `契约`（形状/错误码/不 panic） | 17 | C ABI 结构体字段数与类型、错误码字面量、越界/NaN 输入被拒绝、
+///   极端输入不 panic（`result_*_shape_is_exactly_the_contract` ×3、`*_is_rejected`、
+///   `*_is_an_error_not_a_panic`、`no_panic_on_extreme_inputs` …） | **只能**当"接缝坏了"的警报 |
+/// | `合成几何`（无真值） | 14 | 带手造点的命中/掩膜逻辑（`kills_a_soldier_the_trajectory_passes_through`
+///   等）——原版对应物是 `0x3c2bc0`/`0x3f15b0`，**这里的期望点是编的** | **不能** |
+/// | `外部锚`（可复核） | 6 | `board_to_pixel_constants_are_20x_plus_500`（`.rodata` 常数）、
+///   `all_21_levels_generate_and_match_the_table` / `agrees_with_levelgen_entry_point_bit_for_bit`
+///   （关卡表真值）、`agrees_with_settle_resolve_on_captured_shots`（抓包真值）、
+///   `point_budget_is_the_sampler_budget`（**恒真**：拿我方常量比对我方采样器，留作防退化）、
+///   `same_seed_is_bit_identical_and_new_seed_changes_the_layout`（确定性契约） | 部分可以 |
+///
+/// ⇒ 一句话：**`cargo test` 绿在这里只证明"接缝没坏"**，不证明任何一条游戏行为已复原。
+/// 真正的复原证据在 `graphwar_shot_calculator` / `plane` / `graphwar_obstacle_manager`
+/// 那几处（它们的测试对的是 unicorn 直调产物与抓包）。
 #[cfg(test)]
 mod tests {
     use super::*;
