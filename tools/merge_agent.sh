@@ -69,6 +69,8 @@ echo "== 5/5 门槛 + 提交 =="
 export PATH="$PWD/.reference/venv/bin:$PATH"
 COVERAGE_MATRIX_UPSTREAM="${COVERAGE_MATRIX_UPSTREAM:-$PWD/.reference/upstream}" \
   python3 tools/coverage_matrix.py >/dev/null 2>&1
+# function_coverage 也是生成物：第 3 步为保证不冲突取了 master 版，这里必须按当前 src 重算
+python3 tools/function_coverage.py >/dev/null 2>&1
 python3 tools/docsec.py check docs/06-verification.md | tail -2
 python3 tools/check_doc_refs.py 2>&1 | tail -1
 git add -A
