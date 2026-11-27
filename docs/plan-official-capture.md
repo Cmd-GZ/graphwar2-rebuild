@@ -15,6 +15,28 @@ LockInfo · ChatMessage · GameHeartbeat · GameRemoved · TurnLimitInfo · Clea
 ```
 ⇒ 它们只能停在 `推断`。抓一次真实会话即可把它们升到 `观测`，并把对应的 9 条自洽断言换成真值。
 
+### 0.1 已经查到的开局条件（2026-11-27，`strings` 实测）
+
+**官方客户端整套都在本机**，不用另找：
+
+```
+.reference/game/Graphwar.pck          ← 官方资源包（不是 recovered-src，是原件）
+.reference/game/Graphwar.x86_64       ← 官方 Godot 可执行
+.reference/game/libgraphwarrust.so    ← 官方 Rust 内核（与 .reference/steam/2026-08-28 同源）
+.reference/game/start_graphwar.sh     ← 启动脚本
+```
+
+**broker 地址的来源是显式的**（`.so` 的 `.rodata` 串）：
+
+```
+https://graphwar.com/graphwar_II_ip.txt        ← 默认从这儿取 broker 地址
+"Failed to get global server address."
+CLI 参数：--broker-address / --broadcast-port / --logger-port / --server-port / --crash-report-address
+   （"Address of the broker server to connect (e.g. 127.0.0.1:42970). If not specified, the address is
+     fetched from https://graphwar.com/graphwar_II_ip.txt"）
+```
+⇒ 第一步就是 `curl https://graphwar.com/graphwar_II_ip.txt` 拿到真 broker 地址，再确认 TCP 可达。
+
 ## 1. 前置核查（先做，做不到就如实报"网络不可达/无法复现会话"）
 
 1. **官方客户端能不能在这台机器上跑起来并连上服务端**：

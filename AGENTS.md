@@ -217,6 +217,11 @@ GIT_SSH_COMMAND="ssh -F /dev/null" git push origin master   # 主线分支名是
 两个仓库都在 **2026-11 改过名**（旧名 `graphwar-algorithm-analysis` / `graphwar2` 已失效）：
 `git@github.com:Cmd-GZ/graphwar2-analysis.git` 与 `git@github.com:Cmd-GZ/graphwar2-rebuild.git`。
 
+**提交作者（2026-11-27 校准，必须遵守）**：一律用 `git config --global` 里配的作者
+（当前 `Cmd-GZ <newsupergodg@gmail.com>`）。**仓库级 `user.name`/`user.email` 已被移除**（它曾把 177 个提交写成 `CG <cg@local>`），
+子 agent 也**不许**用 `git -c user.name=…`、`GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME` 或其他方式覆盖作者。
+自查：`git log -1 --pretty='%an <%ae>'` 必须等于 `git config --get user.name`。
+
 子 agent 一律推**自己的分支**（`git push origin HEAD:refs/heads/agent/<topic>`），不要直接推 `main`。
 
 ## 间接调用与函数归属（2026-11 新学到的，务必照用）
