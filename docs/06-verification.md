@@ -21896,12 +21896,15 @@ E 负载结构体 2 + 输入适配 1 / F 分发与查表 2 / G 外部枚举（`f
 （`src/graphwar_lan_vbox.rs` 里的 `room_name: String` 那组字段是**UI 行节点**的视图模型
 —— 原版 `GraphwarLanVBox` 的行控件，不是 wire 视图；那份文件归 t71，本轮没碰。）
 
-### 122.6 门槛（全部自己跑，读数都是本轮实测）
+### 122.6 门槛（全部自己跑，读数都是**本轮 rebase 到 master 之后**重测的）
 
-| 门槛 | 读数 | 与基线 |
+> ⚠️ 口径：本节最初是在分支起点 `38f217e` 上量的（那时 cargo 1529 / gdext 1659）；**已 rebase 到
+> master `8aa8a8f`**，下面这些数是 rebase 后在 rebase 树上**重新跑**的（master 侧 T73 净 +1 条测试）。
+
+| 门槛 | 读数（rebase 后） | 与基线 |
 |---|---|---|
-| `cargo test --offline` | **1529 passed / 0 failed / 1 ignored** | 1520 → +9（新增 9 条测试，无回归） |
-| `cargo test --offline --features gdext-bindings` | **1659 / 0 / 1** | 1650 → +9 |
+| `cargo test --offline` | **1530 passed / 0 failed / 1 ignored** | 38f217e 基线 1520 + 本轮 9 条新测试 + master 净 1 |
+| `cargo test --offline --features gdext-bindings` | **1660 / 0 / 1** | 1650 + 9 + 1 |
 | `selftest` | **757 / 0 / 1 skip**，`groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)` | 不变 |
 | headless 14 脚本 | **1978 / 0**（assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 378 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 97 / play_flow 234 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike_class 27） | 不变 |
 | 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（一位未退） | 不变 |
