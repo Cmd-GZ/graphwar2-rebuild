@@ -22738,9 +22738,11 @@ R-OTHER/R-REAL/R-UNKNOWN 见 §3。
 2. **`na:std-mono` 12 条**：全部在 `graphwar_function_evolutionator.rs`，成 6 对（FDE 尺寸逐对相同）、
    每对一条 Location `169:94`、另一条 `273:90`（两个比较器站点）、三段自递归 + 元素步长 `0x150`、
    比较器 = `ucomisd; jp→panic`（`partial_cmp().unwrap()`）。⇒ 与 T71 §123.1 完全一致，**独立复算通过**。
-3. **`na:other` 7 条**：`graphwar_nodes.rs` 的 7 条 `get_node_by_name` 族——**FDE 尺寸逐字节相同 0xf9**、
-   Location 全是 `graphwar_nodes.rs:8:62`、**调用点数各自不同（9/4/7/5/1/2/1）** ⇒ 我方**一个泛型 fn** 的 7 份
-   单态化实例。源码层写 1 个泛型即覆盖 ⇒ 不是 7 个缺口。
+3. **`na:other` 7 条**：`graphwar_nodes.rs` 的 7 条 `get_node_by_name` 族——FDE 尺寸全 `0xf9`，且**字节级同体**：
+   与 `0x3aaea0` 逐字节比**只有 26 字节不同 = 13 处 `rip` 相对位移**（指向每类型各自的槽），引用的
+   `.rodata` 字面量完全相同（`0x1bd8f2` = `upcast_ref`、`0x1bd8fc` = `Upcast failed…`），Location 全是
+   `graphwar_nodes.rs:8:62`，**调用点数各自不同（9/4/7/5/1/2/1）** ⇒ 我方**一个泛型 fn** 的 7 份单态化实例。
+   源码层写 1 个泛型即覆盖 ⇒ 不是 7 个缺口。
 4. **`unknown` 12 条**（**计入缺口，保守**）：
    - **4 条地址不是 `.eh_frame` 函数起点**：`0x4eb86a`/`0x4eb94b`/`0x4ebb68`/`0x4eccb3`（全在 `math_function.rs`，
      落在别的 FDE 内部；从该地址反汇编即错位）⇒ **原版函数边界本身不可判**，缺 Ghidra/.eh_frame 边界裁决。

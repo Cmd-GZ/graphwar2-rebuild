@@ -283,8 +283,10 @@ MANUAL = {
     "0x520100": ("unknown", "同 0x5153f0（与它同处 .data.rel.ro 表 0x961fc0/0x961fc8 相邻两项）"),
     # --- 泛型单态化：7 条同尺寸同 Location=1 个源码 fn 的实例 ---
     **{a: ("na:other",
-           "我方源码层是**一个泛型 fn**（hyb 名 GraphwarNodes::get_node_by_name）：7 条 FDE 尺寸逐字节相同 0xf9、"
-           "Location 全是 graphwar_nodes.rs:8:62、调用点数各自不同（9/4/7/5/1/2/1）⇒ 同一 fn 的 7 份单态化实例，"
+           "我方源码层是**一个泛型 fn**（hyb 名 GraphwarNodes::get_node_by_name）：7 条 FDE 尺寸全 0xf9、"
+           "**字节级同体**（与 0x3aaea0 逐字节比只有 26 字节不同 = 13 处 rip 相对位移，指向每类型各自的槽）、"
+           "引用同一批 `.rodata` 字面量（0x1bd8f2 `upcast_ref` / 0x1bd8fc `Upcast failed…`）、"
+           "Location 全是 graphwar_nodes.rs:8:62、调用点数各自不同（9/4/7/5/1/2/1）⇒ 同一泛型 fn 的 7 份单态化实例，"
            "不是 7 个缺口（写 1 个泛型即覆盖）")
        for a in ("0x3aaea0", "0x3ab290", "0x3ab390", "0x3ab490", "0x3ab690", "0x3ab790", "0x3ab890")},
     # --- math_function：地址不是 .eh_frame 函数起点 ---
