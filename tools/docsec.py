@@ -19,6 +19,8 @@ python3 tools/docsec.py merge  docs/06-verification.md \
 
 ## 判定
 - `重复号`：同一个 `## N.` 出现 ≥2 次 ⇒ **错误**（历史事故的直接原因）；
+- `空心节`：某节正文 < 3 行而紧邻下一节 ⇒ **错误**（2026-11-27 真发生过：手工解冲突把 §113 的 217 行正文吞掉，只剩标题；
+  而 `check_doc_refs.py` 只查编号连续性，抓不到）；
 - `断号`：`N` 与 `N+1` 之间缺号 ⇒ 警告（`docs/06` 的 §43 历史上本就缺）；
 - `冲突标记`：`<<<<<<<` / `=======` / `>>>>>>>` ⇒ **错误**。
 """
@@ -64,9 +66,19 @@ def report(path):
         print(f"  ⚠ 断号: {gaps}")
     if markers:
         print(f"  ✗ 残留冲突标记行: {markers[:8]}{' …' if len(markers) > 8 else ''}")
-    if not dup and not markers:
-        print("  ✓ 无重复号、无冲突标记")
-    return 1 if (dup or markers) else 0
+    # 空心节检测：2026-11-27 引入（起因：手工解冲突把 §113 的 217 行正文整体丢掉，只剩标题，
+    # 而 check_doc_refs 只查编号连续性 ⇒ 没人发现）。判据：某节正文 < 3 行且紧邻下一节。
+    hollow = []
+    for idx, (n, body) in enumerate(blocks):
+        nxt = blocks[idx + 1][0] if idx + 1 < len(blocks) else None
+        if nxt is not None and len(body) < 3:
+            hollow.append((n, len(body) - 1, nxt))
+    if hollow:
+        print("  ✗ 空心节（正文 <3 行，疑似合并时正文被吞）: "
+              + ", ".join(f"§{n}(={bl}行)→下一个§{nx}" for n, bl, nx in hollow))
+    if not dup and not markers and not hollow:
+        print("  ✓ 无重复号、无冲突标记、无空心节")
+    return 1 if (dup or markers or hollow) else 0
 
 
 def sort_file(path):
