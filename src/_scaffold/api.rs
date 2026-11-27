@@ -678,7 +678,16 @@ fn api() -> Option<&'static Api> {
     API.get()
 }
 
-unsafe fn sym(get: GetProc, name: &str) -> usize {
+/// 引擎接口名 → 函数指针（`get_proc_address` 包装）。
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// `get_proc_address` 本身是 GDExtension 的入口 API，原版由 `#[gdextension]` 宏生成、
+/// 源码里没有这层。我方有**两个**手写入口层（`gdext_class`/`axis_drawer_class` 的 C ABI
+/// 与 `gdext_mod` 的官方 gdext），它们都要按名字查引擎指针。T72 之前 `api.rs` 与
+/// `_scaffold/axis_drawer_class.rs` 里各有一份**逐字符相同**的实现（台账 C 档 `sym`）；
+/// 现在只留这一份，`axis_drawer_class.rs` 改 `use crate::_scaffold::api::sym`。
+pub(crate) unsafe fn sym(get: GetProc, name: &str) -> usize {
     let mut c = Vec::with_capacity(name.len() + 1);
     c.extend_from_slice(name.as_bytes());
     c.push(0);

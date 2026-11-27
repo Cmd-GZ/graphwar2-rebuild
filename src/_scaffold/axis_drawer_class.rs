@@ -428,12 +428,11 @@ unsafe extern "C" fn axis_line_count_formula_call(
 // 6. 注册
 // ---------------------------------------------------------------------------
 
-unsafe fn sym(get: GetProc, name: &str) -> usize {
-    let mut c = Vec::with_capacity(name.len() + 1);
-    c.extend_from_slice(name.as_bytes());
-    c.push(0);
-    get(c.as_ptr()) as usize
-}
+// `sym` **不在这里**（T72 归一）：本文件原来有一份与 `_scaffold/api.rs` 逐字符相同的
+// 实现（台账 C 档 `sym`）。两个手写入口层（C ABI / gdext）都要按名字查引擎指针 ⇒
+// 真值实现留在 `api::sym`，这里只 import。类型别名 `GetProc` 在两边是同一个函数指针
+// 类型（`unsafe extern "C" fn(*const u8) -> *mut c_void`），不需要转换。
+use crate::_scaffold::api::sym;
 
 /// 造一个 `StringName`（拉丁 1 字符即可，这里全是 ASCII）。
 unsafe fn sn(f_sn: FnSnNew, text: &str) -> Box<Slot> {
