@@ -118,10 +118,10 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
   `tools/frame_capture.py` 已加硬闸（缺 `--seed-replays` 直接报错退出）。
   同类陷阱：**任何「两侧都停在同一个错误画面」的采集都会假装通过**。
 - **护栏语料必须冻结**：三轴数字（`fire` / `batch` / `batch_conv`）是在
-  `.reference/replays/gw2-replays-snapshot/replays` 这 **401 份回放的冻结快照**上量的。
+  `.reference/replays/gw2-replays-snapshot/replays` 这 **401 份回放的冻结快照**上量的（目录里 **403 个条目** = 401 份回放 + `MANIFEST.tsv` + `SHA256SUMS`；**别说"403 份回放"**）。
   **把新样本拷进快照 ⇒ 三轴数字全变**（401→403 那次：内容 647→654、批 1080→1094，
   护栏校验报 7 项不一致）。**新样本另开目录（如 `.agent-work/replay-new/`），不许混进快照。**
-  指纹登记在 `fixtures/guardrails.json` 的 `corpus`（403 个文件的逐份 sha256），
+  指纹登记在 `fixtures/guardrails.json` 的 `corpus`（`count=403` 条目 / `replays=401`，逐份 sha256），
   `tools/bit_exact_attrib.py --check-baseline --snapshot <快照目录>` 会**先比语料再比数字**，
   多了/少了/内容变了哪个文件直接点名。真要换语料：`--update-corpus` 重登记 + `docs/06` §41 写明 + 三轴全部重算。
 
