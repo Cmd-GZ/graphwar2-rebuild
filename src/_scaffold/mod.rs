@@ -39,11 +39,9 @@ pub mod diffconv;
 // struct 与方法体写在同一个 `function_drawer.rs` 里（`panic::Location` 为证）。
 // T57：`entity_drawer_class` 的 gdext 节点类已搬回 `src/entity_drawer.rs` —— 原版把 `#[derive(GodotClass)]`
 // struct 与方法体写在同一个 `entity_drawer.rs` 里（`panic::Location` 为证）。
-// 三个「基类不是 Control」的类：`GraphwarRootNode`（`Node`）、`GraphwarLanVBox`
-// （`VBoxContainer`）、`GraphwarAdSwitch`（基类未定，按 `Node` 落）。用同一套模板，
-// 只有虚方法块不同（`docs/16-client.md` 本轮新增的那一节）。只在 `gdext-bindings` 下编译。
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_ad_switch_class;
+// T63：`graphwar_ad_switch_class` 的 gdext 节点类已搬回 `src/graphwar_ad_switch.rs` —— 原版把
+// `#[derive(GodotClass)]` struct 与方法体写在同一个 `graphwar_ad_switch.rs` 里
+// （`panic::Location`：`_::__init::__inner_init 0x4e9c90` → 本文件 45:1）。
 // T57：`graphwar_lan_vbox_class` 的 gdext 节点类已搬回 `src/graphwar_lan_vbox.rs` —— 原版把 `#[derive(GodotClass)]`
 // struct 与方法体写在同一个 `graphwar_lan_vbox.rs` 里（`panic::Location` 为证）。
 // T57：`graphwar_root_node_class` 的 gdext 节点类已搬回 `src/graphwar_root_node.rs` —— 原版把 `#[derive(GodotClass)]`
@@ -53,8 +51,9 @@ pub mod graphwar_ad_switch_class;
 // struct 与方法体写在同一个 `graphwar_button.rs` 里（`panic::Location` 为证）。
 // T57：`graphwar_function_input_class` 的 gdext 节点类已搬回 `src/graphwar_function_input.rs` —— 原版把 `#[derive(GodotClass)]`
 // struct 与方法体写在同一个 `graphwar_function_input.rs` 里（`panic::Location` 为证）。
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_setup_control_class;
+// T63：`graphwar_setup_control_class` 的 gdext 节点类已搬回 `src/graphwar_setup_control.rs` —— 原版把
+// `#[derive(GodotClass)]` struct 与方法体写在同一个 `graphwar_setup_control.rs` 里
+// （`panic::Location`：`_::__init::__inner_init 0x4bcc60` → 本文件）。
 
 // T57：`effect_drawer_class` 的 gdext 节点类已搬回 `src/effect_drawer.rs` —— 原版把 `#[derive(GodotClass)]`
 // struct 与方法体写在同一个 `effect_drawer.rs` 里（`panic::Location` 为证）。

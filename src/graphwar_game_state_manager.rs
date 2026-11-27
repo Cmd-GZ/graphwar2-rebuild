@@ -104,7 +104,7 @@
 //! | `new_connection` `0x477140` | 先比事件 tag（`cmp [rsi], 0x8000000000000005`）、按 `[self+0x120]==1` / `[self+0x11e]` 两个状态位分两路，每路 1 条 `add_event`；再 1 次 `get_module_wk`（`0x46d8c0`，`0x47720f`）与 2 条 `add_event`（其中一条 **tag 30 `GameStateInfo{1}`**，另一条在 `GET_MODULE` 之后；这两条的载荷形状**未解**） | 这段是**整表重播**：我方没有"把当前局面重播给新连接"的入口，也没有那两个状态位 ⇒ 要写就是**新行为**（`dispatch/95` 红线：不许顺手加） |
 //! | `connection_removed` `0x477540` | 删连接相关表项 + **调 `execute_results`（`0x472470`）** + 2 条 `add_event` | 我方 `Match` 没有"连接 → 实体"的映射（连接是 `_scaffold` 的概念），也没有 `connection_removed` 的入口 |
 //! | `function_points` `0x4758b0` | 只转发（体内 1 条 `add_event`，`docs/161` §2 已记"无调用，锚 1129/1135"） | `game.rs:1096` 的横幅早已登记：我方**不存提交**（收集阶段在 `graphwar_game_server`），这一条没有落点 |
-//! | `chat_message` `0x473d00` | 体内 **0** 条 `add_event`（纯转发给订阅者） | 聊天链在 `_scaffold/graphwar_setup_control_class.rs`（`chat_message` 信号），不在本模块 |
+//! | `chat_message` `0x473d00` | 体内 **0** 条 `add_event`（纯转发给订阅者） | 聊天链在 `graphwar_setup_control.rs` 的节点类（`chat_message` 信号；T63 已从 `_scaffold` 搬回），不在本模块 |
 //!
 //! ⇒ 这一格**没有升到 `wired`**：订阅方向 7/7 已落地、发方向只有 1 类报文落地，
 //! 而 4/7 个处理器缺的是**行为**（要新写，不是搬移）。缺什么写在 `docs/161` §2.4。
