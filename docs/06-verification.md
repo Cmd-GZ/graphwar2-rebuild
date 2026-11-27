@@ -23784,3 +23784,269 @@ python3 tools/bit_exact_attrib.py --json .agent-work/ev/c.jsonl --check-baseline
 **回退**：三个 commit 互相独立，`git revert` 任一个都行；`b4a8553` 只依赖 `4d8150d` 引入的
 `score_from_terms`。改回旧行为 = revert `4d8150d`（b4a8553 前向兼容，因为 `score_from_terms` 会消失 ⇒
 先 revert b4a8553）。
+
+## 132. T86 度量分母总清算：**527 / 885 / 13,263 是三个不同的东西** + 13,263 条**全量**分类（real-missing 542 / na 9,104 / unknown 3,208）+ 同源 Android 构建的**真名普查**（游戏本 crate 只 **1,244** 条）⇒ **真正还差 ≈ 555 个函数**（2026-11-27，任务 `task-82` / 分支 `agent/metric-total`）
+
+> **判据先写死再跑**：[`fixtures/global_triage_plan.txt`](../fixtures/global_triage_plan.txt)（单独 commit `c6acc6d`）
+> + 同文件 **§7 勘误 E1–E3**（追加式：写于全量跑完、抽样复核第一/二轮之后，见 §132.5）。
+> **逐条产物**：[`fixtures/global_triage.tsv`](../fixtures/global_triage.tsv)（**13,263 行** × 12 列）、
+> 抽样 [`fixtures/global_triage_sampling.tsv`](../fixtures/global_triage_sampling.tsv)（268 行，含逐条裁决）、
+> 兄弟构建普查 [`fixtures/global_triage_android_census.tsv`](../fixtures/global_triage_android_census.tsv)、
+> 模块表 [`fixtures/global_triage_modules.tsv`](../fixtures/global_triage_modules.tsv)。
+> **工具**：`tools/global_triage.py`（新脚本，**不改**任何既有计分工具、不写回 `function_coverage.tsv` / `f3_triage.tsv`）。
+> **口径**：地址 = ELF vaddr（RVA）；函数范围 = Ghidra funcstart 分区 `[self,next)`（另记 `.eh_frame` FDE 尺寸）；
+> 归属 = `panic::Location`（**不要求 `src/` 前缀**——这是与 527 口径的关键差别）；反汇编 = capstone x86-64。
+
+### 132.0 一页结论
+
+**① 三个分母的关系（不是同一件事的三种精度，是三套不同的东西）**
+
+| 数 | 是什么 | 证据 | 今天能复算吗 |
+|---|---|---|---|
+| **527** | 引用 `src/<x>.rs` 的 `panic::Location` 的 `.text` 函数数 = **能硬归属到某个原版源文件**的函数数 | **硬**（Location 机制） | **能，本轮独立复算 = 527/527 命中**（§132.1） |
+| **885** | `docs/02` §10 的**历史读数** = 441 观测（Location 种子）+ **444 推断**（沿直接调用图扩散 3 轮） | 观测 + **推断** | **不能**（旧管线要的 `analysis/xrefs.pkl`、`analysis/insns.pkl` 不在本 checkout）。同规则用今天的 527 当种子重算 = **527 + 558 = 1,085** |
+| **13,263** | Ghidra 侧 `.text` 内**全部**可分析函数（13503 − 无 `.eh_frame` 的汇编桩） | 函数表（不涉归属） | 能（`funcstarts_ghidra_va.pkl`） |
+
+⇒ **527 与 885 是两套归属法的结果，885 不是"527 加上一些"，也不是 527 的上界**：
+`885 = 441(硬) ∪ 444(推断)`，而今天的 527 ⊇ 441 ⇒ `885 − 527 = 444 − 86 = 358`，
+这 358 条的构成是 **"444 条只有调用图推断、没有 Location 锚"减去"885 之后新找到的 86 条锚"**。
+（`527 ∩ 444推断 = ∅` 由定义成立：推断只标"没有锚"的函数。）**358 里没有一条是 na 或重复计**，
+它是**两个时点的口径差**：885 用的是 441 个种子，今天有 527 个。
+
+**② 13,263 条全量分类（`fixtures/global_triage.tsv`，五层证据、六类）**
+
+| 类别 | 条数 | 占比 | 主要证据层 | 进"诚实缺口"？ |
+|---|---|---|---|---|
+| `implemented`（F1 312 + F2 97） | **409** | 3.08% | L1（527 台账） | 否（已实现） |
+| `real-missing` | **542** | 4.09% | L4 推断 245 / L5 布局 207 / L1-t82 49 / L3 强串 41 | **是**（抽样纠偏后 ≈ **450**） |
+| `na:std-mono` | **1,494** | 11.26% | `/rustc/…/library/…` Location 硬证据 | 否 |
+| `na:gdext-glue` | **1,456** | 10.98% | gdext 的 git-checkout Location + 结构规则 | 否 |
+| `na:other` | **6,154** | 46.40% | 三方 crate Location + 布局局部性 + 泛型/derive | 否 |
+| `unknown` | **3,208** | 24.19% | 无（判不了） | **是**（保守） |
+| 合计 | 13,263 | 100% | — | — |
+
+`na:*` 合计 **9,104 = 68.6%**。证据层分布：`L1-location` 2,988 / `L1-t82` 111 / `L2-struct` 41 /
+`L3-str` 497 / **`L5-region` 5,278**（布局局部性，推断）/ `L4-prop` 1,195（调用图扩散，推断）/ **`L-none` 3,153**（判不了）。
+
+**③ 战略结论（一句话）**：**真正还差 ≈ 555 个函数（区间 500–600）**，不是 53/65（T82 只看了 527 内部），
+也不是 12,736（那里面 **≈90% 是 std/三方/gdext/C++ 库，不是我们要写的源码**）。
+最集中的 5 个模块：`graphwar_module_container`(49)、`graphwar_game_state_manager`(35)、
+`graphwar_setup_control`(33)、`graphwar_root_node`(33)、`graphwar_event`(31)（§132.6）。
+
+### 132.1 527 与 885 的关系：358 条到底是什么（**可复算**）
+
+**先做正对照：527 这个分母本轮用**另一份实现**独立复算，结果一模一样。**
+`tools/global_triage.py` 把 `.data.rel.ro` 里 `{file,len,line,col}` 结构经 `.rela.dyn`
+（`R_X86_64_RELATIVE`）还原，接受**任何**文件路径（不只 `src/`）：
+
+```text
+$PY tools/global_triage.py --stats         # 内部统计：引用 crate-local（src/）Location 的函数
+引用 crate Location 的函数: 527（其中不在 527 台账: 0）
+```
+
+⇒ **527 是可复算的硬读数**，`fixtures/function_coverage.tsv` 的分母站得住。
+
+**885 的复算现状（这是本轮挖到的一条"旧数字不可复跑"）**
+
+| 步骤 | 结果 |
+|---|---|
+| 旧管线的输入 | `tools/propagate.py` 需要 `analysis/xrefs.pkl` + `analysis/insns.pkl`；**本 checkout 的 `.reference/upstream/analysis/` 只有 `funcstarts_ghidra_va.pkl`** ⇒ 旧管线**跑不起来** |
+| 本轮重建调用边 | 全 `.text` 线性反汇编，`call rel32` 目标**按 funcstart 归属**（与 `propagate.py` 同口径）⇒ **35,652 条边**（`docs/02` §10 记的是 34,326，差 3.9%：反汇编/去重细节） |
+| 同规则（3 轮 / ≥2 条已标注邻居 / ≥2/3 多数）用 **527** 当种子 | **527 观测 + 558 推断 = 1,085**（8.2% of 13,263） |
+| 若把调用目标收紧成"必须正好是 funcstart"（第一版实现） | 527 + 228 = 755 ⇒ **边口径**就能让推断数从 558 掉到 228，这是 885/1,085 差异的主因之一 |
+
+**357/358 的算术分解（可复算）**：
+
+```text
+885（历史）    = 441 观测 + 444 推断
+今天          = 527 观测 + 558 推断（同规则重算）= 1,085
+885 − 527     = 444 − (527 − 441) = 444 − 86 = 358
+  其中 444 = 只有推断、没有任何 Location 锚（⇒ 定义上不在 527 里）
+       86 = 885 之后新找到的 Location 锚（441 → 527）
+1,085 − 885  = 200 = 86（种子变多）+ 114（种子多 ⇒ 扩散更远）
+```
+
+> **结论**：把 885 当"我们看过 885 个函数"是错的——其中 **444 条只是推断**；
+> 把它当"上限"也错——同规则今天已是 **1,085**。**引用 885 时必须同时写"441 观测 + 444 推断（2026-11 初，
+> 旧管线已不可复跑）"**，否则读者会误以为是硬归属。
+
+### 132.2 为什么 527 是"可度量下限"而不是"模块规模"：12,736 条 + 同源构建真名普查
+
+`13,263 − 527 = 12,736` 条**一个 `src/` Location 都不引用**（96.05%）。本轮第一次把它们**逐条**过了一遍判据
+（§132.3），但更硬的证据来自**同一份源码的另一份构建**：
+
+**Android 2.0.60 的 `libgraphwarrust.so` 的 `.symtab` 没被剥离**（12,609 个 `.text` 函数 / 18,549 个 FUNC 符号）。
+把 12,609 个地址的真名逐条拆 crate 后（`fixtures/global_triage_android_census.tsv`）：
+
+| 族 | 条数 | 占比 | 例 |
+|---|---|---|---|
+| `core` | 4,875 | 38.7% | `_ZN4core3ptr…drop_in_place…` |
+| 三方 crate | 2,577 | 20.4% | `serde_json` / `rustls` / `regex_automata` / `tokio` / `hyper` / `clap_builder` / `ring` |
+| `gdext`（`godot-core`/`godot-ffi`/`godot-cell`） | 1,257 | 10.0% | `_ZN10godot_core…` |
+| **`graphwarrust`（游戏本 crate）** | **1,244** | **9.9%** | `_ZN12graphwarrust22graphwar_player_config…` |
+| `std` | 742 | 5.9% | |
+| `alloc` | 589 | 4.7% | |
+| 其它 / C++ | 578 + 556 | 9.0% | `cpp` 主要是 **openh264**（`WelsEnc`/`WelsVP`/`WelsCommon`） |
+| `hashbrown` / `libunwind` / `panic_unwind` | 158 / 32 / 1 | 1.5% | |
+
+> ⚠ **这是"代理"不是"逐条归属"**：Android 与 Linux 是**两份不同构建**（ISA、allocator、平台层不同，
+> 12,609 vs 13,263 = −654 条）。所以上表只用来回答**构成比例**，不能把某个 Linux 地址判成某个 Android 名字。
+> 证据档：**推断（代理）**。
+
+⇒ **527 与 13,263 之间不是"我们欠 12,736 个函数"**：那 12,736 里按兄弟构建的比例，
+**≈90% 是 std/core/三方/gdext/C++ 库**（本来就不该由我们手写），只剩**个位数百分比**可能是游戏自己的函数。
+
+### 132.3 判据（六类 / 五层证据）与逐条产出
+
+**六类**继承 T82 §129.1 的五类（`real-missing` / `na:std-mono` / `na:gdext-glue` / `na:other` / `unknown`）
++ 第六类 `implemented`（527 台账里 F1/F2 的行，不参与"缺口"判定）。
+
+**五层证据**（命中即停，优先级从高到低；逐条判据见预注册 §2）：
+
+| 层 | 证据 | 判 | 条数 |
+|---|---|---|---|
+| **L1** | `panic::Location` 还原（**任何**文件路径） | `src/` → 527 台账的 F 档/T82 裁决；`/rustc/…/library/` 或 `/rust/deps/` → `na:std-mono`；`godot-core/godot-ffi/godot-cell` 或 `.cargo/git/checkouts/gdext-…` → `na:gdext-glue`；`~/.cargo/registry/…` → `na:other` | 3,099 |
+| **L2** | 结构规则（**只对 ≤0x721 字节**，上限来自 T82 §129.3）：`G1` 零调用点的 `lock cmpxchg` 类注册 / `G1b` 零调用点+数据表槽+`0x78` 步长 / `G2` 借用惯用法+表槽 / `A/B/C` std 排序单态化 | 41 |
+| **L3** | 字符串族：**强**游戏串（`res://`、`Graphwar*` 类名、`.tscn/.tres/.pck`）→ `real-missing`；Godot/gdext 引擎串 → `na:gdext-glue`；`#[derive(Serialize/Deserialize)]` 特征串 → `na:other`；**弱**游戏词 → **不单独定案**（降 `unknown`） | 497 |
+| **L4** | 调用图**族**扩散（3 轮 / ≥2 条已标注邻居 / ≥2/3 多数 ⇒ 与 885 同一套规则，只把标签从"模块"换成"族"） | **推断** | 1,195 |
+| **L5** | **布局局部性**：链接器把同一 crate 的代码连续排布 ⇒ 用 64 KiB region 内的**硬证据族**投票（≥6 条且同族 ≥85%）给该 region 的未定函数定族 | **推断** | 5,278 |
+| — | 以上全不中 | `unknown` | 3,153（+55 条 L3 弱证据） |
+
+**逐条产物** `fixtures/global_triage.tsv` 的列：
+`addr | 符号名 | size(分区) | size_fde | 模块 | 是否硬归属 | 类别 | 子类 | 证据层 | 调用点 | 表槽 | 依据(人可读)`。
+
+### 132.4 正 / 负对照（**全对才继续**；`tools/global_triage.py --control`，rc=0）
+
+| 组 | 条数 | 期望 | 台账模式 | **独立模式**（不看 527/T82 台账，只靠 L1–L5） |
+|---|---|---|---|---|
+| A：T71 台账 12 条 std 单态化 | 12 | `na:std-mono` | **12/12 ✓** | **10/12**（2 条→`unknown`） |
+| B：T71 台账 19 条 gdext | 19 | 16 `na:gdext-glue` + 3 `unknown` | **19/19 ✓** | **14/19** 直接命中（5 条落 `na:other`/`unknown`） |
+| C：T71 落码的真业务 2 条 + 负对照 3 条 | 5 | 非 `na:*` | **5/5 ✓** | **3/5**（2 条被结构规则误判成 `na:std-mono`） |
+| D：T82 的 153 条 F3 回归闸 | 153 | 与 T82 逐条一致 | **一致 118 / 台账已变档 35 / 真不一致 0** ✓ | — |
+| E：527 分母复算 | 527 | 527 | 见 §132.1 ✓ | — |
+
+**D 组的 35 条"台账已变档"是个真发现**：T82 之后（T80/T45/T48/T55 那几轮）有人把
+`0x4f44c0`/`0x4f4a60`（`delete_token_*`）等函数落码了 ⇒ 它们在**今天的** `fixtures/function_coverage.tsv` 里已是 F1，
+而 `fixtures/f3_triage.tsv` 仍写着 F3 的裁决 ⇒ **两份台账已经不同步**（本轮不改别人的台账，只登记）。
+
+**C 组的 2/5 独立模式误判是本轮最重要的方法论发现**（见 §132.5）：结构 na 规则**即使加了 0x721 体积上限**，
+在真业务大函数上依然会假阳性 ⇒ 所以 L2 只在**没有任何 Location 证据**且体积受限时才用，且只占 41 条。
+
+### 132.5 抽样人工复核：**我第一版判法错了两次**（52.7% → 54.2% → 17.0%）
+
+预注册抽样率：`real-missing` 10%、`na:*` 与 `unknown` 各 5%。**5% 合计约 690 条不可能逐条人看**
+⇒ 入库取样率下调为 `real-missing` 10% / `na:*` 2% / `unknown` 1%（**在 sampling.tsv 文件头写明**），
+误差按**实抽样本**算。三轮都记录了（这不是丢脸的部分，判定法靠它才站住）：
+
+| 轮 | 样本 | `real-missing` 假阳性 | 抓到什么 | 之后的修改（§7 勘误） |
+|---|---|---|---|---|
+| 1 | 70 | **37/70 = 52.7%** | ① 423 条 "游戏串" 其实是 **serde derive**（`struct XEvent with N elements`）② openh264 的 C++ 函数被调用图扩散成 game | **E1** derive 特征串单列 `na:other`；**E2** 加 **L5 布局局部性** |
+| 2 | 77 | **34/63 可判 = 54.0%**（新样本） | ③ 弱游戏词（`fire/shot/effect/_event`）在**串粘连**下大量假阳性 ④ gdext 的 git-checkout Location 被算成 `na:other` | **E2** 把游戏串分**强/弱**：弱词降 `unknown`；gdext 路径族单列；region 优先于扩散 |
+| 3 | 54 | **8/54 = 17.0%**（可判 47 条） | 剩的是 gdext 方法注册壳（类名字符串）、serde 字段名 blob、clap 参数表 | 未再改（登记为已知残差） |
+
+**第 3 轮（现行判法）的抽样误差（Wilson 95% CI）**：
+
+```text
+real-missing 池 542 → 抽 54（10.0%）：agree 39 / disagree 8 / unclear 7
+假阳性 17.0%，95% CI [8.9%, 30.1%]
+⇒ 纠偏后的 real-missing ≈ 542 × 0.83 = 450（区间 379–494）
+```
+
+`unknown` 的 32 条抽样**全部 `unclear`**——按定义它们没有任何独立证据（无 Location、无串、无已标注邻居），
+**抽样也定不了**；所以 `unknown` 的构成只能用兄弟构建的比例来估（§132.2），不能用抽样。
+`na:*` 抽样只做了抽查（std 5 / gdext 4 / other 16）：`na:std-mono` 抓到 1 条错
+（`0x88bf80`：Location 落在 `std/src/sync/once.rs:226`，但函数体是 gdext 的 `OnceLock` 内联点，串全是 Godot 类名 ⇒ 应判 gdext）；
+其余抽查一致。**未复核的抽样行留在 TSV 里**（`verdict` 空），供后人补。
+
+### 132.6 按模块的全局缺口表（`fixtures/global_triage_modules.tsv`，82 个模块）
+
+口径三列并列（**两套证据**）：
+`android_fns` = 兄弟构建里该模块的**真名**函数数（推断/代理）；
+`lin527`/`lin_F1F2`/`lin_F3`/`lin_F3_real` = **Linux 侧硬归属**（527 台账 + T82 裁决；`lin_F3` 只算**今天仍是** F3 的，T82 那 153 条里 35 条已被后续轮次落码）；
+`gap_proxy = android_fns − lin_F1F2`（代理缺口）。
+
+| 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `graphwar_module_container.rs` | 69 | 20 | 20 | 0 | 0 | **49** |
+| `graphwar_game_state_manager.rs` | 52 | 33 | 17 | 16 | 16 | **35** |
+| `graphwar_setup_control.rs` | 52 | 21 | 19 | 2 | 0 | **33** |
+| `graphwar_root_node.rs` | 45 | 23 | 12 | 11 | 1 | **33** |
+| `graphwar_function_input.rs` | 38 | 13 | 13 | 0 | 0 | 25 |
+| `weak_caller.rs` | 35 | 39 | 39 | 0 | 0 | **−4** ⚠ |
+| `graphwar_event.rs` | 31 | 0 | 0 | 0 | 0 | **31** |
+| `graphwar_button.rs` | 35 | 6 | 6 | 0 | 0 | 29 |
+| `entity_drawer.rs` | 29 | 14 | 5 | 9 | 3 | 24 |
+| `graphwar_nodes.rs` | 29 | 11 | 11 | 0 | 0 | 18 |
+| `graphwar_lan_vbox.rs` | 19 | 11 | 2 | 9 | 0 | 17 |
+| `graphwar_level_manager.rs` | 48 | 40 | 40 | 0 | 0 | 8 |
+| 合计（82 行） | **1,244** | **527** | **409** | **118** | **51** | **835** |
+
+⚠ `weak_caller.rs` 的 `−4` 说明**代理法本身有噪声**（Android 比 Linux 少 654 条函数；Linux 侧这个模块有 39 条锚而
+Android 只 35 条具名）⇒ `gap_proxy` 只用于**排序**，不用于报精确缺口（精确缺口见 §132.7）。
+另：`<none>`（84 条，Android 里模块段解析不出来的嵌套/宏符号）单列在 TSV 里。
+
+### 132.7 诚实结论（**这是本节存在的理由，别跳过**）
+
+1. **"距离源码级还原还差多少"的答案不是 12,736，也不是 53/65，而是 ≈ 555 个函数（500–600）**：
+   - 兄弟构建里游戏本 crate `graphwarrust` 共 **1,244** 个函数 = **797** 具名 fn + **167** 闭包 + **280** 编译器 drop glue；
+   - 编译器生成的 280 条**不需要手写**（T82 的 `na:other` 语义）⇒ **需要写的 ≈ 964 条**；
+   - Linux 侧已实现（F1+F2）= **409** ⇒ **还差 ≈ 964 − 409 = 555**；
+   - 交叉核对：`gap_proxy` 合计 835 − drop glue 280 = **555** ✓；Linux 侧机器点名 `real-missing` 542（纠偏 ≈ 450）
+     ⇒ 剩下约 100 条还没点名，藏在 `unknown` 里。
+2. **13263 里绝大部分确实不是我们的活**：`na:*` 已硬判 68.6%（9,104/13,263），剩下 `unknown` 24.2%
+   按兄弟构建比例也主要是 std/三方 ⇒ **"有大量我们从没看过的真业务函数"这句话不成立，但"有约 400 条没点名的游戏函数"成立**。
+   证据：兄弟构建 12,609 条里 game 只占 9.9%，`core`+`std`+`alloc`+`hashbrown` 占 50.7%，三方 20.4%，gdext 10.0%，openh264 等 C++ 9.0%。
+3. **T82 的"下一轮按 53（或 65）排工作量"会系统性低估**：那 53 只覆盖 **527 内部**的 F3；
+   527 之外还有约 400–500 个游戏函数（L4/L5 只点名了一部分）。**按 53 排 = 只做了 1/8**。
+4. **`unknown` 3,208 条（24.2%）是本轮的天花板**：无 Location、无独有串、无可判邻居的纯计算叶子函数
+   （抽样中位 144 字节）**没有可用的静态证据**。要再降只能换证据来源（如：同源 Windows 构建的 COFF 符号
+   + 更强的跨构建结构匹配；本轮实测 `fixtures/hybrid_names.tsv` 只给 1,589/13,263 条候选名，且是 `hyb` 档不许当结论）。
+5. **`fixtures/f3_triage.tsv` 与 `fixtures/function_coverage.tsv` 已不同步**（35 条 T82 判 F3 的函数今天已是 F1/F2）。
+   两份台账各有主人，本轮**只登记不改**（建议 lead 让台账 owner 重跑 T82 的 `f3_triage.py`）。
+6. **不改任何既有计分工具**：招牌数仍是 `277→`…现在 `function_coverage.py` 的读数（F1 312 / F2 97 / F3 118）
+   **未动**。本节的 `na` 与 `real-missing` 是**度量审计**，不写回分母。
+
+### 132.8 门槛读数（本机实跑）
+
+| 门槛 | 读数 | 说明 |
+|---|---|---|
+| `cargo test --offline` | **1588 passed / 0 failed / 1 ignored** | 本轮只加 `tools/global_triage.py` + 4 个 fixtures + 本节，**一行 Rust 源都没动**（`git diff --name-only` 里没有 `src/`/`tests/`）。任务书写的基线 1579 是本分支之前的读数，差 9 条来自**已并进本分支的其它轮次**，不是本轮引入 |
+| `python3 tools/check_doc_refs.py` | **rc=0** | 本节新增的相对链接全部可达 |
+| `python3 tools/docsec.py check docs/06-verification.md` | 节数 130、范围 `1..132`、断号 `43/89`（历史缺口）、无重号/无空心节/无冲突标记 | — |
+
+### 132.9 复跑命令（照抄可跑）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t86 ; cd $WT
+PY=$WT/.reference/venv/bin/python
+export GW2_FUNCSTARTS=$PWD/.reference/upstream/analysis/funcstarts_ghidra_va.pkl
+
+# ① 正/负对照（rc=0 才许信后面的数；含"独立模式"不看台账）
+$PY tools/global_triage.py --control
+# ② 全量 13,263 条：写 fixtures/global_triage.tsv + 打印六类计数与五层证据分布
+$PY tools/global_triage.py
+# ③ 预注册抽样 + 人工复核清单（seed 写死；清单在 .agent-work，不入库）
+$PY tools/global_triage.py --sample
+# ④ 兄弟构建（Android .symtab）真名普查 + 模块表
+$PY tools/global_triage.py --android-census
+# ⑤ 单条取证（人工复核用：Location 族/串/结构特征/邻居类）
+$PY tools/global_triage.py --dump 0x3c2bc0 0x4bbcc0
+# ⑥ 交叉核对（不替代）：527 分母复算与 T82 台账
+$PY tools/function_coverage.py --stats ; $PY tools/f3_triage.py --stats
+```
+
+### 132.10 遗留 / 我写错了什么 / 建议 lead 决定
+
+1. **⚠️ 我第一版判法错了两轮**（§132.5）：把 serde derive 宏产物当"缺的业务函数"、把 openh264 的 C++ 函数
+   经调用图扩散当 game、把 `.rodata` 串粘连导致的弱游戏词当强证据。**修订全部记在预注册文件 §7 勘误 E1–E3**。
+   教训：**① 串证据必须先分清"强/弱"，`.rodata` 是连续排布，`cstr(160)` 会把邻居串读进来；
+   ② 结构规则即使有体积上限也会误判（C 组独立模式 2/5）；③ 布局局部性（L5）比调用图扩散（L4）更可靠**。
+2. **`unknown` 3,208 条判不了**（§132.7 第 4 条），这是**信息天花板**，不是本轮没干完。
+3. **`na:std-mono` 1,494 条里仍有少量 gdext 内联点误判**（抽样 `0x88bf80`）：
+   `std::sync::OnceLock` 的内联会让 gdext 函数引用 `std/src/sync/once.rs` 的 Location。
+   要修得加"Location 是内联点还是本体"的判据（缺：`.eh_frame`/LSDA 或真机 hook 证据）。
+4. **`real-missing` 的 17.0% 假阳性不会再降**（除非做上面第 3 条的判据），所以**报缺口请用 §132.7 的 555 / 区间 500–600**，
+   不要用 542。
+5. **建议 lead 决定**：① 招牌数要不要改成"原版模块函数 ≈ 964 / 已实现 409 / 还差 ≈ 555"（**换口径**，不动实现）；
+   ② 是否让 `function_coverage.py` 的台账 owner 重跑一次 `f3_triage.py`（35 条已变档）；
+   ③ 下一轮排工作量按 **≈555** 排，优先 5 个模块（§132.6）。

@@ -125,3 +125,38 @@ $PY tools/global_triage.py                   # 全量：写 fixtures/global_tria
 $PY tools/global_triage.py --dump 0x4600e0   # 单条取证（人工复核用）
 $PY tools/global_triage.py --sample          # 预注册抽样（写 fixtures/global_triage_sampling.tsv）
 ```
+
+## 7. 勘误（**追加式**：写于全量跑完 + 抽样人工复核第一/二轮之后；原判据一字未删）
+
+抽样复核（`real-missing` 抽 10%）第一轮就抓到 **37/70 = 52.7%** 的假阳性 ⇒ 判据必须改，
+否则"real-missing 542"这个数会被当成"要写 542 个函数"。三条勘误：
+
+**E1（derive 宏产物 ≠ 业务函数）**：`#[derive(Serialize/Deserialize)]` 展开出来的
+反序列化访问器会引用 `struct <TypeName>` / `struct <Type> with N elements` / 字段名 blob。
+T82 §129.1 的 `na:other` 定义里**本来就有"`#[derive]` 生成物"**，只是它的 F3 里没遇到这么多。
+⇒ 新增 L3 判据：命中 `DERIVE_RE`（`struct <Name>(Event|Info|Request|Reply|Message|Data|Params)`、
+`struct X with N element`、`missing field`/`unknown field`/`__Visitor`…）⇒ `na:other / derive:serde`。
+第一轮 423 条 `str-game` 里 **约 350 条**是这一类。
+
+**E2（串证据必须分强/弱；布局局部性优于调用图扩散）**：
+1. `.rodata` 的字符串是**连续排布**的，`cstr(160)` 会把相邻串一起读出来 ⇒
+   `fire|shot|target|effect|draw_|texture|scene|rank|level_|turn_|sound|replay|lan_|bot_|_event`
+   这些**弱词**在三方 crate 的字段名 blob 里也会命中（openh264 / ron / clap 实测）。
+   ⇒ **弱词不单独定案**（降 `unknown / str-weak-game`）；只有**强**证据定 `real-missing`：
+   `res://`、`Graphwar*` 类名、`.tscn/.tres/.pck`。
+2. **新增 L5 布局局部性**（本条是判据**增加**，不是放宽）：链接器把同一 crate 的代码连续排布 ⇒
+   用 64 KiB region 内**硬证据**的族投票（≥6 条且同族 ≥85%）给该 region 未定的函数定族。
+   它比 L4 调用图扩散更可靠（openh264 的 C++ 函数会被扩散成 game，实测 29/70 条）；
+   **优先级：L1 硬证据 > L2 强结构 > L3 强串 > L5 布局 > L4 扩散**。
+3. gdext 在这份构建里是 **git checkout**（`/.cargo/git/checkouts/gdext-<hash>/<rev>/godot-core/…`）
+   和 **build 产物**（`/target/…/build/godot-ffi-…/out/…`），不是 crates.io ⇒ L1 的路径族要覆盖这两种；
+   `/rust/deps/<crate>/` 是 **std 内嵌的三方**（`miniz_oxide`/`rustc-demangle`/`gimli`），算标准库构建。
+
+**E3（抽样率下调，写在入库文件里）**：预注册 §4 写的是 `na:*` 与 `unknown` 各 5%，
+但 5% 合计约 690 条**不可能逐条人看** ⇒ 入库取样率改为 `real-missing` 10% / `na:*` 2% / `unknown` 1%
+（`fixtures/global_triage_sampling.tsv` 文件头写明），误差按**实抽样本**算，未复核行留空供后人补。
+
+**E4（已知残差，未修）**：① `na:std-mono` 里仍有少量 gdext 内联点误判
+（`std::sync::OnceLock` 的 Location `std/src/sync/once.rs:226` 会被 gdext 函数引用，抽样 `0x88bf80`）；
+② `real-missing` 第三轮残差 17.0%（gdext 方法注册壳 / serde 字段名 blob / clap 参数表）。
+两条都**登记不改判据**——再改就是为本轮数字好看而调参。
