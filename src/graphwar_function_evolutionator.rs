@@ -388,6 +388,54 @@ pub const CONSISTENCY_TOL: f64 = 0.5;
 /// 距离项未命中时的哨兵值。常量 `0x19fb30` = 1e6（`0x51ab35` / `0x51afe7` 写入）。
 pub const DIST_SENTINEL: f64 = 1_000_000.0;
 
+/// 队伍字节的"查不到"值 = **2**（`0x51a9ec mov bpl,0x2` / `0x51ac06 mov r15b,0x2` 的初值）。
+///
+/// 队伍字节 `0`/`1` 是两方；`2` 是"这张表里没有这个 id"（无主实体 / 训练靶）。
+pub const TEAM_UNKNOWN: u8 = 2;
+
+/// 命中一个实体算"敌人"（`+1`）还是"自己人"（`−1`）。
+///
+/// **逐位**依据（`docs/06` §128.2，两条分支的实际指令）：
+///
+/// ```text
+/// 51ae21  cmp  r15b,0x2          ; 实体侧队伍字节 == 2 ?
+/// 51ae25  jne  51ae35
+/// 51ae27  cmp  byte [rsp+0x18],0x2   ; 射手侧 == 2 ?
+/// 51ae31  je   51ae4c            ; 都是 2 ⇒ 自己人（dec）
+/// 51ae33  jmp  51ae5d            ; 否则   ⇒ 敌人（inc）
+/// 51ae35  cmp  byte [rsp+0x18],0x2
+/// 51ae3f  je   51ae5d            ; 射手无主 ⇒ 敌人（inc）
+/// 51ae41  xor  r15b,[rsp+0x18]   ; 两边都查得到 ⇒ 比最低位
+/// 51ae46  test r15b,0x1
+/// 51ae4a  jne  51ae5d            ; 不同 ⇒ 敌人（inc）
+/// 51ae4c  dec  ...               ; 相同 ⇒ 自己人（dec）
+/// ```
+///
+/// ⚠️ 注意"比最低位"这条**不是**相等判断：两方字节是 `0`/`1` 时它与"相等"等价，
+/// 但 `(0,2)` 这种组合二进制判"敌人"（`2` 走特例分支）、`(2,2)` 判"自己人"。
+/// 我方按指令原样实现，没有换成语义上更"自然"的 `a == b`。
+pub fn is_friendly(entity_team: u8, shooter_team: u8) -> bool {
+    if entity_team == TEAM_UNKNOWN {
+        return shooter_team == TEAM_UNKNOWN;
+    }
+    if shooter_team == TEAM_UNKNOWN {
+        return false;
+    }
+    (entity_team ^ shooter_team) & 1 == 0
+}
+
+/// 从扁平队伍表里查一个实体的队伍字节（查不到 ⇒ [`TEAM_UNKNOWN`]）。
+///
+/// 真值是 hashmap（`0x47dec0` 算 SipHash13），这里是线性扫 —— 表只有场上实体那么多条，
+/// 语义（命中/未命中）相同。
+pub fn team_of(teams: &[(i64, u8)], id: i64) -> u8 {
+    teams
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map(|(_, t)| *t)
+        .unwrap_or(TEAM_UNKNOWN)
+}
+
 /// 评分阶段。两阶段**共用同一个评分核心**（`0x51a750`），只有 `step` 不同。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -1225,6 +1273,19 @@ pub fn sort_scores(scores: &mut [f64]) {
 // ---------------------------------------------------------------------------
 
 /// 一次评分的上下文。
+///
+/// ⚠️ **我方结构体，原版没有对应物**（`docs/06` §82.5 的 `unknown` 条款未结案）：
+/// 原版把这几样东西拆成**函数参数**传（`rdi`=sret、`rsi`=上下文指针、`rdx`=`&Vec<Token>`、
+/// `ecx`=射手 id、`xmm0`=step，调用点 `0x51bc7a`–`0x51bc93`）。字段与真值的对应：
+///
+/// | 我方字段 | 真值里的来源 |
+/// |---|---|
+/// | `x0`/`y0`/`flip` | `ctx+0x18` 之后那份"开火上下文"（`0x51a98e` 把 step 写进 `ctx+0x18`） |
+/// | `step` | 参数 `xmm0`（`0x51a761` 存进 `[rsp+0x78]`） |
+/// | `mask`/`targets` | 同上那份开火上下文（弹道与命中由 `0x3c2bc0` 算） |
+/// | `limit` | `ctx+0x58`（`0x51b0f8 mov ecx,[rcx+0x58]`） |
+/// | `shooter_id` | 参数 `ecx`（`0x51a767` 存进 `[rsp+0x28]`，`0x51a9e4` 交给射手表查表） |
+/// | `teams` | `[ctx+0]` 与 `[ctx+8]` 两张 hashmap（`0x51aa06` / `0x51ac21` 查表） |
 pub struct ScoringContext<'a> {
     pub x0: f64,
     pub y0: f64,
@@ -1237,6 +1298,19 @@ pub struct ScoringContext<'a> {
     pub targets: &'a [crate::graphwar_shot_calculator::settle::Target],
     /// 复杂度硬上限（`V > limit` 罚 5e7）。
     pub limit: u32,
+    /// 射手 id = 评分核心的第 4 个参数 `ecx`。
+    ///
+    /// 真值拿它去**射手表**（`ctx+0`）查自己的队伍字节（`0x51a9e4` 存 key →
+    /// `0x51aa06 call 0x47dec0` 算哈希 → 命中的桶值 byte 就是队伍）。
+    /// 查不到 ⇒ [`TEAM_UNKNOWN`]。
+    pub shooter_id: i64,
+    /// 实体 id → 队伍字节的**扁平表**（`0`/`1` = 两方，[`TEAM_UNKNOWN`] = 查不到）。
+    ///
+    /// 真值里这是两张 hashmap（`ctx+0` = 射手表、`ctx+8` = 实体表，`0x51aa06` /
+    /// `0x51ac21` / `0x51ad49` 三处 `call 0x47dec0` 查），评分核心**每次命中**都要查一次
+    /// 来决定这一击算 `+1` 还是 `−1`。我方用一张扁平表代替两张（查不到的语义与真值一样
+    /// = [`TEAM_UNKNOWN`]）；射手的队伍也从这里查，键 = [`ScoringContext::shooter_id`]。
+    pub teams: &'a [(i64, u8)],
 }
 
 impl<'a> ScoringContext<'a> {
@@ -1253,6 +1327,8 @@ impl<'a> ScoringContext<'a> {
             mask: self.mask,
             targets: self.targets,
             limit: self.limit,
+            shooter_id: self.shooter_id,
+            teams: self.teams,
         }
     }
 
@@ -1265,43 +1341,130 @@ impl<'a> ScoringContext<'a> {
     }
 }
 
-/// 适应度：`命中×2e6 − dist − V²/100 − (V > limit ? 5e7 : 0)`。
+/// 适应度：`2e6·(敌人 − 自己人) − dist − V²/100 − (V > limit ? 5e7 : 0)`。
 ///
-/// **实测**（`docs/74`）：常规对局里没有"友军惩罚"项。
-/// `V` 就是 token 数；`hits` 是这次弹道判死的士兵数。
+/// ⚠️ **旧版注释写错了两处，2026-11-27 由 `docs/06` §128 更正**（真值依据 = unicorn 直调
+/// `0x51a750`，22 条合成结果项逐位对拍 + 17 条局面用例）：
+///
+/// * `docs/74` 的"常规对局里没有友军惩罚项"**不成立**：命中项在二进制里是**带符号**的，
+///   异队 `+1`（`0x51ae62 inc eax`）/ 同队 `−1`（`0x51ae51 dec eax`）；
+/// * "`hits` 是判死的士兵数"**不成立**：它是 `敌人 − 自己人`，打进自己人是**负分**。
 ///
 /// 返回值只有分数 —— 两阶段判据另见 [`fitness_eval`]。
 pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
     fitness_eval(tokens, ctx).score
 }
 
-/// 适应度的**完整**结果：分数 + 距离项 `d` + 命中数项。
+/// 真值 `0x51a750`（`GraphwarFunctionEvolutionator::score_function`）的**成绩汇总段**。
 ///
-/// 三个分量正是评分核心 sret 结构体的前 24 字节，也是两阶段判据要比的东西
-/// （`docs/97` §3）。`dist` 的语义见 [`Evaluation::dist`]：
+/// 返回值的四个分量就是 sret 结构体的前 24 字节（写回点 `0x51b10d` / `0x51b11d` /
+/// `0x51b111` / `0x51b114`），也是两阶段判据要比的东西（`docs/97` §3）。
 ///
-/// * 初值 [`DIST_SENTINEL`]（1e6，`0x19fb30`）；
-/// * 命中时按"命中点到目标圆心的距离"取 **min**（反汇编 `0x51aed6` 的
-///   `ucomisd` + `jbe` 就是取 min），所以 `dist ∈ [0, radius]`；
-/// * 分数里是**减**它（`0x51b0d9 subsd 0x8(%rsp)`），未命中时`−1e6` 就是这么来的。
+/// # 公式（`逐位`：`docs/06` §128 的 22 条合成结果项用例，位型全同）
 ///
-/// ⚠️ 与原版的差距（**推断**）：`docs/74` 的运行实测显示常规对局里 `d` 恒为 1e6
-/// （全未命中约 −1e6、命中一人约 +1e6），也就是说更新分支在原版里通常不触发。
-/// 我们这里如实计算命中点距离，因此距离判据**比原版更活跃**（但仍受
-/// `dist ∈ [0, radius]` 约束，radius=0.5 时 `|Δ| <= 0.5` 恒成立 ⇒ 实际仍然不触发）。
+/// ```text
+/// score = 2e6·eax − dist − V²/100 − (V > limit ? 5e7 : 0)
+/// ```
+///
+/// 各步的指令与语义：
+///
+/// * `eax` = **带符号**命中数：遍历"开火结果项"时异队 `inc`（`0x51ae62`）、
+///   同队 `dec`（`0x51ae51`），累加在 `[rsp+0x28]`；随后 `0x51b0ad cvtsi2sd` 转 f64、
+///   `0x51b0b1 mulsd 2e6`（常量 `0x19fc00`）。队伍由 [`is_friendly`] 判。
+/// * `dist` = 距离项：初值 [`DIST_SENTINEL`]（`0x19fb30` → `0x51ab35 movq [rsp+8],xmm0`），
+///   命中**敌人**时按距离取 min（`0x51aed6 movsd xmm1,[rsp+8]` + `0x51aedc ucomisd` +
+///   `0x51aee0 jbe` 跳过 + `0x51aee2 movsd [rsp+8],xmm0`）。同队命中**不更新**它
+///   （`0x51aec3`–`0x51aed4` 的敌我判断不通过就直接跳到 `0x51aef0`）。
+/// * `−dist`：`0x51b0d9 subsd xmm1, qword ptr [rsp+8]`。**这一项是"未命中就 −1e6"的来源**，
+///   不是常数：旧实现把 `−1e6` 写死在基数里 ⇒ 只要 `dist` 真被更新过就偏低 `1e6 − dist`。
+/// * `−V²/100`：`0x51b0bd imul rcx,rdx`（`V·V`，64 位）→ u64→f64 → `0x51b0eb divsd 100.0`（`0x19f6d8`）。
+/// * 上限惩罚：`0x51b0f8 mov ecx,[rcx+0x58]`（= `limit`）、`0x51b0fb cmp rdx,rcx` +
+///   `0x51b0fe jbe` 跳过、`0x51b100 addsd [0x19f478]`（= **−5e7**）。
+///
+/// # 未复刻的一项（`esi`）
+///
+/// 二进制里还有一路"结果项计数器"（`kind == i64::MIN+3` 的 `payload>>32`，唯一累加点
+/// `0x51acc8`），它只以 `−(esi·step·100)` 进分数（`0x51b087`–`0x51b0a1`）且**只在
+/// `esi != 0 且命中数 > 0` 时**生效，此时 `hits` 字段还会被夹成 `1`（`0x51b063`–`0x51b075`）。
+/// 我方不产生那种结果项 ⇒ `esi` 恒 0、那一项恒为 `−0.0`（`subsd 0,0` 得 `+0.0`，逐位无差）；
+/// 实测也是 0（`docs/06` §78.3 的 `0x51acc8` 40 秒 hook 执行 0 次）。**这条差异是"没有触发
+/// 条件的常数项"，不是偏差**；触发条件本身仍是未决项（`docs/06` §78.7 遗留 2）。
+///
+/// # 影响面（改这一处会动什么）
+///
+/// 评分是进化器的**选择依据**，所以：`hits` 的符号 → 友军误伤从 `+2e6` 变成 `−2e6`；
+/// `−dist` → 同等命中数的解按"打得更准"排序（旧实现完全不用 `dist`，只有 `hits` 相等时
+/// 才靠运气）。AI 选出的函数会变；`Match::evolve_for_soldier` 的产物随之变。
+/// 评分核心的**尾段**（`0x51b063`–`0x51b108`）：把已经汇总好的五项折算成 sret 的
+/// `{score, hits}`。**这是分数算术的唯一一份实现** —— `fitness_eval` 与
+/// `_scaffold::ai_explain::evaluate` 都调它（`docs/06` §128.6 的 C07 收口）。
+///
+/// 逐条对应的指令（`docs/06` §128.2 有完整清单）：
+///
+/// ```text
+/// 51b063  test r13d,r13d / 51b066 mov eax,1 / 51b06b cmovle eax,r13d   ; eax = net<=0 ? net : 1
+/// 51b06f  mov esi,[rsp+0x34] / 51b073 test esi,esi / 51b075 cmove eax,r13d  ; esi==0 ⇒ eax = net
+/// 51b079  movsd 100.0 / 51b08f mulsd step / 51b098 cvtsi2sd esi
+/// 51b09d  mulsd / 51b0a1 subsd xmm2,xmm1                               ; acc = −(esi·step·100)
+/// 51b0ad  cvtsi2sd eax / 51b0b1 mulsd 2e6 / 51b0b9 addsd                ; score = eax·2e6 + acc
+/// 51b0d9  subsd xmm1,[rsp+8]                                            ; − dist
+/// 51b0bd  imul rcx,rdx（V·V）/ 51b0eb divsd 100.0 / 51b0ef subsd         ; − V²/100
+/// 51b0f8  mov ecx,[rcx+0x58] / 51b0fb cmp / 51b0fe jbe / 51b100 addsd    ; V>limit ⇒ +(−5e7)
+/// 51b111  mov [rcx+0x10],eax                                            ; hits（0xFFFFFFFF = −1）
+/// ```
+///
+/// * `net` = 带符号命中数（异队 `+1` / 同队 `−1`）；
+/// * `dist` = 距离项（初值 [`DIST_SENTINEL`]）；
+/// * `esi` = 结果项累加器（`0x51acc8`；我方恒 0，只有直接喂合成结果项时才非 0）。
+///
+/// ⚠️ `esi != 0` 且 `net > 0` 时 `hits` 会被夹成 **1**（`0x51b066`/`0x51b06b`）——
+/// 这条只有用合成结果项才测得到，`fixtures/score_truth_synth.tsv` 的 `Y14`/`Y21` 行就是它。
+pub fn score_from_terms(
+    v: usize,
+    net: i64,
+    dist: f64,
+    step: f64,
+    limit: u32,
+    esi: u32,
+) -> (f64, u32) {
+    let mut eax = if net <= 0 { net } else { 1 };
+    if esi == 0 {
+        eax = net;
+    }
+    let mut score = 0.0;
+    if eax > 0 {
+        score = 0.0 - (f64::from(esi) * (step * 100.0));
+    }
+    score += eax as f64 * 2_000_000.0;
+    score -= dist;
+    score -= (v * v) as f64 / 100.0;
+    if v as u32 > limit {
+        score -= 50_000_000.0;
+    }
+    (score, eax as u32)
+}
+
+/// 真值 `0x51a750`（`GraphwarFunctionEvolutionator::score_function`）的**成绩汇总段**。
 pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
     use crate::graphwar_path_calculator::{calculate, Mode};
     use crate::plane::is_occupied;
     use crate::graphwar_shot_calculator::{correction, shifted_tokens};
 
     let v = tokens.len();
-    let mut score = -1_000_000.0 - (v * v) as f64 / 100.0;
-    if v as u32 > ctx.limit {
-        score -= 50_000_000.0;
-    }
     if tokens.is_empty() {
-        return Evaluation { score, dist: DIST_SENTINEL, hits: 0, esi: 0 };
+        // 空函数：真值走 `0x51afb7`（esi=0、dist=1e6、命中数 0）直接进尾段，
+        // ⇒ `2e6·0 − 1e6 − 0 − 0` = −1e6（与 V=0 的 `−V²/100` 一致）。
+        return Evaluation {
+            score: -DIST_SENTINEL,
+            dist: DIST_SENTINEL,
+            hits: 0,
+            esi: 0,
+        };
     }
+
+    // 射手的队伍字节：真值 `0x51a9fa lea rdi,[r14+0x38]` + `0x51aa06 call 0x47dec0`
+    // 拿 `ecx` 去射手表查；查不到 ⇒ `bpl` 保持初值 2（`0x51a9ec mov bpl,0x2`）。
+    let shooter_team = team_of(ctx.teams, ctx.shooter_id);
 
     // 修正后沿弹道走一遍：先判致死（穿过即死、不挡弹道），再判障碍阻挡
     let c = correction(tokens, ctx.x0, ctx.y0, ctx.flip);
@@ -1310,6 +1473,7 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
 
     let mut killed: Vec<i64> = Vec::new();
     let mut dist = DIST_SENTINEL;
+    let mut net: i64 = 0;
     for &(px, py) in &points {
         for t in ctx.targets {
             if killed.contains(&t.id) {
@@ -1318,8 +1482,17 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
             let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();
             if d <= t.radius {
                 killed.push(t.id);
-                if d < dist {
-                    dist = d;
+                // 两个命中分支（`0x51ae4c dec` / `0x51ae5d inc`）：队伍字节从 `ctx+8`
+                // 那张表里查（`0x51ac21 call 0x47dec0`），查不到 ⇒ 2。
+                let team = team_of(ctx.teams, t.id);
+                if is_friendly(team, shooter_team) {
+                    net -= 1;
+                } else {
+                    net += 1;
+                    // 距离项只对敌人取 min（`0x51aed6`–`0x51aee2`）
+                    if d < dist {
+                        dist = d;
+                    }
                 }
             }
         }
@@ -1327,14 +1500,12 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
             break;
         }
     }
-    Evaluation {
-        score: score + killed.len() as f64 * 2_000_000.0,
-        dist,
-        hits: killed.len() as u32,
-        // 二进制里这一项来自"结果项 payload>>32"的累加（`0x51acc8`），
-        // 本实现不造那种结果项 ⇒ 恒 0，与实测一致（`docs/06` §78.3）。
-        esi: 0,
-    }
+
+    // 二进制里 `esi` 来自"结果项 payload>>32"的累加（唯一累加点 `0x51acc8`），
+    // 本实现不造那种结果项 ⇒ 恒 0，与实测一致（`docs/06` §78.3）。
+    let esi = 0;
+    let (score, hits) = score_from_terms(v, net, dist, ctx.step, ctx.limit, esi);
+    Evaluation { score, dist, hits, esi }
 }
 
 #[cfg(test)]
@@ -2081,6 +2252,12 @@ mod tests {
             mask: &mask,
             targets: &targets,
             limit: 200,
+            // 射手记成队 0、靶子（id=1）不在表里 ⇒ 查不到 = `TEAM_UNKNOWN`。
+            // 真值的 `2` vs 已知队 走"敌人"分支（`0x51ae3f je 0x51ae5d`）；
+            // ⚠️ 别把这张表留空：`2` vs `2` 是**自己人**（`0x51ae31 je 0x51ae4c`），
+            // 全空 = 全场都是队友，命中反而 −2e6。
+            shooter_id: 0,
+            teams: &[(0, 0)],
         };
         // 现在每代只留 20% 存活者（s = 种群/5），所以种群要比以前大一些。
         let p = Params { generations: 8, population: 50, per_slot: 5, limit: 200 };
@@ -2111,6 +2288,177 @@ mod tests {
         assert_eq!(FINE_RANKS, 3); // 三段展开
         assert_eq!(CONSISTENCY_TOL, 0.5); // 与粗评步长复用同一常量
         assert_eq!(DIST_SENTINEL, 1_000_000.0); // 0x19fb30
+    }
+
+    // -----------------------------------------------------------------------
+    // 真值对拍：unicorn 直调评分核心 0x51a750（`docs/06` §128）
+    // -----------------------------------------------------------------------
+
+    /// 把 `fixtures/score_truth.tsv` 的一行还原成局面。
+    ///
+    /// 夹具是 `tools/score_truth.py --write` 从真二进制拿的返回值（每行一次
+    /// `0x51a750` 调用），**不是**我方输出 —— 这是这条测试唯一的真值来源。
+    /// 结果项模型（夹具头部有写）：每个命中铺 `MIN+1`（进命中数），敌人/无主的命中
+    /// 再铺 `MIN+2`（进距离项），自己人只进命中数 ⇒ 等价于我方的
+    /// 「`ctx.targets` 全进命中数、`dist` 只对敌人更新」。
+    fn truth_row(line: &str) -> Option<(f64, f64, u32, u32)> {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() < 16 || f[0] == "case" {
+            return None;
+        }
+        let bits = |s: &str| u64::from_str_radix(s, 16).expect("十六进制位型");
+        let score = f64::from_bits(bits(f[12]));
+        let dist = f64::from_bits(bits(f[13]));
+        let hits: u32 = f[14].parse().expect("hits");
+        let esi: u32 = f[15].parse().expect("esi");
+        Some((score, dist, hits, esi))
+    }
+
+    /// 夹具每一行：我方 `fitness_eval` 的四个分量必须与真值**逐位**相同。
+    #[test]
+    fn fitness_eval_matches_the_scoring_core_on_the_truth_fixture() {
+        use crate::graphwar_shot_calculator::settle::Target;
+
+        let text = include_str!("../fixtures/score_truth.tsv");
+        let mut n = 0usize;
+        for line in text.lines() {
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            let f: Vec<&str> = line.split('\t').collect();
+            if f[0] == "case" {
+                continue;
+            }
+            let Some((t_score, t_dist, t_hits, t_esi)) = truth_row(line) else { continue };
+            let case = f[0];
+            let v: usize = f[1].parse().expect("v");
+            let tokens = crate::math_function::parse(f[2]);
+            assert_eq!(tokens.len(), v, "{case}: V 对不上");
+            let x0: f64 = f[3].parse().expect("x0");
+            let y0: f64 = f[4].parse().expect("y0");
+            let flip = f[5] == "1";
+            let step: f64 = f[6].parse().expect("step");
+            let limit: u32 = f[7].parse().expect("limit");
+            let shooter_id: i64 = f[8].parse().expect("shooter_id");
+            let shooter_team: u8 = f[9].parse().expect("shooter_team");
+            let mut teams: Vec<(i64, u8)> = vec![(shooter_id, shooter_team)];
+            let mut targets: Vec<Target> = Vec::new();
+            for one in f[10].split(';').filter(|s| !s.is_empty()) {
+                let g: Vec<&str> = one.split(',').collect();
+                let id: i64 = g[0].parse().expect("entity id");
+                targets.push(Target {
+                    id,
+                    x: g[1].parse().expect("entity x"),
+                    y: g[2].parse().expect("entity y"),
+                    radius: g[3].parse().expect("entity radius"),
+                });
+                // `kind`（s/t）在 fitness_eval 的模型里不区分：都进命中数。
+                teams.push((id, g[4].parse().expect("entity team")));
+            }
+            let mask = crate::plane::empty_mask();
+            let ctx = ScoringContext {
+                x0,
+                y0,
+                flip,
+                step,
+                mask: &mask,
+                targets: &targets,
+                limit,
+                shooter_id,
+                teams: &teams,
+            };
+            let ev = fitness_eval(&tokens, &ctx);
+            assert_eq!(ev.score.to_bits(), t_score.to_bits(), "{case}: score 与真值不同");
+            assert_eq!(ev.dist.to_bits(), t_dist.to_bits(), "{case}: dist 与真值不同");
+            assert_eq!(ev.hits, t_hits, "{case}: hits 与真值不同");
+            // esi 项：真值里只有 `kind == i64::MIN+3` 的结果项能累加（`0x51acc8`），
+            // 我方不产那种项 ⇒ 两侧都应是 0（`docs/06` §128.2 末尾）。
+            assert_eq!(ev.esi, t_esi, "{case}: esi 与真值不同");
+            n += 1;
+        }
+        assert_eq!(n, 17, "夹具应有用例 17 条（少一条就是漏读）");
+    }
+
+    /// `score_from_terms`（尾段 `0x51b063`–`0x51b108` 的唯一实现）对 22 条**合成结果项**
+    /// 的逐位对拍 —— 真值那一列是 unicorn 直调 `0x51a750` 的 sret，逐条不经过任何我方代码。
+    ///
+    /// 这组用例覆盖了 `fitness_eval` 走不到的 `esi` 分支（`Y14`/`Y21`：`esi != 0` 时
+    /// 命中数被夹成 1，并扣 `−(esi·step·100)`），也覆盖了 `dist` 取 min 后的减法。
+    #[test]
+    fn score_from_terms_matches_the_scoring_core_on_synthetic_results() {
+        let text = include_str!("../fixtures/score_truth_synth.tsv");
+        let mut n = 0usize;
+        for line in text.lines() {
+            if line.starts_with('#') || line.trim().is_empty() || line.starts_with("case\t") {
+                continue;
+            }
+            let f: Vec<&str> = line.split('\t').collect();
+            assert!(f.len() >= 12, "合成结果项夹具应有 12 列：{line}");
+            let case = f[0];
+            let v: usize = f[1].parse().expect("v");
+            let step: f64 = f[2].parse().expect("step");
+            let limit: u32 = f[3].parse().expect("limit");
+            let net: i64 = f[7].parse().expect("net");
+            let t_score = f64::from_bits(u64::from_str_radix(f[8], 16).expect("score 位型"));
+            let t_dist = f64::from_bits(u64::from_str_radix(f[9], 16).expect("dist 位型"));
+            let t_hits: u32 = f[10].parse().expect("hits");
+            let t_esi: u32 = f[11].parse().expect("esi");
+            let (score, hits) = score_from_terms(v, net, t_dist, step, limit, t_esi);
+            assert_eq!(score.to_bits(), t_score.to_bits(), "{case}: score 与真值不同");
+            assert_eq!(hits, t_hits, "{case}: hits 与真值不同");
+            n += 1;
+        }
+        assert_eq!(n, 22, "合成结果项夹具应 22 条");
+    }
+
+    /// 两处**改前错、改后对**的判据，直接钉在具体指令上（不依赖夹具文件）。
+    ///
+    /// * 命中项的符号：`0x51ae51 dec eax`（同队 −1）/ `0x51ae62 inc eax`（异队 +1）
+    ///   ⇒ 打进自己人是**负分**；改前我方数 `killed.len()`，误伤反而 `+2e6`。
+    /// * 距离项：`0x51b0d9 subsd xmm1,[rsp+8]` ⇒ 命中一人是 `2e6 − d`，
+    ///   不是"`2e6 − 1e6` 的常数"。改前把 `−1e6` 写死在基数里。
+    #[test]
+    fn friendly_fire_is_negative_and_hits_are_not_a_constant() {
+        use crate::graphwar_shot_calculator::settle::Target;
+
+        let mask = crate::plane::empty_mask();
+        // `0` 从 (0,0) 出发是一条 y=0 的水平线（x: 0→20，`examples/score_probe` 的点列）。
+        let tokens = crate::math_function::parse("0");
+        let target_at = |x: f64, y: f64| vec![Target { id: 201, x, y, radius: 0.5 }];
+
+        // ① 敌人（队 1，射手队 0）：命中 ⇒ 2e6 − d − V²/100
+        let t_enemy = target_at(10.0, 0.0);
+        let enemy_ctx = ScoringContext {
+            x0: 0.0,
+            y0: 0.0,
+            flip: false,
+            step: COARSE_STEP,
+            mask: &mask,
+            targets: &t_enemy,
+            limit: 200,
+            shooter_id: 101,
+            teams: &[(101, 0), (201, 1)],
+        };
+        let enemy = fitness_eval(&tokens, &enemy_ctx);
+        assert_eq!(enemy.hits, 1);
+        assert!(enemy.dist <= 0.5, "命中时 dist 应是命中点距离，实测 {}", enemy.dist);
+        assert!(
+            (enemy.score - (2_000_000.0 - enemy.dist - 0.01)).abs() < 1e-9,
+            "命中一人的分数应是 2e6 − d − V²/100，实测 {}",
+            enemy.score
+        );
+
+        // ② 自己人（队 0）：命中 ⇒ −2e6 − 1e6 − V²/100（距离项**不更新**）
+        let t_friend = target_at(10.0, 0.0);
+        let friend_ctx = ScoringContext { teams: &[(101, 0), (201, 0)], ..enemy_ctx };
+        let friend = fitness_eval(&tokens, &friend_ctx);
+        assert_eq!(friend.hits, u32::MAX, "−1 的 32 位补码");
+        assert_eq!(friend.dist, DIST_SENTINEL, "自己人的距离不进距离项");
+        assert!(
+            (friend.score - (-2_000_000.0 - DIST_SENTINEL - 0.01)).abs() < 1e-9,
+            "误伤应是负分，实测 {}",
+            friend.score
+        );
     }
 
     #[test]
@@ -2187,6 +2535,12 @@ mod tests {
             mask: &mask,
             targets: &targets,
             limit: 200,
+            // 射手记成队 0、靶子（id=1）不在表里 ⇒ 查不到 = `TEAM_UNKNOWN`。
+            // 真值的 `2` vs 已知队 走"敌人"分支（`0x51ae3f je 0x51ae5d`）；
+            // ⚠️ 别把这张表留空：`2` vs `2` 是**自己人**（`0x51ae31 je 0x51ae4c`），
+            // 全空 = 全场都是队友，命中反而 −2e6。
+            shooter_id: 0,
+            teams: &[(0, 0)],
         };
         // 一条"直着打过去"的函数：y = 0（前缀式只有一个常数 token）
         let straight = vec![Token::constant(0.0)];
@@ -2230,6 +2584,12 @@ mod tests {
             mask: &mask,
             targets: &targets,
             limit: 200,
+            // 射手记成队 0、靶子（id=1）不在表里 ⇒ 查不到 = `TEAM_UNKNOWN`。
+            // 真值的 `2` vs 已知队 走"敌人"分支（`0x51ae3f je 0x51ae5d`）；
+            // ⚠️ 别把这张表留空：`2` vs `2` 是**自己人**（`0x51ae31 je 0x51ae4c`），
+            // 全空 = 全场都是队友，命中反而 −2e6。
+            shooter_id: 0,
+            teams: &[(0, 0)],
         };
         let straight = vec![Token::constant(0.0)];
         let coarse = ctx.evaluate(&straight, Phase::Coarse);
@@ -2434,6 +2794,12 @@ mod tests {
             mask,
             targets,
             limit: 200,
+            // 射手记成队 0、靶子（id=1）不在表里 ⇒ 查不到 = `TEAM_UNKNOWN`。
+            // 真值的 `2` vs 已知队 走"敌人"分支（`0x51ae3f je 0x51ae5d`）；
+            // ⚠️ 别把这张表留空：`2` vs `2` 是**自己人**（`0x51ae31 je 0x51ae4c`），
+            // 全空 = 全场都是队友，命中反而 −2e6。
+            shooter_id: 0,
+            teams: &[(0, 0)],
         };
         SoldierEvolver::new(
             Params { generations: 1, population: 5, per_slot: 5, limit: 200 },

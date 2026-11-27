@@ -47,11 +47,9 @@ use crate::_scaffold::rng::ChaCha12;
 use crate::graphwar_shot_calculator::{correction, shifted_tokens};
 use crate::{Function, Token};
 
-/// 队伍字节"查不到"时的哨兵。
-///
-/// 反汇编 `0x51a9ec mov bpl,0x2`（射手侧）与 `0x51ac06 mov r15b,0x2`（被命中实体侧）：
-/// 两边都先填 2，再去 `ctx+0x08` 那张 `HashMap<u32, u8>` 里查；查不到就保持 2。
-pub const TEAM_UNKNOWN: u8 = 2;
+/// 队伍字节"查不到"时的哨兵 —— **转发**模块侧的唯一一份
+/// （[`crate::graphwar_function_evolutionator::TEAM_UNKNOWN`]，依据见那里的注释）。
+pub use crate::graphwar_function_evolutionator::TEAM_UNKNOWN;
 
 // ---------------------------------------------------------------------------
 // 局面
@@ -164,40 +162,29 @@ impl Score {
     }
 }
 
-/// 命中一个实体算"自己人"还是"敌人"。
+/// 命中一个实体算"自己人"还是"敌人" —— **转发**模块侧的唯一一份
+/// （[`crate::graphwar_function_evolutionator::is_friendly`]）。
 ///
-/// 逐条对应 `0x51ae21`–`0x51ae4a`：
-///
-/// ```text
-/// 51ae21  cmp  r15b,0x2          ; 实体侧队伍字节 == 2 ?
-/// 51ae27  cmp  [rsp+0x18],0x2    ; 射手侧 == 2 ?
-/// 51ae31  je   51ae4c            ; 都是 2  ⇒ 友军（dec）
-/// 51ae33  jmp  51ae5d            ; 否则    ⇒ 敌人（inc）
-/// 51ae41  xor  r15b,[rsp+0x18]   ; 两边都查得到 ⇒ 比最低位
-/// 51ae46  test r15b,0x1
-/// 51ae4a  jne  51ae5d            ; 不同 ⇒ 敌人
-/// 51ae4c  dec                    ; 相同 ⇒ 友军
-/// ```
-pub fn is_friendly(entity_team: u8, shooter_team: u8) -> bool {
-    if entity_team == TEAM_UNKNOWN {
-        return shooter_team == TEAM_UNKNOWN;
-    }
-    if shooter_team == TEAM_UNKNOWN {
-        return false;
-    }
-    (entity_team ^ shooter_team) & 1 == 0
-}
+/// 收口理由（`docs/06` §128.6）：这条规则原来在两边各写一份（这里一份、评分核心实现一份），
+/// 2026-11-27 的 unicorn 对拍证明两边的判据**语义一致**，于是留一处。
+/// 触发它的地址是 `0x51ae21`–`0x51ae4a`（`dec`/`inc` 两支见
+/// `graphwar_function_evolutionator::is_friendly` 的注释）。
+pub use crate::graphwar_function_evolutionator::is_friendly;
 
 /// 按给定步长评一次分（`step` = [`COARSE_STEP`] 或 [`FINE_STEP`]）。
+///
+/// 分数算术**不再在这里重写一遍**：尾段（`0x51b063`–`0x51b108`）调
+/// [`graphwar_function_evolutionator::score_from_terms`]（唯一一份实现，
+/// `fixtures/score_truth_synth.tsv` 的 22 条合成结果项逐位对拍过）。
+/// 本函数保留的是**实体 → 结果项**的映射（`Entity::is_target` 决定它进命中数还是只进距离项），
+/// 那不是公式而是模型选择（`docs/06` §128.4：模型本身仍是未决项）。
 pub fn evaluate(tokens: &[Token], sit: &Situation, step: f64) -> Score {
-    let v = tokens.len() as u64;
-    // V² 是整数平方再除 100（`0x51b0bd imul` + `0x51b0eb divsd`），−1e6 由 dist 的初值提供
-    let mut base = -((v * v) as f64) / 100.0;
-    if v as u32 > sit.limit {
-        base -= 50_000_000.0; // 0x19f478
-    }
+    let v = tokens.len();
     if tokens.is_empty() {
-        return Score { score: base - DIST_SENTINEL, dist: DIST_SENTINEL, kills: 0, friendly: 0 };
+        let (score, _) = graphwar_function_evolutionator::score_from_terms(
+            v, 0, DIST_SENTINEL, step, sit.limit, 0,
+        );
+        return Score { score, dist: DIST_SENTINEL, kills: 0, friendly: 0 };
     }
 
     let c = correction(tokens, sit.x0, sit.y0, sit.flip);
@@ -235,8 +222,9 @@ pub fn evaluate(tokens: &[Token], sit: &Situation, step: f64) -> Score {
         }
     }
 
-    let hits = kills as i64 - friendly as i64;
-    Score { score: hits as f64 * 2_000_000.0 + base - dist, dist, kills, friendly }
+    let net = kills as i64 - friendly as i64;
+    let (score, _) = graphwar_function_evolutionator::score_from_terms(v, net, dist, step, sit.limit, 0);
+    Score { score, dist, kills, friendly }
 }
 
 // ---------------------------------------------------------------------------
