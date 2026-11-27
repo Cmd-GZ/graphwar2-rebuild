@@ -130,25 +130,6 @@ fn is_known_time_mode(s: &str) -> bool {
     digits.chars().all(|c| c.is_ascii_digit()) && digits.parse::<u32>().map(|n| n > 0).unwrap_or(false)
 }
 
-/// 报文是不是**裸的 9 字段对象**（没有事件外壳）。
-///
-/// 观测依据（`docs/24` §1.1）：LAN 广播是 `{"room_name":…,"locked":false}` 这种**平铺**对象，
-/// 而 `{"GameInfo":{"game_info":{…}}}` 那种带外壳的变体**被原版丢弃**（`docs/115` §5.3 变体 B）。
-///
-/// 为什么要在这里补一道：`_scaffold/protocol.rs::Broadcast::parse` 是**子串查找**式的，
-/// 它会在嵌套的 `game_info` 里找到 `"room_name":` 而"解析成功" ⇒ 变体的外壳就漏过去了
-/// （T67 实测：selftest 的变体 B 断言因此变红）。9 个字段全是标量 ⇒ 裸对象里**没有 `{`**，
-/// 这一条就够了。
-///
-/// ⚠️ **推断**：房名里若真带 `{` 会被误拒 —— 401 份冻结回放与抓包里没有这种样本。
-fn is_bare_object(text: &str) -> bool {
-    let t = text.trim();
-    if !t.starts_with('{') || !t.ends_with('}') {
-        return false;
-    }
-    !t[1..t.len() - 1].contains('{')
-}
-
 /// 一条 `Broadcast` → GDScript 字典（**键名与改前 `.gd` 的行逐字一致**，调用方零改动）。
 fn row_dict(from: &SocketAddr, info: &Broadcast, now_ms: i64, seen_ms: i64) -> VarDictionary {
     let mut d = VarDictionary::new();
@@ -214,26 +195,23 @@ impl GwLanV6 {
             return false;
         };
         let raw = bytes.to_vec();
-        // 两道闸（都不是"复原出来的新规则"，是把 `docs/115` §5.3 的受控实验结论钉在一处）：
-        // ① 变体 B（事件外壳）整条丢弃 —— `is_bare_object`；
-        // ② 变体 E（`time_mode` 形状不对）整条丢弃 —— `is_known_time_mode`。
+        // 受控实验（`docs/archive/115` §5.3）的两条结论都落在**解析层**：
+        // ① 变体 B（事件外壳）/ 变体 D（`{"game_info":…}`）—— `Broadcast::parse` 在 T75 之后
+        //    只认**顶层** 9 字段（字段读取不下钻）⇒ 这两条直接 `None`。T67 曾在这里补一道
+        //    具名闸 `is_bare_object()`（"裸对象里没有 `{`"），T75 把它删了：正确修法在
+        //    `protocol.rs`，而且那道形状闸会**误拒**房名里带 `{` 的合法广播（推断级缺陷）。
+        // ② 变体 E（`"Timers1m"`）—— `TimeMode::from_str` 严格（T66）⇒ 也是 `None`。
         // 判据发生在**入表之前**，所以被丢的报文既不建行、也不刷新已有行的 `seen_at`。
-        if let Ok(text) = std::str::from_utf8(&raw) {
-            let t = text.trim();
-            if !is_bare_object(t) {
-                return false;
-            }
-            if let Some(info) = Broadcast::parse(t) {
-                // T66 之后 `Broadcast::parse` 已经在**枚举层**做严格校验（未知变体名 ⇒ `None`），
-                // 所以这条"形状"闸对已知枚举名恒真；保留它作为 `docs/115` §5.3 变体 E 的**双重闸**
-                // （解析层 + 形状层），行为不变：`"Timers1m"` 在解析层就已经被丢。
-                if !is_known_time_mode(info.time_mode.as_str()) {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        } else {
+        let Ok(text) = std::str::from_utf8(&raw) else {
+            return false;
+        };
+        let Some(info) = Broadcast::parse(text.trim()) else {
+            return false;
+        };
+        // `is_known_time_mode` 保留为**第二道形状闸**：它的档位是"推断"（判定发生在哪一层
+        // 没有观测到），但行为与原版受控实验一致（`docs/06` §118.3 末段）。T66 之后它对
+        // 已知枚举名恒真 —— 即恒不改变行为，只是把推断写在一处。
+        if !is_known_time_mode(info.time_mode.as_str()) {
             return false;
         }
         let t = at(self.t0, now_ms);
@@ -384,16 +362,15 @@ impl GwLanV6 {
 
     /// 解析一条广播原文（不动表；给自检/排障用）。不合格 ⇒ `{}`。
     ///
-    /// 与 [`GwLanV6::ingest`] **同两道闸**：不是裸对象（变体 B）⇒ 空；
-    /// `time_mode` 形状不对（变体 E）⇒ 空。这样"能被解析"就等价于"能进房间表"。
+    /// 与 [`GwLanV6::ingest`] **同一套判据**：变体 B/D（事件外壳）⇒ 空（T75 起由
+    /// `Broadcast::parse` 的「只认顶层 9 字段」直接拒）；`time_mode` 形状不对（变体 E）⇒ 空。
+    /// 这样"能被解析"就等价于"能进房间表"。
     #[func]
     fn parse_broadcast(text: GString) -> VarDictionary {
         let t = text.to_string();
         let t = t.trim();
-        // 与 `ingest` 同一道闸：不是裸对象（变体 B）⇒ 丢弃。
-        if !is_bare_object(t) {
-            return VarDictionary::new();
-        }
+        // 与 `ingest` 同一套判据（T75 起全部在 `Broadcast::parse` 里）：
+        // 变体 B/D 由"只认顶层 9 字段"拒，变体 E 由枚举严格解析拒。
         match Broadcast::parse(t) {
             Some(info) if is_known_time_mode(info.time_mode.as_str()) => {
                 let mut d = VarDictionary::new();

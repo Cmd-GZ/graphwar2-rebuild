@@ -34,7 +34,7 @@
 //! * 心跳/超时：`GameHeartbeat` 从未抓到。这里做成"连接在 = 房间在"，另加一个
 //!   可配的空闲超时兜底。
 
-use crate::_scaffold::protocol::{parse_message, Broadcast, Frame, VersionInfo};
+use crate::_scaffold::protocol::{parse_frame_message, Broadcast, Frame, VersionInfo};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -60,13 +60,17 @@ pub fn game_info_event(info: &Broadcast) -> String {
 }
 
 /// 反向：从一条线上报文里取出房间表项。
+///
+/// **T75 收严**：帧用 [`parse_frame_message`]（单键 + 值必须是对象 + 尾部只许空白），
+/// 外壳下钻交给 `GameInfo::parse` 自己（它按 `JsonObject::is_event_payload` 区分
+/// "事件负载"与"裸广播原文"两种形态）。改前这里靠本文件的 `inner_object()`（又一次
+/// `body.find("\"game_info\":")` 子串查找），现在整条链上**没有**第二处子串解析。
 pub fn parse_game_info_event(text: &str) -> Option<Broadcast> {
-    let raw = parse_message(text)?;
+    let raw = parse_frame_message(text)?;
     if raw.kind != "GameInfo" {
         return None;
     }
-    let inner = inner_object(&raw.body, "game_info")?;
-    Broadcast::parse(inner)
+    Broadcast::parse(&raw)
 }
 
 /// `{"GameRemoved":{"game_address":"<host:port>"}}` —— 房间从列表里消失。
@@ -82,48 +86,11 @@ pub fn game_removed_event(game_address: &str) -> String {
 
 /// 反向：取出被移除的房间地址。
 pub fn parse_game_removed_event(text: &str) -> Option<String> {
-    let raw = parse_message(text)?;
+    let raw = parse_frame_message(text)?;
     if raw.kind != "GameRemoved" {
         return None;
     }
     crate::_scaffold::protocol::get_str(&raw, "game_address")
-}
-
-/// 在 `{"game_info":{…}}` 里取出内层对象（带花括号配平，非对象返回 `None`）。
-fn inner_object<'a>(body: &'a str, key: &str) -> Option<&'a str> {
-    let pat = format!("\"{}\":", key);
-    let start = body.find(&pat)? + pat.len();
-    let rest = body[start..].trim_start();
-    if !rest.starts_with('{') {
-        return None;
-    }
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let mut esc = false;
-    for (i, ch) in rest.char_indices() {
-        if in_str {
-            if esc {
-                esc = false;
-            } else if ch == '\\' {
-                esc = true;
-            } else if ch == '"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_str = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&rest[..=i]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +362,7 @@ fn serve_conn(mut sock: TcpStream, id: u64, state: Arc<Mutex<State>>) -> std::io
             // 1) 首帧（真实会话里是 VersionInfo）：回整张房间表。
             if !handshaked {
                 handshaked = true;
-                if let Some(raw) = parse_message(&msg) {
+                if let Some(raw) = parse_frame_message(&msg) {
                     if raw.kind == "VersionInfo" {
                         if let Some(v) = VersionInfo::parse(&raw) {
                             eprintln!(
@@ -415,7 +382,7 @@ fn serve_conn(mut sock: TcpStream, id: u64, state: Arc<Mutex<State>>) -> std::io
                 }
                 continue;
             }
-            let raw = match parse_message(&msg) {
+            let raw = match parse_frame_message(&msg) {
                 Some(r) => r,
                 None => continue,
             };
@@ -635,7 +602,7 @@ mod tests {
             .into_iter()
             .find(|l| l.contains("VersionInfo"))
             .unwrap();
-        let raw = parse_message(&line).unwrap();
+        let raw = parse_frame_message(&line).unwrap();
         assert_eq!(raw.kind, "VersionInfo");
         let v = VersionInfo::parse(&raw).unwrap();
         assert_eq!(v.version, "2.0.60");

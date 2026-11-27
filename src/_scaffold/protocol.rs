@@ -75,6 +75,37 @@ pub fn parse_message(text: &str) -> Option<RawMessage> {
     Some(RawMessage { kind: key, body, text: text.to_string() })
 }
 
+/// **严格版** [`parse_message`]：线上帧的解析入口。
+///
+/// 判据（与原版 serde 外部标签同口径）：整段文本必须是**恰好一个**顶层键、它的值必须是
+/// **对象**、尾部只许空白。多一个键 / 值不是对象 / 尾随垃圾 ⇒ `None`。
+///
+/// 为什么要两个入口（T75 台账 `fixtures/protocol_parse_audit.tsv` 的 2 号行）：
+/// [`parse_message`] 的契约是"**按前缀**取第一个键的对象"—— 回放行是
+/// `{"event":{…},"tick":N}`，`graphwar_replay_reader::parse_event_line` 正靠这个前缀语义
+/// 取 `event` 再回到原文取 `tick`；把它改严会让**整条回放读取链路**失效。
+/// 线上帧没有这个需求（帧本身就是单键 map）⇒ 线上路径（`_scaffold/broker.rs`）用本函数。
+pub fn parse_frame_message(text: &str) -> Option<RawMessage> {
+    let text = text.trim();
+    let inner = match text.strip_prefix('{').and_then(|_| {
+        let (v, end) = scan_value_at(text, 0)?;
+        if end != text.len() {
+            return None;
+        }
+        Some(&v[1..v.len() - 1])
+    }) {
+        Some(inner) => inner,
+        None => return None,
+    };
+    let pairs = scan_pairs(inner)?;
+    if pairs.len() != 1 {
+        return None; // 线上帧 = serde 外部标签的单键 map
+    }
+    let (kind, value) = pairs[0];
+    let body = object_body(value)?;
+    Some(RawMessage { kind: kind.to_string(), body: body.to_string(), text: text.to_string() })
+}
+
 /// LAN 广播 / `GameInfoEvent` 负载用的类型**别名**：见 [`GameInfo`]。
 ///
 /// 原版**只有一个** `struct GameInfo`（serde 名串 `struct GameInfo with 9 elements`，槽
@@ -92,6 +123,17 @@ pub use GameInfo as Broadcast;
 pub trait JsonObject {
     /// 取"对象文本"（`{…}` 或 `"k":v,…` 的内部体，实现者自己保证）。
     fn json_object_text(&self) -> &str;
+
+    /// 这个输入是**事件负载**还是**线上裸对象原文**？
+    ///
+    /// 两种形态的严格性不同，所以必须由**输入类型**区分（T75）：
+    /// * `&str` / `&String` = LAN 数据报原文。原版受控实验（`docs/archive/115` §5.3）证明
+    ///   只有"裸的 9 字段对象"被接受 ⇒ **绝不**下钻，否则变体 B/D 会漏过去；
+    /// * `&RawMessage` = 已经由 [`parse_message`] 解出名字的**事件负载**。原版 `GameInfo`
+    ///   事件只有一个字段 `game_info`（`WIRE_SPEC`）⇒ 顶层有 `game_info` 才下钻一层。
+    fn is_event_payload(&self) -> bool {
+        false
+    }
 }
 
 impl JsonObject for &str {
@@ -109,6 +151,10 @@ impl JsonObject for &String {
 impl JsonObject for &RawMessage {
     fn json_object_text(&self) -> &str {
         &self.body
+    }
+
+    fn is_event_payload(&self) -> bool {
+        true
     }
 }
 
@@ -996,6 +1042,95 @@ mod tests {
         let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"function":"x"}}"#)
             .expect("外壳合法");
         assert_eq!(FunctionInfo::parse(&m).map(|f| f.corrected_function), Some(None));
+    }
+
+    /// 一条**裸的** 9 字段广播原文（形状与 `fixtures/protocol.jsonl` 里的 LAN 报文逐字段相同；
+    /// 受控实验里被接受的就是这个形状，`docs/archive/115` §5.3 的变体 C）。
+    const BARE_BROADCAST: &str = concat!(
+        r#"{"room_name":"VAR-C-nl","game_state":"Setup","current_player_count":2,"#,
+        r#""address":"[::1]:43717","axis_mode":"EveryUnit","function_mode":"NormalFunction","#,
+        r#""turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}"#
+    );
+
+    /// **负向测试（T75 ③）**：带事件外壳的"变体 B"喂给 `Broadcast::parse` 必须返回 `None`。
+    ///
+    /// 真值（不是自写断言）：`docs/archive/115-broker.md` §5.3 的**原版客户端受控实验** ——
+    /// 往 LAN 端口灌 5 个变体，只有"裸的 9 字段对象 + 结尾换行"（C）出现在 UI 里；
+    /// A（裸对象无换行）、**B（事件包裹 `{"GameInfo":{"game_info":…}}`）**、
+    /// D（`{"game_info":…}`）、E（`time_mode` = `Timers1m`）**全部被原版丢弃**。
+    ///
+    /// 改前：`Broadcast::parse` 是子串查找 ⇒ 变体 B 在嵌套的 `game_info` 里也能找到
+    /// `"room_name":` ⇒ **解析成功**（T67 实测：一接上 selftest 的变体 B 断言当场变红，
+    /// `docs/06` §118.4）。改后：字段只认顶层 ⇒ 变体 B/D 缺顶层 `room_name` ⇒ `None`。
+    #[test]
+    fn broadcast_parse_rejects_the_event_wrapped_variant_b() {
+        // ① 正对照：裸对象必须解得开 —— 否则下面那一串 `None` 什么也证明不了。
+        let info = Broadcast::parse(BARE_BROADCAST).expect("裸 9 字段对象必须能解析（受控实验变体 C）");
+        assert_eq!(info.room_name, "VAR-C-nl");
+        assert_eq!(info.current_player_count, 2);
+
+        // ② 变体 B：事件外壳（**这是 T67 只能靠 `is_bare_object()` 兜住的那条**）
+        let variant_b = format!(r#"{{"GameInfo":{{"game_info":{BARE_BROADCAST}}}}}"#);
+        assert!(
+            Broadcast::parse(variant_b.as_str()).is_none(),
+            "变体 B（事件外壳）必须被拒：{variant_b}"
+        );
+        // ③ 变体 D：只包一层 `game_info`（没有事件名）
+        let variant_d = format!(r#"{{"game_info":{BARE_BROADCAST}}}"#);
+        assert!(Broadcast::parse(variant_d.as_str()).is_none(), "变体 D 必须被拒");
+        // ④ 变体 E：枚举值域外（T66 起由 `TimeMode::from_str` 严格拒）
+        let variant_e = BARE_BROADCAST.replace(r#""time_mode":"Timer1m""#, r#""time_mode":"Timers1m""#);
+        assert!(Broadcast::parse(variant_e.as_str()).is_none(), "变体 E 必须被拒");
+        // ⑤ 9 个字段全藏在嵌套对象里（子串式改前一定会"解析成功"）
+        let nested = format!(r#"{{"junk":{BARE_BROADCAST}}}"#);
+        assert!(Broadcast::parse(nested.as_str()).is_none(), "嵌套对象里的字段不是顶层字段");
+
+        // ⑥ 反面对照的另一半：改前的形状闸 `is_bare_object()` 会**误拒**带 `{` 的房名
+        //    （`docs/06` §118.4 记的那条"推断"级缺陷）。删掉它之后这里是**合法**的。
+        let brace_room = BARE_BROADCAST.replace("VAR-C-nl", "a{b");
+        assert_eq!(
+            Broadcast::parse(brace_room.as_str()).map(|i| i.room_name),
+            Some("a{b".to_string()),
+            "房名里带 `{{` 是合法字符串内容，不该被形状闸误拒"
+        );
+    }
+
+    /// `GameInfo` 事件的**外壳**（`{"GameInfo":{"game_info":{…}}}`）仍必须解得开 ——
+    /// 变体 B 的"拒"不能把**真帧**一起拒掉。真值：`fixtures/protocol_live_frames.jsonl`
+    /// 里 52 条 `GameInfo` 帧的体**恒为** `{"game_info":{9 字段}}`。
+    #[test]
+    fn game_info_event_wrapper_round_trips() {
+        let info = Broadcast::parse(BARE_BROADCAST).expect("裸对象");
+        let frame = emit_game_info(&info);
+        let raw = parse_frame_message(&frame).expect("线上帧 = 单键对象");
+        assert_eq!(raw.kind, "GameInfo");
+        // 事件负载路径：顶层有 game_info ⇒ 下钻一层
+        assert_eq!(Broadcast::parse(&raw), Some(info.clone()));
+        // broker 的 `parse_game_info_event` 依赖这条逐字节往返
+        assert_eq!(emit_game_info(&Broadcast::parse(&raw).unwrap()), frame);
+    }
+
+    /// **严格版帧解析**：多键 / 尾随垃圾 / 值不是对象 都必须拒；
+    /// 而**前缀语义**的 `parse_message` 保持原样（回放行 `{"event":{…},"tick":N}` 靠它）。
+    #[test]
+    fn frame_message_parser_rejects_trailing_and_multiple_keys() {
+        assert!(parse_frame_message(r#"{"Tick":{"current_tick":1}}"#).is_some());
+        assert_eq!(
+            parse_frame_message(r#"{"Tick":{"current_tick":1}}"#).map(|m| m.body),
+            Some(r#""current_tick":1"#.to_string())
+        );
+        assert!(parse_frame_message(r#"{"Tick":{"current_tick":1}}x"#).is_none(), "尾随垃圾");
+        assert!(parse_frame_message(r#"{"Tick":{"current_tick":1},"junk":1}"#).is_none(), "多键");
+        assert!(parse_frame_message(r#"{"Tick":1}"#).is_none(), "值不是对象");
+        assert!(parse_frame_message("{}").is_none(), "空对象没有事件名");
+        assert!(parse_frame_message("not json").is_none());
+        // 前缀语义（回放读取的载重契约）**不变**
+        let replay_line = r#"{"event":{"NameInfo":{"entity_id":229,"name":"user"}},"tick":253}"#;
+        let prefix = parse_message(replay_line).expect("回放行靠前缀语义");
+        assert_eq!(prefix.kind, "event");
+        assert_eq!(prefix.body, r#""NameInfo":{"entity_id":229,"name":"user"}"#);
+        // 严格版对同一行必须拒（它不是线上帧）
+        assert!(parse_frame_message(replay_line).is_none());
     }
 }
 
@@ -2620,35 +2755,52 @@ impl GameInfo {
     ///
     /// 5 个枚举字段**严格**按变体名解析（`GameState::from_str` 等），未知名字 ⇒ `None`：
     /// 与 serde 派生出来的 `Deserialize` 同口径（未知变体 = 反序列化失败）。
+    /// ## 严格性（T75：把 T67 记在 `docs/06` §118.4 的那条闸**收进 protocol.rs**）
+    ///
+    /// 两种入口形态的严格性**不同**，由输入类型定（见 [`JsonObject::is_event_payload`]）：
+    ///
+    /// * `Broadcast::parse(裸广播原文: &str)` —— 必须**本身就是** 9 字段裸对象。
+    ///   字段一律**只在顶层**找（[`top_level_value`] 不下钻），所以
+    ///   `{"GameInfo":{"game_info":{…}}}`（受控实验的**变体 B**）与
+    ///   `{"game_info":{…}}`（**变体 D**）都**缺顶层 `room_name` ⇒ `None`**。
+    ///   这正是原版行为（`docs/archive/115` §5.3：A/B/D/E 全丢，只有"裸对象 + 换行"被接受）。
+    ///   ⇒ `_scaffold/lan_v6_class.rs` 里那道具名闸 `is_bare_object()` 不再需要，已删。
+    /// * `GameInfo::parse(&RawMessage)` —— 事件负载：顶层有 `game_info` 就下钻**一层**
+    ///   （`WIRE_SPEC`：`GameInfo` 事件只有这一个字段），否则把这个体当 9 字段结构体
+    ///   （本 crate 两个解码入口共用同一个结构体，T66）。
+    ///
+    /// 字段级：5 个枚举按变体名严格解析（未知名字 ⇒ `None`）；`current_player_count` 必须
+    /// 是 `u32` 范围；缺任何必填字段 ⇒ `None`；**多余字段忽略**（serde derive 默认）。
     pub fn parse(obj: impl JsonObject) -> Option<Self> {
         let text = obj.json_object_text().trim();
-        let body = if text.starts_with('{') {
-            if !braces_balanced(text) {
-                return None;
+        let body = if obj.is_event_payload() {
+            // 事件负载：`{"game_info":{…}}` 就下钻一层；否则体本身就是 9 字段结构体。
+            match top_level_value(text, "game_info") {
+                Some(raw) => object_body(raw)?,
+                None => text,
             }
-            read_object(text)?
         } else {
-            text.to_string()
+            // 线上裸对象原文（LAN 数据报）：必须是完整对象字面量，**绝不下钻**。
+            object_body(text)?
         };
-        let m = RawMessage { kind: "GameInfo".into(), body, text: text.to_string() };
         Some(Self {
-            room_name: get_str_unescaped(&m, "room_name")?,
-            game_state: crate::turnstate::GameState::from_str(&get_str_unescaped(&m, "game_state")?)?,
-            current_player_count: u32::try_from(get_int(&m, "current_player_count")?).ok()?,
-            address: get_str_unescaped(&m, "address")?,
-            axis_mode: crate::graphwar_mode_manager::AxisMode::from_str(
-                &get_str_unescaped(&m, "axis_mode")?,
-            )?,
+            room_name: top_str_unescaped(body, "room_name")?,
+            game_state: crate::turnstate::GameState::from_str(&top_str_unescaped(body, "game_state")?)?,
+            current_player_count: u32::try_from(top_int(body, "current_player_count")?).ok()?,
+            address: top_str_unescaped(body, "address")?,
+            axis_mode: crate::graphwar_mode_manager::AxisMode::from_str(&top_str_unescaped(
+                body, "axis_mode",
+            )?)?,
             function_mode: crate::graphwar_mode_manager::FunctionMode::from_str(
-                &get_str_unescaped(&m, "function_mode")?,
+                &top_str_unescaped(body, "function_mode")?,
             )?,
-            turn_mode: crate::graphwar_turn_manager::TurnMode::from_str(
-                &get_str_unescaped(&m, "turn_mode")?,
-            )?,
-            time_mode: crate::graphwar_mode_manager::TimeMode::from_str(
-                &get_str_unescaped(&m, "time_mode")?,
-            )?,
-            locked: get_bool(&m, "locked")?,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::from_str(&top_str_unescaped(
+                body, "turn_mode",
+            )?)?,
+            time_mode: crate::graphwar_mode_manager::TimeMode::from_str(&top_str_unescaped(
+                body, "time_mode",
+            )?)?,
+            locked: top_bool(body, "locked")?,
         })
     }
 }
