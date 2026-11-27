@@ -1,0 +1,74 @@
+# protocol.rs 全部 parse / from_str / as_* 入口台账（T75，2026-11-27）
+#
+# 判档（verdict_before / verdict_after 只用这 4 个词 + 括号限语）：
+#   严格       = 变体名（若有）精确、字段只认顶层且按线上类型精确校验、缺必填 ⇒ None/Err、多余字段 ⇒ 忽略（serde 默认）
+#   子串式     = 用 body.find("key":) 之类在**任意深度**找字段（嵌套对象内、别的字符串值内部都能命中）
+#   宽容枚举   = 枚举语义的字段被当任意字符串收下
+#   静默丢字段 = 缺字段/类型不符时给默认值或截断，不失败
+#
+# 真值依据（truth_basis 列的前缀，全部可复算）：
+#   live1717 = fixtures/protocol_live_frames.jsonl，1717 条线上真帧（T53 官服/自建局抓包，56 种事件）。
+#              本轮机核：**每一帧**的顶层键集与键序 100% 等于 WIRE_SPEC（0 mismatch）。
+#   spec74   = src/_scaffold/protocol.rs 的 WIRE_SPEC（74 条 = 64 有字段 + 10 空体；字段名+ValType+键序）。
+#   nserde   = .rodata 里 serde 的 `struct <Name>Event with N element(s)`（SERDE_FIELD_COUNTS 23 条；docs/96 §3）。
+#   enums7   = WIRE_VALUE_ENUMS 7 张变体名表（结构性穷尽扫描，docs/07 §5.2）+ docs/06 §109.4 E6。
+#   exp115   = docs/archive/115-broker.md §5.3 原版客户端受控实验（变体 A/B/C/D/E，只有 C 被接受）。
+#   serde    = serde derive 语义（未知变体=失败、缺必填=失败、类型不符=失败、未知字段=忽略、Option 字段缺失=None）。
+#
+# 复算命令：
+#   1) 1717 帧顶层键集/键序 vs WIRE_SPEC：python3 - <<'EOF'（见 docs/06 §120.3 的脚本正文）
+#   2) 真帧硬闸：cargo test --offline live_wire_bytes / replays_every_live_frame
+#   3) 变体 B：cargo test --offline variant_b（本节新增负向测试）
+
+entry	loc	layer	verdict_before	defects	truth_basis	action	verdict_after
+Frame::decode	protocol.rs:41	A 传输	严格	-	spec74:F=u16 大端长度=负载长度（docs/07 §2；frame_length_prefix_matches_payload_length）	不改	严格
+parse_message	protocol.rs:66	A 传输	宽容语法（前缀式）	①只取首个顶层键、尾随内容一律忽略（{"A":{...}}<垃圾> 也 Some）②顶层可多键（{"event":{...},"tick":N} 取第一个）③不查重复键	载重契约:graphwar_replay_reader::parse_event_line(:209/:215) 按前缀取 event 对象 ⇒ 改严会整条回放读取失效（该文件不在本轮允许范围）	不改（登记）；另加严格版 parse_frame_message 供线上路径	宽容语法（登记，有载重契约）
+parse_frame_message（本轮新增）	protocol.rs（新增）	A 传输	-（新增）	-	spec74 + serde 外部标签=单键 map（多键/尾随=解析失败）	新增：单键、值为对象、尾部只许空白	严格
+get_str	protocol.rs:116	B 字段	子串式	①body.find("k":) 命中任意深度（嵌套对象内、甚至别的字符串值内部）②遇 \" 提前截断	live1717:1717 帧 56 种，每帧顶层键集+键序 100% 等于 WIRE_SPEC（本轮实测 0 mismatch）	改：只认顶层 + 值须是完整 JSON 字符串（不解转义）	严格
+get_int	protocol.rs:129	B 字段	子串式+截断	①任意深度 ②只取数字前缀 ⇒ 12abc→12、1.5→1（serde 判类型错）	live1717 + serde:i64 只收整数字面量	改：顶层 + JSON 整数文法精确匹配	严格
+get_color	protocol.rs:140	B 字段	子串式+静默回绕	①任意深度 ②as u8 回绕（r=300→44），serde 会报越界	live1717 + nserde/docs/06 §109.4:GraphwarColor 3 字段 r/g/b，单态 0x3cc330=u8	改：顶层 + 每通道 0..=255（越界 ⇒ None）	严格
+get_f64	protocol.rs:393	B 字段	子串式+截断	①任意深度 ②数字前缀（截到首个非数字字符）	live1717 + serde:f64 收 JSON 数字	改：顶层 + JSON 数字文法	严格
+get_bool	protocol.rs:404	B 字段	子串式	任意深度 + 前缀命中（trueX 也当 true）	live1717 + serde:bool 只有 true/false 两个字面量	改：顶层 + 恰好 true/false	严格
+get_str_unescaped	protocol.rs:1207	B 字段	子串式	任意深度（转义本身处理正确）	live1717 + serde:String	改：只认顶层	严格
+split_fields	protocol.rs:1280	B 字段	宽容语法	遇畸形即 break、静默丢弃剩余（{"a":1,JUNK} 只得到 a）	spec74/serde 对象文法	不改（extra 原样保留契约靠它）；新增 scan_pairs 严格扫描器	宽容语法（登记）
+extra_fields	protocol.rs:1348	B 字段	宽容语法（继承 split_fields）	同上	spec74/serde	新增 strict_extra_fields（scan_pairs 驱动）；typed 入口全改用它	严格
+AddObstacle::parse	protocol.rs:418	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:pos_x,pos_y,radius（3×f64）；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+PosInfo::parse	protocol.rs:428	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:entity_id + pos_x,pos_y,radius；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+LifeInfo::parse	protocol.rs:439	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:entity_id,alive；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+FunctionInfo::parse	protocol.rs:445	C 强类型（手写）	子串式（+静默丢字段）	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）③function 缺失 ⇒ unwrap_or_default() 静默变 ""（serde:Str 必填 ⇒ 应失败）	spec74:owner_id,function,corrected_function(OptStr)；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段（缺 function ⇒ None）	严格
+TurnInfo::parse	protocol.rs:498	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:player_id,soldier_id；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+TurnCountInfo::parse	protocol.rs:503	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:turn_count；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+EndOfTurnInfo::parse	protocol.rs:508	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:end_of_turn_tick,time_mode(Str)；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+FunctionFireRequest::parse	protocol.rs:516	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:player_id；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+FunctionFire::parse	protocol.rs:521	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:soldier_id；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+FunctionUpdateRequest::parse	protocol.rs:526	C 强类型（手写）	子串式（+静默丢字段）	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）③function 缺失 ⇒ 静默变 ""（同 FunctionInfo）	spec74:player_id,function(Str)；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段（缺 function ⇒ None）	严格
+LifeQueuedDeath::parse	protocol.rs:565	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:entity_id,tick；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+EffectInfo::parse	protocol.rs:570	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:effect_id,pos_x,pos_y,effect_type(Str),start_tick；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+DestroyObstacle::parse	protocol.rs:581	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:pos_x,pos_y,radius；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+RankRequest::parse	protocol.rs:1519	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:entity_id,rank(OptI64)；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+RankInfo::parse	protocol.rs:1547	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:entity_id,rank(OptI64)；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+VersionInfo::parse	protocol.rs:1575	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:version,system；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+BotAdded::parse	protocol.rs:1604	C 强类型（手写）	子串式	①不校验 m.kind（把别的事件名当本事件解析成功）②字段任意深度（子串式）	spec74:connection_id,player_id,level；nserde 字段数；live1717 真帧	改：变体名精确 + 严格字段	严格
+entity_str_event!::parse（11 实例）	protocol.rs:1419	D 宏生成	子串式	①不校验 m.kind（11 个实例共用）②entity_id/字符串字段任意深度	spec74 + nserde(N=2)+live1717:NameRequest 3/NameInfo 20/Skin*Request 3/Skin*Info 60/Face*3+60/Hat*3+60/EntityEffectInfo 110/ChatMessage 1/ChatMessageRequest 1	改：变体名精确 + 严格字段	严格
+bool_field_event!::parse（2 实例 LockInfo/LockRequest）	protocol.rs:1978	D 宏生成	子串式	①不校验 m.kind ②lock 任意深度（trueX 也算）	spec74 + nserde(LockInfo/LockRequest N=1)+live1717(各 2 帧)	改：变体名精确 + 严格字段	严格
+opt_i64_field_event!::parse（1 实例 TurnLimitInfo）	protocol.rs:2033	D 宏生成	子串式	①不校验 m.kind ②turn_limit 任意深度；缺失与 null 都 ⇒ None（serde 对 Option 字段缺失也是 None ⇒ 不改）	spec74 + nserde(N=1)；语料真帧 21 帧取值 {1,5,6,10}	改：变体名精确 + 严格字段	严格
+str_field_event!::parse（1 实例 GameRemoved）	protocol.rs:2060	D 宏生成	子串式	①不校验 m.kind ②game_address 任意深度	spec74 + nserde(N=1)+live1717(1 帧)	改：变体名精确 + 严格字段	严格
+i64_pair_event!::parse（1 实例 BanConnectionRequest）	protocol.rs:2088	D 宏生成	子串式	①不校验 m.kind ②两字段任意深度	spec74 + nserde(N=2)；线上 1717 帧 0 帧（形状逐位、语义推断，见 docs/06 §115）	改：变体名精确 + 严格字段	严格
+empty_body_event!::parse（3 实例 GameHeartbeat/ClearObstacles/ClearBansRequest）	protocol.rs:2118	D 宏生成	子串式+宽容语法	①不校验 m.kind ②体畸形也接受（split_fields 静默截断）	spec74（N 串缺失=空体）+live1717:ClearObstacles 2 帧	改：变体名精确 + 严格文档体（scan_pairs）	严格
+passthrough_event!::parse（0 实例，未使用）	protocol.rs:1397	D 宏生成	子串式+宽容语法	同上（当前无实例，属死代码）	spec74	改：同一套闸（将来启用即严格）	严格（未使用）
+i64_field_event!::parse（0 实例，未使用）	protocol.rs:2006	D 宏生成	子串式	①不校验 m.kind ②任意深度（当前无实例，属死代码）	spec74	改：同一套闸	严格（未使用）
+GraphwarColor::parse	protocol.rs:1861	E 负载	子串式+静默丢字段	①r/g/b 任意深度 ②as u8 回绕（越界静默）	nserde/docs/06 §109.4:3 字段 r,g,b 全 u8（单态 0x3cc330）+live1717(20 条 ColorInfo)	改：顶层 + 三通道 u8 精确；不加变体名闸（被 {"X":{...}} 合成外壳调用，tests/wire_format.rs:387 依赖）	严格（形状）
+GameInfo::parse / Broadcast::parse	protocol.rs:1925	E 负载	子串式（**变体 B 漏网的根因**）	①&str 路径把带事件外壳的整帧也解析成功（在嵌套 game_info 里搜到 "room_name":）⇒ 原版丢弃的变体 B/D 漏过去 ②字段任意深度 ③5 枚举已严格（T66）	exp115:docs/archive/115 §5.3 受控实验（A 无换行裸对象/B 事件包裹/C 裸对象+换行/D {"game_info":...}/E Timers1m；只有 C 被接受）+live1717:52 条 GameInfo 帧 body 恒为 {"game_info":{9 字段}}+nserde:struct GameInfo with 9 elements	改：&str 路径=只认裸对象顶层 9 字段、绝不下钻；&RawMessage 路径=顶层有 game_info 才下钻一层；缺字段 ⇒ None；随后删 lan_v6_class::is_bare_object	严格
+JsonObject::json_object_text（3 impl）	protocol.rs:94/98/104/110	E 适配	严格	-	-	不改	严格
+AnyEvent::parse	protocol.rs:2396	F 分发	名字严格 × 委托层不严	名字白名单（23）在位；漏洞全在委托的 typed parse（子串式）	spec74 + nserde 23 条 + live1717 352 帧硬闸	不改本函数；委托层收严后语义自动到位；新增‘每个 typed 入口喂错变体名必须 None’测试	严格
+wire_spec / wire_field_order	protocol.rs:1826/1831	F 查表	严格	-	spec74（74 条按名升序）	不改	严格
+GameState::from_str	turnstate.rs:95	G 枚举（from_str（反序列化方向））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 8 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+AxisMode::from_str	graphwar_mode_manager.rs:160	G 枚举（from_str（反序列化方向））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 4 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+FunctionMode::from_str	graphwar_mode_manager.rs:185	G 枚举（from_str（反序列化方向））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 2 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+TimeMode::from_str	graphwar_mode_manager.rs:130	G 枚举（from_str（反序列化方向））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 6 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+TurnMode::from_str	graphwar_turn_manager.rs:301	G 枚举（from_str（反序列化方向））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 2 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+GameState::as_str	turnstate.rs:81	G 枚举（as_str（序列化方向，全 match=编译期穷尽））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 8 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+AxisMode::as_str	graphwar_mode_manager.rs:150	G 枚举（as_str（序列化方向，全 match=编译期穷尽））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 4 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+FunctionMode::as_str	graphwar_mode_manager.rs:177	G 枚举（as_str（序列化方向，全 match=编译期穷尽））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 2 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+TimeMode::as_str	graphwar_mode_manager.rs:117	G 枚举（as_str（序列化方向，全 match=编译期穷尽））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 6 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
+TurnMode::as_str	graphwar_turn_manager.rs:293	G 枚举（as_str（序列化方向，全 match=编译期穷尽））	严格	-	enums7:WIRE_VALUE_ENUMS 该枚举 2 个变体（结构性穷尽扫描 docs/07 §5.2）+docs/06 §109.4 E6 变体名 LEN 自校验	不改	严格
