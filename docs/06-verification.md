@@ -18054,3 +18054,18 @@ python3 tools/check_doc_refs.py
   `size.x` 取整差 —— 要定案得量两者在回放屏的 `size`/`visible`（同一条 `@@LAYOUT` 路子加两行即可）。
   影响：`frame_diff` 的 `L3 diff_px` 会在 856 / 1 126 之间摆 ±270 px，**不影响 L2 块数，也不影响
   本节任何结论**，但会一直给"replay 两屏残差"加 0.0121 pp 的底噪。
+
+### 103.9 允许改 / 没改的边界（`merge_check` 禁区声明）
+
+* **声明：client/src/screens/play_screen.gd** —— 本轮**唯一**的生产代码改动就是这一个文件
+  （`_set_replay_layout()` 的两处 + 一个诊断函数）。它落在 `merge_check.py` 的
+  `client/src/**` 禁区清单里（该清单的规矩是"要么在报告里声明、要么 `--allow` 放行"），
+  所以在这里显式声明：**这条 48 px 的病根就长在这个文件里，不碰它无法修**（§103.1 的 dump 已定位到
+  `_set_replay_layout()` 那两行）。`git diff --name-only` 的其余 3 个文件是
+  `fixtures/replay_layout_dump.tsv`（新增真值表）、`docs/06`（本节）、`docs/16`（§86）。
+* **没改**：`recovered-src/`（一行未动）、`client/scenes/**`（`.tscn` 与 `recovered-src/` 逐字节相同，
+  `cmp` 过，本来就是对的）、`src/**`（Rust 一行未动 ⇒ `.so` md5 与改前同值 `719c98bf…`）、
+  `tests/**`、`client/tools/*_check.gd`（headless 条数 1978 不变）、门槛/护栏文件、
+  `docs/00-status.md` / `HANDOVER.md` / `README.md` / `coverage-matrix.*`。
+* **主工作区**：只读（本轮全程只在 `.agent-work/cg/wt-t54` 里跑；主 checkout 的
+  `git status` 里与本任务相关的改动为 0）。
