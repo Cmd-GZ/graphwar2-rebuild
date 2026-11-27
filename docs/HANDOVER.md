@@ -234,6 +234,30 @@ t6 静态两屏（0 像素）；另由 lead 修掉 `update_sprite` 的源码级�
 
 ## 5. 干活时必须遵守的（都是踩出来的）
 
+### 0.0.1 **2026-11-27 会话记录（lead 直管 master，共合并 24 个 agent 分支）**
+
+**今天的四个真 bug / 真错**（都是审计逼出来的，不是"又写了一堆"）：
+1. **AI 适应度评分核心**（`fitness_eval`）：命中项用 `killed.len()` 恒正、且不减 `−dist` ⇒ 真值是带符号 `0x51ae51 dec`/`0x51ae62 inc` + `0x51b0d9 subsd [rsp+8]`。
+   修正后**误伤从 +2e6 变 −2e6**（AI 现在会把打队友排在"什么都不做"之下）。夹具 22 条合成 + 17 条局面：**9/22、5/17 → 22/22、17/17 逐位相同**。
+2. **我们自己的 F1 被虚抬 33 条**（"登记不是实现"：文件顶部的地址台账注释块被规则贴到第一个 fn）⇒ 负向排除后 `F1 312→279`。
+3. **`GameRecorder` 布局**：`subscribed`/`saves` 是自造字段、`last_state` 错位 ⇒ 真值是结构体 `0x38`（`Vec` + 自指 `Weak` + `Rc` + `Weak` + `u8`），`0x50` 是外层 `RcInner`（旧注释的 `+0x48` 从 RcInner 基址算是对的）。
+4. **`match_ready` 半成品屏**：我方自造的 `_can_join_by_idle()`（静默 0.30 s 就算握手完成，7 条状态同步只到 1 条也进屏）⇒ 删掉后 **12 823 → 2 046 px**。
+   另有 `match_play` **5 798 → 1 740 px（0.2604 % → 0.0782 %，L2 0）**：真因是我方那条弹道**永远不退场**（起飞 tick 恒 0 + 揭示量当累计量 + 在场谓词恒成立 + `remove_function` 从不跑）。
+
+**被证伪的旧结论 12 条**（挑重要的）：`0x4eb830` 不是常量折叠器（是 `remove_offset`；真折叠 `0x4ebbe0` 只被 AI 进化器调用）· `AxisDrawer`/`GraphicsManager` "0 调用 0 槽"是扫描边界的假象 · `PatternSegment` 的 mismatch 判错对象 · broker 帧格式"换不了" · `GameRemoved`/`TurnLimitInfo`/"403 份回放 `EndingGame` 0 次" 三处都是 **gzip-grep 假阴性** · `TurnLimitInfo` 有 21 帧 · `bit_exact_sweep` 的 `isolated_impossible`（评分核心其实可隔离对拍）· 「原版回放屏不画光标」（是 `--stop-plan` 冻结停帧的相位偏置，原版也画）· `0x4c2b90` 的真名是 `is_leader_local`。
+
+**三次度量口径修正**（比涨数更重要）：`cargo/gdext` 的 **356 条 `#[path]` 重复计数** · **F3 的 na 分类**（153 条里 88 条是 std 单态化/gdext 宏产物）· **F1 的 na 假抬 33 条**。
+⇒ 现在的招牌是**同口径口径 B**：`313/438 = 71.5 %`（A 含 na 313/527 = 59.4 %、B′ 312/445）。
+
+**全局分母清算（T86）**：原版 `.text` **13 263** 条可分析函数里，`na` **9 104 = 68.6 %**、`real-missing` 542（抽样纠偏 ≈450）、`unknown` 3 208（信息天花板）、`implemented` 409
+⇒ **真正还差 ≈555 个函数（500–600）**。最集中：`module_container` / `game_state_manager` / `setup_control` / `root_node` / `event`。
+🔑 钥匙：**Android 2.0.60 的 `.so` 的 `.symtab` 没被剥离**（18 793 个 FUNC 符号）⇒ 命名从 348 → **400/527**；但要看穿：那 52 条新名只对应 **7 个源码函数**，严格 1:1 **+0**。
+
+**流程沉淀**（今天踩了 5 次"手工解 `docs/06` 冲突"的坑，全部工具化）：
+`tools/doc06_insert.py`（按内容 hash 插节，只给新块分配 max+1、绝不重排既有节）· `tools/merge_agent.sh`（合并 agent 分支的标准动作）·
+`docsec.py` 新增**空心节**与**子节重号**检测 · `AGENTS.md` **A.6** 纪律。
+
+
 ### 合并 teammate 分支之前（`AGENTS.md` 合并纪律 A）
 
 > 2026-11-26 起流程变了：**没有 `dispatch/` 任务书、没有 CG 下游分支**。teammate 在自己的
