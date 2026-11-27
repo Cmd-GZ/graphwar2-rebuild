@@ -94,7 +94,7 @@
 
 use crate::_scaffold::protocol::{self, RawMessage};
 use crate::_scaffold::replay_inflate::{gunzip, is_gzip, InflateError};
-use crate::graphwar_game_recorder::EventInfo;
+use crate::graphwar_game_recorder::{EventInfo, GraphwarEvent};
 
 /// 回放目录。原版是**字面量**（不是拼出来的），**自带结尾斜杠**，15 字节。
 ///
@@ -219,9 +219,9 @@ pub fn parse_event_line(line: &str) -> Option<EventInfo> {
         return None;
     }
     Some(EventInfo {
+        // 声明顺序 = 二进制的字段顺序：`event` 在前、`tick` 在后（`docs/06` §103.3）。
+        event: GraphwarEvent { name: ev.kind, body: ev.body },
         tick: tick as u32,
-        event: ev.kind,
-        body: ev.body,
     })
 }
 
@@ -244,7 +244,7 @@ pub fn last_tick(events: &[EventInfo]) -> Option<u32> {
 
 /// 事件名清单（回放界面要显示"这一局有什么"时的最小信息）。
 pub fn event_names(events: &[EventInfo]) -> Vec<&str> {
-    events.iter().map(|e| e.event.as_str()).collect()
+    events.iter().map(|e| e.name()).collect()
 }
 
 /// 便于把 `&RawMessage` 的载荷按名字取回来（与 `_scaffold::protocol::get_str` 同口径）。

@@ -297,18 +297,36 @@ pub const VARIANT_COUNT: usize = 74;
 /// ```
 ///
 /// ⇒ 原版这 9 个字段里有 **5 个是枚举**、1 个是整数、2 个是**不同**的串类型。
-/// 本结构体用 `u8`/`u32`/`String` 表示属于**源码级偏差**，已在 `docs/06` §82.4 登记
-/// （改它要引入 5 个枚举并先清理我方 7 处重复的 `AxisMode`/`TurnMode`/`TimeMode`/`GameState`，
-/// 是重构不是"修一处字段"）。**行为无影响**（线上形状仍是字符串/整数，与抓包一致）。
+///
+/// **T56（`docs/06` §103）取证结论**：`current_player_count` 确证是 **`u32`**（4 字节 + itoa 的
+/// 无符号路径）；5 个枚举字段的真类型就是我方**已复原且逐位复核过**的那 5 个枚举
+/// （`turnstate::GameState` / `graphwar_mode_manager::{AxisMode,FunctionMode,TimeMode}` /
+/// `graphwar_turn_manager::TurnMode`，变体名与判别值本轮全部 match）。
+/// ⚠️ **把它们写进本结构体的字段类型会被 `#[path]` 包含拦下**：`tests/` 里有 **20+ 个**测试用
+/// `#[path = "../src/events.rs"] mod events;` 直接包含本文件，一写 `crate::turnstate::…` 就
+/// `E0433: cannot find turnstate in the crate root`（本轮实测；T52 在另外 2 个文件上踩过同一个坑，
+/// 修法是先把那些测试改成引用真 crate）。⇒ 本轮**保留 `u8`**，把「改类型」登记为下一步（§103.6）。
+/// **仍登记**：`address` 原版是 32 字节、1 字节 tag、2 变体的枚举（推断 = `std::net::SocketAddr`，
+/// 拿不到符号 ⇒ 不改类型）；本结构体的**归属模块**也未知（这几个生成函数没有 `panic::Location`）。
 #[derive(Debug, Clone, Default)]
 pub struct GameInfo {
     pub room_name: String,
+    /// `enum GameState`（8 变体；单态 `0x3cc260`，表现 `0x46f020`、跳表 `0x1c17c0`）。
     pub game_state: u8,
+    /// **`u32`**（4 字节：由 `GameInfo` 内存布局的偏移差定；且 `0x3cc060` 单态体里是
+    /// itoa 的 u32 阈值 `0x2710`/`0x5f5e0ff` 且**无**符号检查 ⇒ 无符号 32 位）。
     pub current_player_count: u32,
+    /// socket 地址（`"[::1]:35245"`）。原版是 **32 字节、1 字节 tag、2 变体**的枚举
+    /// （`0x3cbab0` 单态 → 尾调用 `0x3e73a0`，首指令 `cmp byte ptr [rdi], 0`）。
+    /// 形状是 `std::net::SocketAddr`，但**拿不到符号** ⇒ 身份=推断，本轮仍用 `String`（登记）。
     pub address: String,
+    /// `enum AxisMode`（4 变体；单态 `0x3cb560`、跳表 `0x1be124`）。
     pub axis_mode: u8,
+    /// `enum FunctionMode`（2 变体；单态 `0x3cb670`）。
     pub function_mode: u8,
+    /// `enum TurnMode`（2 变体；单态 `0x3cbf70`）。
     pub turn_mode: u8,
+    /// `enum TimeMode`（6 变体；单态 `0x3cbce0`、表现 `0x518a10`、跳表 `0x1c6350`）。
     pub time_mode: u8,
     pub locked: bool,
 }

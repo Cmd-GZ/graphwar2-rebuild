@@ -27,7 +27,7 @@ mod graphwar_game_recorder;
 #[path = "../src/graphwar_replay_control.rs"]
 mod graphwar_replay_control;
 
-use graphwar_game_recorder::EventInfo;
+use graphwar_game_recorder::{EventInfo, GraphwarEvent};
 use graphwar_replay_control::*;
 
 #[test]
@@ -76,9 +76,11 @@ fn worker_loads_every_name_in_order() {
     c.update_replay_list(&names, |name| {
         seen.push(name.to_string());
         vec![EventInfo {
+            event: GraphwarEvent {
+                name: "TurnInfo".to_string(),
+                body: format!("{{\"name\":\"{}\"}}", name),
+            },
             tick: 1,
-            event: "TurnInfo".to_string(),
-            body: format!("{{\"name\":\"{}\"}}", name),
         }]
     });
 
@@ -87,9 +89,9 @@ fn worker_loads_every_name_in_order() {
 
     // 主线程按到达顺序取
     let first = c.take_ready().unwrap();
-    assert!(first[0].body.contains("\"a\""));
+    assert!(first[0].event.body.contains("\"a\""));
     let second = c.take_ready().unwrap();
-    assert!(second[0].body.contains("\"b\""));
+    assert!(second[0].event.body.contains("\"b\""));
     assert!(c.take_ready().is_none());
 }
 

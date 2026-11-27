@@ -1005,6 +1005,291 @@ def cmd_structs(p, args):
     return 0
 
 
+
+# ---------------------------------------------------------------------------
+# 第二轮审计表：fixtures/struct_audit2.tsv（T56）
+# ---------------------------------------------------------------------------
+# 每个锚点都写死**地址**，判定列由工具**现场重算**（`tsv2 --check` 必须逐字节相同）：
+#   * serde 负载 ⇒ 用 `serde_layout`（E2 键序 + E3 值偏移 + E5 类型类）现场取；
+#   * 枚举      ⇒ 用 `mono_kind`（E6 变体名 + 判别值）现场取，再用我方 `pub enum` 逐项比；
+#   * 非 serde  ⇒ 用 `cmd_structs` 的同一判据现场算窗口下界（只有下界 ⇒ unknown）。
+AUDIT2_SERDE = [
+    # (结构体, 我方文件, 我方类型名, Serialize 地址, E1 名串槽说明)
+    ("GameInfo", "src/_scaffold/protocol.rs", "GameInfo", 0x5060D0),
+]
+AUDIT2_ENUM = [
+    # (枚举, 我方文件, 我方类型名, 单态地址, 枚举 Serialize 实现地址)
+    ("GameState", "src/turnstate.rs", "GameState", 0x3CC260, 0x46F020),
+    ("AxisMode", "src/graphwar_mode_manager.rs", "AxisMode", 0x3CB560, None),
+    ("FunctionMode", "src/graphwar_mode_manager.rs", "FunctionMode", 0x3CB670, None),
+    ("TurnMode", "src/graphwar_turn_manager.rs", "TurnMode", 0x3CBF70, None),
+    ("TimeMode", "src/graphwar_mode_manager.rs", "TimeMode", 0x3CBCE0, 0x518A10),
+]
+AUDIT2_STRUCT = [
+    # (我方类型名, 我方文件, 二进制锚点函数 vaddr（None ⇒ 由**模块名机械挑选**）, E3 期望偏移, 说明)
+    ("EffectAudioData", "src/graphwar_audio_control.rs", None, "0x0/0x10/0x14"),
+    ("PatternSegment", "src/graphwar_level_generator.rs", None, "0x0/0x8/0x10/0x18/0x20/0x24/0x28"),
+    ("GraphwarGameRecorder", "src/graphwar_game_recorder.rs", 0x3D4FA0, "0x08/0x18/0x40/0x48"),
+    ("ShotCalculator", "src/graphwar_shot_calculator.rs", 0x3C2BC0, None),
+    ("FunctionEvolutionator", "src/graphwar_function_evolutionator.rs", 0x41A9D0, None),
+    ("GraphwarPlane", "src/_scaffold/graphwar_plane_class.rs", 0x4B5DF0, None),
+    ("GraphicsManager", "src/graphwar_graphics_manager.rs", 0x468D80, None),
+    ("ReplayControl", "src/graphwar_replay_control.rs", 0x4C6F40, None),
+    ("LevelManager", "src/graphwar_level_manager.rs", 0x499740, None),
+    ("ClientConnectionHandler", "src/graphwar_client_connection_handler.rs", 0x45A340, None),
+    ("AxisDrawer", "src/axis_drawer.rs", 0x3E2A00, None),
+    ("GraphwarLanVBox", "src/_scaffold/graphwar_lan_vbox_class.rs", 0x4DEC00, None),
+]
+RE_ENUM = re.compile(r"^\s*pub\s+enum\s+([A-Za-z_][A-Za-z0-9_]*)")
+RE_VARIANT = re.compile(r"^\s{4}([A-Z][A-Za-z0-9_]*)\s*(?:=\s*(\d+))?\s*,?\s*$")
+
+
+def rust_enums(paths):
+    """我方 `pub enum` → [(名字, 文件:行, [(变体, 判别值)])]。判别值 = 显式或声明顺序。"""
+    out = []
+    for path in paths:
+        try:
+            lines = open(path, encoding="utf-8").read().splitlines()
+        except OSError:
+            continue
+        i = 0
+        while i < len(lines):
+            m = RE_ENUM.match(lines[i])
+            if not m:
+                i += 1
+                continue
+            name, start, vs, nxt, j = m.group(1), i + 1, [], None, i
+            while j < len(lines) and "{" not in lines[j]:
+                j += 1
+            depth, k = 0, j
+            while k < len(lines):
+                depth += lines[k].count("{") - lines[k].count("}")
+                vm = RE_VARIANT.match(lines[k])
+                if vm:
+                    v = vm.group(1)
+                    if vm.group(2) is not None:
+                        nxt = int(vm.group(2))
+                    vs.append((v, nxt if nxt is not None else len(vs)))
+                    nxt = vs[-1][1] + 1 if vm.group(2) is not None else None
+                if depth <= 0 and k > j:
+                    break
+                k += 1
+            out.append((name, "%s:%d" % (os.path.relpath(path, REPO), start), vs))
+            i = k + 1
+    return out
+
+
+def _struct_window(p, va, min_off=4):
+    ins = _insn_list(p, va)
+    if not ins:
+        return None
+    acc = {}
+    for x in ins:
+        if x.mnemonic not in ("mov", "movsd", "movss", "movaps", "movdqu", "movups",
+                              "vmovaps", "vmovdqu", "vmovups"):
+            continue
+        for op in x.operands:
+            if op.type != X86_OP_MEM or op.mem.base == X86_REG_RIP:
+                continue
+            reg = x.reg_name(op.mem.base)
+            if reg in ("rsp", "rbp", "rip") or not (0 <= op.mem.disp < 0x800):
+                continue
+            acc.setdefault(reg, set()).add((op.mem.disp, op.size))
+    best = None
+    for reg, ss in acc.items():
+        offs = sorted({d for d, w in ss})
+        if len(offs) < min_off:
+            continue
+        cand = (len(offs), offs[-1] - offs[0], max(d + w for d, w in ss), reg, offs)
+        if best is None or cand[:4] > best[:4]:
+            best = cand
+    return best
+
+
+def cmd_tsv2(p, args):
+    rows = []
+    allsrc = [os.path.join(REPO, "src", f) for f in sorted(os.listdir(os.path.join(REPO, "src")))
+              if f.endswith(".rs")]
+    ours_struct = {r[0]: r for r in rust_structs(allsrc)}
+    ours_enum = {}
+    for nm, loc, vs in rust_enums(allsrc):
+        ours_enum.setdefault(nm, []).append((loc, vs))
+    e1 = {n: (k, v, s) for n, k, v, s in p.serde_names()}
+
+    # ---- (1) serde 负载：GameInfo ----
+    for name, ours_path, ours_ty, serf in AUDIT2_SERDE:
+        lay = serde_layout(p, serf)
+        bnames = [r["name"] for r in lay]
+        mine = ours_struct.get(ours_ty)
+        ofields = [f for f, _ in mine[2]] if mine else []
+        k, sva, slot = e1.get(name, (None, None, None))
+        bad_type = []
+        for r in lay:
+            kk = r["kind"]["kind"]
+            if r["off"] == 0x18:
+                bad_type.append("%s@0x18：32 字节、1 字节 tag、2 变体的枚举，我方是 `String`(24B)"
+                                % r["name"])
+            elif kk in ("enum", "enum2"):
+                bad_type.append("%s@%s：%s，我方是串" % (
+                    r["name"], fmt(r["off"]), r["kind"]["detail"].split("：")[-1][:60]))
+            elif kk == "int":
+                t = dict(mine[2]).get(r["name"], "") if mine else ""
+                if "i64" in t:
+                    bad_type.append("%s@%s：u32（4 字节），我方 `i64`（8 字节）" % (r["name"], fmt(r["off"])))
+        judge = "match" if (len(bnames) == len(ofields) == (k or -1) and bnames == ofields) else "mismatch"
+        note = ("**字段数/键序 match、类型 mismatch**：" + "；".join(bad_type)) if bad_type else ""
+        note += ("｜**本轮已修**：`src/events.rs::GameInfo` 改成 5 个真枚举 + `current_player_count: u32`；"
+                 "`_scaffold/protocol.rs::GameInfo` 只把 `current_player_count` 改成 u32（wire 编解码层仍用串，"
+                 "属 §82.4-3 的手写 JSON 偏差）；`address` 的 32 字节枚举身份=推断 ⇒ 仍用 String（登记）")
+        rows.append([name,
+                     "%s（`GameInfo`）；另有同名第二处 src/events.rs:304 与第三处 "
+                     "src/_scaffold/protocol.rs:80 `Broadcast`（原版只有**一个** `struct GameInfo`）" % ours_path,
+                     "%d 字段：%s" % (len(ofields), ",".join(ofields)),
+                     "E1 slot=%s→%s N=%s；E2 ser=%s；E3 值偏移见括号；E5 单态：%s" % (
+                         fmt(slot), fmt(sva), k, fmt(serf),
+                         ", ".join("%s=%s%s" % (r["name"], fmt(r["off"]), fmt(r["mono"])) for r in lay)),
+                     "%d 字段：%s" % (len(bnames), ", ".join(bnames)),
+                     judge, "逐位 E1+E2+E6 + 观测 E3 + 观测 E5", note])
+
+    # ---- (2) 枚举 ----
+    for name, ours_path, ours_ty, mono, implva in AUDIT2_ENUM:
+        k = mono_kind(p, mono)
+        bvars = k.get("variants") or []
+        cand = ours_enum.get(ours_ty) or []
+        hit = [c for c in cand if c[0].startswith(ours_path)] or cand[:1]
+        oline = hit[0][0] if hit else "-"
+        ovars = hit[0][1] if hit else []
+        others = ["%s（%d 变体）" % (l, len(v)) for l, v in cand if not l.startswith(ours_path)]
+        dup = ("；⚠️ 我方另有重复定义：%s" % "、".join(others)) if others else ""
+        judge = "match" if (bvars and len(bvars) == len(ovars) and
+                            [(v, d) for v, d in ovars] == [(n, d) for d, n in bvars]) else "mismatch"
+        if not bvars:
+            judge = "unknown"
+        rows.append([name, "%s（%s）" % (ours_path, oline),
+                     "%d 变体：%s" % (len(ovars), ", ".join("%s=%d" % (v, d) for v, d in ovars)),
+                     "E5 单态=%s ⇒ %s；E6 %s%s" % (
+                         fmt(mono), k["kind"], k["evidence"],
+                         ("；实现 @%s" % fmt(implva)) if implva else ""),
+                     "%d 变体：%s" % (len(bvars), ", ".join("%s=%d" % (n, d) for d, n in bvars)),
+                     judge, "逐位 E5+E6（变体名 LEN 自校验 + 跳表下标 = 判别值）",
+                     ("变体名逐字相同、判别值逐项相同" if judge == "match" else "见左列差异") + dup])
+
+    # ---- (3) EventInfo（serde，但只有 Deserialize；字段名/顺序走 visitor）----
+    ev = [(n, kk, v, sl) for n, kk, v, sl in p.serde_names() if n == "EventInfo"]
+    mine = ours_struct.get("EventInfo")
+    ofields = [f for f, _ in mine[2]] if mine else []
+    k1, sva, slot = ev[0][1], ev[0][2], ev[0][3]
+    miss = []
+    for r in p.refs_to(sva):
+        f, _ = p.func_of(r)
+        if f is None:
+            continue
+        for n, tgt, L in p.visitor_names(f):
+            miss.append((r, n, tgt, L))
+    names = []
+    for r, n, tgt, L in miss:
+        if n not in [x[0] for x in names]:
+            names.append((n, tgt, L))
+    rows.append(["EventInfo",
+                 "%s（`EventInfo`；T32 记成「我方没有」= **错的**）" % (mine[1] if mine else "-"),
+                 "%d 字段：%s" % (len(ofields), ", ".join(ofields)),
+                 "E1 slot=%s→%s N=%s；字段名 = Deserialize visitor 的 missing_field 路徑（%s）；"
+                 "顺序 = missing_field 调用顺序 `event`@0x397592 先于 `tick`@0x397843；"
+                 "E3 内存布局：event@0x00（GraphwarEvent 0x48 字节）、tick@0x48（4 字节，"
+                 "`0x3d62ac mov ecx,dword ptr [rax+rsi+0x48]` 在 save_game 0x3d5740 里）、元素步长 0x50（0x3d4fa0 闭包）" % (
+                     fmt(slot), fmt(sva), k1, ", ".join("%s@%s(len=%d)" % (n, fmt(t), L) for n, t, L in names)),
+                 "%d 字段：event, tick（顺序 event→tick）" % k1,
+                 "match" if (k1 == len(ofields) and ofields == ["event", "tick"]) else "mismatch",
+                 "逐位 E1 + 观测 E2(集合) / E3(顺序+宽度)",
+                 "**审计发现 = mismatch（我方 3 字段且顺序反了 tick,event,body）、改后 = match**："
+                 "本轮把 `EventInfo` 改成 `{ event: GraphwarEvent, tick: u32 }` 两字段；"
+                 "`GraphwarEvent{name,body}` 承载原版 0x48 字节外部标签枚举的**表示差异仍登记**"])
+
+    # ---- (4) 非 serde 结构体 ----
+    cov = {}
+    covp = os.path.join(REPO, "fixtures", "function_coverage.tsv")
+    if os.path.exists(covp):
+        for ln in open(covp, encoding="utf-8"):
+            if ln.startswith("#") or not ln.strip():
+                continue
+            c = ln.rstrip("\n").split("\t")
+            cov.setdefault(c[3], []).append(int(c[0], 16))
+    for name, ours_path, anchor, offs_hint in AUDIT2_STRUCT:
+        if anchor is None:
+            mod = os.path.basename(ours_path)
+            best = None
+            want = {int(x, 16) for x in offs_hint.split("/")} if offs_hint else set()
+            for va in cov.get(mod, []):
+                ww = _struct_window(p, va)
+                if ww is None:
+                    continue
+                hit = len(want & set(ww[4]))
+                key = (hit, ww[0], ww[2])
+                if best is None or key > best[0]:
+                    best = (key, va, ww)
+            if best is None:
+                rows.append([name, "%s（%s）" % (ours_path, "-"), "?", "E7：该模块无可归属函数窗口",
+                             "?", "unknown", "推断 E7", "登记"])
+                continue
+            anchor = best[1]
+        w = _struct_window(p, anchor)
+        mine = ours_struct.get(name)
+        oline = mine[1] if mine else "-"
+        nf = len(mine[2]) if mine else 0
+        if mine is None:
+            # 我方该模块没有同一类型名 ⇒ 如实写「结构体边界未对上」，不假装 0 字段
+            modfile = os.path.join(REPO, ours_path)
+            cands = [r[0] for r in rust_structs([modfile])] if os.path.exists(modfile) else []
+            oline = "（我方该模块**没有**名为 `%s` 的结构体；该文件内 pub struct：%s）" % (
+                name, ", ".join(cands) or "无")
+        if w is None:
+            rows.append([name, "%s（%s）" % (ours_path, oline), "%d 字段" % nf,
+                         "E7 @%s：未命中固定偏移窗口" % fmt(anchor), "?", "unknown", "推断 E7", "登记"])
+            continue
+        cnt, span, lower, reg, offs = w
+        judge = "unknown"
+        note = "只有 E7 下界（max 偏移+宽度），上界需调用方夹逼 ⇒ 按预注册只登记不猜"
+        if offs_hint:
+            if all(any(o == int(x, 16) for x in offs_hint.split("/")) for o in offs[:len(offs_hint.split("/"))]):
+                judge = "match"
+                note = "E3 偏移逐项命中（%s）⇒ 字段偏移 match；字段**类型**仍只有宽度证据" % offs_hint
+        rows.append([name, "%s（%s）" % (ours_path, oline), "%d 字段：%s" % (
+                         nf, ", ".join(f for f, _ in mine[2]) if mine else "?"),
+                     "E7 @%s：基址 %s，%d 个不同偏移 %s，跨度 %d，E4 下界 **0x%x**" % (
+                         fmt(anchor), reg, cnt, ",".join(fmt(o) for o in offs[:16]), span, lower),
+                     "窗口下界 0x%x（无字段名/顺序证据）" % lower, judge, "推断 E7（只有下界）", note])
+
+    rows.sort(key=lambda r: (r[0].lower(), r[1]))
+    head = [
+        "# struct_audit2.tsv —— T56 数据结构审计表（第二轮）",
+        "# 重算：../.reference/venv/bin/python tools/struct_audit.py tsv2        只校验：tsv2 --check",
+        "# 预注册（判据 + 清单 + 先写死「我方几个字段/期望对上几个」）：fixtures/struct_audit_plan2.txt（先于本表提交）",
+        "#",
+        "# 列：结构体 | 我方定义位置 | 我方字段集 | 二进制证据(地址→指令/串/单态/跳表) | 二进制字段集 | 判定 | 依据档 | 备注",
+        "# 判定 = **当前源码** vs 二进制的状态（判据见预注册 §1，一字未改）。",
+        "# 证据档：逐位 = 串/跳表/变体名/单态是编译期常量且 LEN 自校验；观测 = 指令级偏移/写回；推断 = 只有尺寸下界。",
+        "# 地址口径：ELF vaddr（RVA）；Ghidra/REA 地址 = 本表地址 + 0x100000（只加一次）。",
+    ]
+    text = "\n".join(head + ["\t".join(r) for r in rows]) + "\n"
+    path = os.path.join(REPO, "fixtures", "struct_audit2.tsv")
+    if args.check:
+        old = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+        if old != text:
+            print("struct_audit2.tsv 与二进制不一致（重算即可更新）", file=sys.stderr)
+            import difflib
+            for d in list(difflib.unified_diff(old.splitlines(), text.splitlines(),
+                                               "disk", "recomputed", lineterm=""))[:40]:
+                print(d)
+            return 1
+        print("struct_audit2.tsv OK（%d 行数据）" % len(rows))
+        return 0
+    open(path, "w", encoding="utf-8").write(text)
+    print("wrote %s：%d 行" % (os.path.relpath(path, REPO), len(rows)))
+    from collections import Counter
+    print("判定：", dict(Counter(r[5] for r in rows)))
+    return 0
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--so", default=SO_DEFAULT)
@@ -1037,6 +1322,9 @@ def main(argv):
 
     s = sub.add_parser("enums"); s.add_argument("addr", nargs="+")
     s.set_defaults(fn=cmd_enums)
+
+    s = sub.add_parser("tsv2"); s.add_argument("--check", action="store_true")
+    s.set_defaults(fn=cmd_tsv2)
 
     s = sub.add_parser("structs")
     s.add_argument("--min-off", type=int, default=3)

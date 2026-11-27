@@ -157,30 +157,62 @@ pub const SUBSCRIPTIONS: [&str; 32] = [
 pub const STATE_ENDING_GAME: u8 = GameState::EndingGame as u8; // 6
 pub const STATE_SETUP: u8 = GameState::Setup as u8; // 1
 
-/// 一条录像记录（`EventInfo`）。
+/// 录像记录里的事件本体 —— 原版 `EventInfo.event` 的类型是 **`GraphwarEvent`**
+/// （`0x48` 字节的 serde **外部标签枚举**：74 个事件变体各带自己的载荷）。
+///
+/// 我方没有把 74 个变体做成枚举（那需要 74 个载荷结构体，见 `docs/06` §82.4-3 的登记），
+/// 而是用 `name`（外部标签的那个 key）+ `body`（载荷原文）**两串承载同一个类型**。
+/// ⇒ 字段数已对上（`EventInfo` = 2），但 `GraphwarEvent` 的**内部表示仍是登记项**。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EventInfo {
-    pub tick: u32,
+pub struct GraphwarEvent {
     /// 事件名（serde 外部标签的那个 key，例如 `"FunctionInfo"`）。
-    pub event: String,
+    pub name: String,
     /// 该事件的 JSON 载荷（原样透传，**不重排、不省略**）。
     pub body: String,
+}
+
+/// 一条录像记录（`EventInfo`）—— **2 个字段**，声明顺序 `event` → `tick`。
+///
+/// 逐位证据（`docs/06` §103.3）：
+/// * `E1`：`.data.rel.ro` 槽 `0x950560` → `struct EventInfo with 2 elements`（`0x1bcba0`）；
+/// * 字段名 `event`(`0x1bc845`) / `tick`(`0x1b925c`)；**顺序**来自 serde 生成的
+///   `visit_map` 末尾 `missing_field` 的调用顺序（`0x397592` event 先于 `0x397843` tick，
+///   二者在 `Deserialize` visitor `0x396de0` 里）；
+/// * 内存布局：`event@0x00`（0x48 字节）、`tick@0x48`（**4 字节**：`save_game` `0x3d5740`
+///   在 `0x3d62ac` 用 `mov ecx, dword ptr [rax+rsi+0x48]` 读它）、元素步长 `0x50`
+///   （记录闭包 `0x3d4fa0` 的 `Vec` 扩容）。
+///
+/// ⚠️ 改前我方是 **3** 字段且顺序反了（`tick, event, body`）—— 那是 T32 §82.4-2
+/// 「我方没有这个结构体」之外的另一处偏差，本轮按 `fixtures/struct_audit_plan2.txt` 修掉。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventInfo {
+    pub event: GraphwarEvent,
+    pub tick: u32,
 }
 
 impl EventInfo {
     /// 一行 JSON：`{"event":{"<Name>":<body>},"tick":<N>}`。
     ///
-    /// 字段顺序是**观察到的**（`"event"` 的字面量在 `"tick"` 之前被引用，
-    /// 且 400 份真实回放都是这个顺序）。
+    /// 键序 `event` → `tick` = **声明顺序**（`E3` 的 missing_field 顺序 + 400 份真实回放逐字相同）。
     pub fn to_json_line(&self) -> String {
-        if self.body.is_empty() {
-            format!("{{\"event\":{{\"{}\":{{}}}},\"tick\":{}}}", self.event, self.tick)
+        if self.event.body.is_empty() {
+            format!("{{\"event\":{{\"{}\":{{}}}},\"tick\":{}}}", self.event.name, self.tick)
         } else {
             format!(
                 "{{\"event\":{{\"{}\":{}}},\"tick\":{}}}",
-                self.event, self.body, self.tick
+                self.event.name, self.event.body, self.tick
             )
         }
+    }
+
+    /// 事件名（外部标签 key）。
+    pub fn name(&self) -> &str {
+        &self.event.name
+    }
+
+    /// 事件载荷原文。
+    pub fn body(&self) -> &str {
+        &self.event.body
     }
 }
 
@@ -233,9 +265,8 @@ impl GraphwarGameRecorder {
     pub fn record(&mut self, tick: u32, event: Event, body: &str) -> bool {
         let name = format!("{:?}", event);
         self.events.push(EventInfo {
+            event: GraphwarEvent { name, body: body.to_string() },
             tick,
-            event: name,
-            body: body.to_string(),
         });
         self.on_event_state(event, tick)
     }
@@ -246,9 +277,8 @@ impl GraphwarGameRecorder {
     pub fn record_game_state(&mut self, tick: u32, state: u8) -> bool {
         let body = format!("{{\"game_state\":{}}}", state);
         self.events.push(EventInfo {
+            event: GraphwarEvent { name: "GameStateInfo".to_string(), body },
             tick,
-            event: "GameStateInfo".to_string(),
-            body,
         });
         self.on_game_state(state)
     }
@@ -258,7 +288,7 @@ impl GraphwarGameRecorder {
         if event != Event::GameStateInfo {
             return false;
         }
-        let state = parse_state(&self.events[self.events.len() - 1].body);
+        let state = parse_state(self.events[self.events.len() - 1].body());
         let _ = tick; // 原版只用 tick 填记录，不参与判定
         self.on_game_state(state)
     }

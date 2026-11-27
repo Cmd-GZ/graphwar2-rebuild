@@ -19052,3 +19052,223 @@ cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy
   `0x516970`/`0x5172d0`/`0x518240`… 大半是"取 `+0x40` 句柄 → 调内层一次"的同一模板），
   下一任可以照本轮的 `connect`/`disconnect` 模板批量落。
 * `0x3bf230` / `0x41ce80` / `0x405d20` / `0x3ec130` 四个被调者的语义仍未解（引擎侧 / 管理器内部）。
+
+## 109. 数据结构审计（第二轮）：**19 个结构体/类型逐项对表 —— 7 `match` / 0 `mismatch` / 12 `unknown`**；`EventInfo` 从 3 字段**收回 2 字段**（T32 记「我方没有这个结构体」是错的）、`GameInfo` 的 5 个枚举字段真类型**全部对上**（2026-11-27，任务 T56）
+
+> **节号说明**：任务书写的是追加 `## 103.`；本分支基线上 `§103` 已被 T54（`task-50`）占用、
+> `§104`–`§107` 正被并行分支（t53/t55/t57/t60）使用 ⇒ 按任务书「被占则顺延并在节首注明」，本节用 **§108**。
+>
+> 这一节接的是 `docs/06` §82（T32 数据结构审计第一轮）留下的**两个明确未完成项**。
+> T32 的结论是「80 行 = 78 match / 1 mismatch / 1 unknown，修 2 处」，遗留清单第 1、2 条就是
+> `EventInfo`（原版有 2 字段结构体、我方「没有」）与 `GameInfo`（9 个字段里 5 个原版是枚举、
+> 2 个是不同串类型），当时判为「要引入 5 枚举 + 清我方 7 处重复枚举，属重构」而没做。
+>
+> 本轮把这**两条都定案了**，并且过程里发现 **T32 有一条结论是错的**（见 §109.3）。
+> 表：[`fixtures/struct_audit2.tsv`](../fixtures/struct_audit2.tsv)（19 行）；
+> 判据与清单**先预注册**：[`fixtures/struct_audit_plan2.txt`](../fixtures/struct_audit_plan2.txt)（`e6576a7`，早于本表）。
+
+### 109.1 取证方法：T32 的四档 + 本轮新增三档
+
+T32 的 E1（serde 名串 = 字段数）/ E2（`Serialize` 的 `lea rsi` 序列 = 字段名+顺序）/
+E3（值偏移）/ E4（sret 尺寸下界）**一字未改**沿用。本轮新增三档，**全部实现进 T32 建的那个工具**
+（`tools/struct_audit.py`，没有另起一套）：
+
+| 档 | 名字 | 怎么取证 | 给出什么 | 自校验 |
+|---|---|---|---|---|
+| **E5** | 单态 → 类型类 | `serialize_field<T>` 的单态地址按 T 唯一化；再把单态体的**指纹**判成类型类：跳表形态 ⇒ 枚举；`cmp byte + cmovne/jne` ⇒ 2 变体枚举；itoa 的 `0x2710`+`0x5f5e0ff` 且**无** `js/jl/neg` ⇒ **u32**；只有 `write_str`/扩容两个汇点 ⇒ 串 | **字段的真类型** | 每条指纹都是指令级判据，`mono` 子命令现场重算 |
+| **E6** | 变体名 + 判别值 | 枚举 `Serialize` 里 `movsxd rX,[rY+rX*4]`+`add`+`jmp` 的 4 字节相对跳表；**case 下标 = 判别值**，每个 case 一条 `lea r?,[rip+变体名]`+`mov r32,LEN` | **枚举的变体集合与判别值** | `read(ptr,LEN)` 必须是 `[A-Za-z][A-Za-z0-9]*`（LEN 自校验） |
+| **E7** | 非 serde 结构体窗口 | 在**可归属函数**里找「同一基址寄存器 ≥4 个不同固定偏移」的读写窗口（基址 ∉ {rsp,rbp,rip}，位移 ∈ [0,0x800)） | **尺寸下界 + 偏移集合** | 判据在 `cmd_structs` 的 docstring 里，逐条复算 |
+
+**三个实测坑（都写进了工具注释，不写就会得到错表）**：
+
+1. **`GameInfo::serialize` 的值指针在键 `lea` 之前**：`0x506124 lea rcx,[rbx+0x41]` 在
+   `0x506128 lea rsi,[rip+game_state]` **前面**。T32 的 `ser_triples` 只向后看 ⇒ 9 个字段的偏移
+   一个都拿不到。改成「先反向到最近一条 `lea/mov <reg>,&self`、没有再向后」。
+2. **反向窗口不能把上一个字段的 `call <单态>` 当成本字段的单态**：修 (1) 时先踩了这个 ——
+   整张表的「字段名 → 单态」**整体错一位**（`game_state` 拿到 `room_name` 的 `0x3cb250`）。
+   ⇒ 反向只许取 `lea`，`call` 只在正向取。
+3. **判别式 `cmp` 必须排除带位移的形态**：这些单态体里还有一个
+   `cmp byte ptr [rdi + 8], 1`（serde map 的「首个字段」状态字节），它排在真判别式**前面**。
+   不排除的话 `GameState`/`TimeMode` 等**全部**判不出来（本轮实测：排除前后 6 个单态里 0 个能判）。
+
+### 109.2 统计（19 行 = 2 个负载/记录结构体 + 5 个枚举 + 12 个非 serde 结构体）
+
+| 判定 | 行数 | 说明 |
+|---|---|---|
+| `match` | **7** | `GameInfo`（字段数/键序）＋ `EventInfo`（改后）＋ 5 个枚举（变体名与判别值**逐项**相同） |
+| `mismatch` | **0** | 审计发现时的 2 处已在同轮修掉（`EventInfo` 3→2 字段、`GameInfo.current_player_count` i64→u32） |
+| `unknown` | **12** | 非 serde 结构体：只有 E7 的**下界**、没有字段名/顺序证据 ⇒ 按 T32 判据原文「只登记，不猜」 |
+
+**这一轮最有价值的不是 match 的条数，而是三条此前没有的结论**：
+
+1. **`GameInfo` 的 5 个枚举字段，我方早就有了正确的枚举**（T32 判「要引入 5 个枚举」是**多虑**）：
+   `turnstate::GameState`（8 变体）、`graphwar_mode_manager::{AxisMode,FunctionMode,TimeMode}`、
+   `graphwar_turn_manager::TurnMode` —— 变体名**逐字**相同、判别值**逐项**相同（§109.4）。
+   缺的只是「`GameInfo` 的字段用它们」这一步（被 §109.5 的测试包含机制拦下）。
+2. **`EventInfo` 我方一直存在**（`src/graphwar_game_recorder.rs`，`7ddd1ce` 起就在），
+   T32 记成「我方完全没有这个结构体」是**错的** —— 真实偏差是「**3 字段且顺序反了**」。
+3. **协议的整数是一个「无符号 32 位」类型，不是 i64**：`GameInfo.current_player_count` 与
+   另外 **57** 个字段共用同一个 `serialize_field` 单态 `0x3cc060`，而该单态体是 itoa 的
+   **u32** 路径（阈值 `0x2710`/`0x5f5e0ff`、分支全是 `jb/ja/jbe/jae`、**没有** `js/jl/neg`）。
+   我方 `WIRE_SPEC` 把这些字段标成 `ValType::I64` ⇒ **58 个字段的源码类型不对**（只登记，见 §109.6）。
+
+### 109.3 已定案：`EventInfo` = **`{ event, tick }` 两字段，顺序 event→tick，tick 是 u32**
+
+| 证据 | 内容 | 档 |
+|---|---|---|
+| **E1** | `.data.rel.ro` 槽 `0x950560` → addend `0x1bcba0`，`read(len=40)` = `struct EventInfo with 2 elements` | **逐位** |
+| **字段名** | `event`@`0x1bc845`(len 5) / `tick`@`0x1b925c`(len 4)，来自 visitor `0x396de0` 的 missing/duplicate 分支 | 观测 |
+| **顺序** | serde 生成的 `visit_map` 末尾按**声明顺序**构造：`missing_field("event")` 在 `0x397592`、`missing_field("tick")` 在 `0x397843` ⇒ **event 在前** | 观测（指令顺序） |
+| **布局** | `event@0x00`（`GraphwarEvent` 0x48 字节）、`tick@0x48`、元素步长 `0x50`（`Vec` 扩容在记录闭包 `0x3d4fa0`；`GraphwarGameRecorder` 模块文档 §2 的 arm64 侧同样读数是 0x48/0x50） | 观测 |
+| **`tick` 宽度** | `save_game`（`0x3d5740`）在 **`0x3d62ac`** 用 `mov ecx, dword ptr [rax + rsi + 0x48]` 读它 —— **4 字节载入** ⇒ `u32`（若是 u64 会是 `mov rcx, qword ptr`） | **逐位** |
+| 交叉印证 | 403 份冻结回放**每一行**都是 `{"event":…,"tick":…}` 的键序（读侧真数据） | 观测 |
+
+**T32 为什么没定出来**：它在找 `Serialize` 实现。**原版根本没有 `Serialize`** ——
+`save_game` 是**手写字符串拼接**（`'{"event":' + <外部标签 JSON> + ',"tick":' + N + '}'`），
+只有 `Deserialize` 是 derive 的。T32 的「缺的证据 = 需要 frida 取样」这个判断本身也是错的：
+**顺序与宽度不需要 frida**，`missing_field` 的调用顺序 + 一处 4 字节载入就够了。
+
+改动（commit `2710953`）：
+
+```text
+改前  pub struct EventInfo { pub tick: u32, pub event: String, pub body: String }   // 3 字段、顺序反
+改后  pub struct GraphwarEvent { pub name: String, pub body: String }
+      pub struct EventInfo { pub event: GraphwarEvent, pub tick: u32 }             // 2 字段、event 在前
+```
+
+**这是「字段边界对上」，不是「全等」**：原版 `event: GraphwarEvent` 是 0x48 字节的 serde
+**外部标签枚举**（74 个变体各带载荷），我方用 `{name, body}` 两串承载 ⇒ 字段数/名字/顺序/`tick` 类型
+都对上了，**`GraphwarEvent` 的内部表示仍是登记项**（要 74 个载荷结构体，与 §82.4-3 同源）。
+
+### 109.4 已定案：`GameInfo` 的 9 个字段 —— 类型证据一次给全（含 5 个枚举的变体表）
+
+`GameInfo::serialize` @ **`0x5060d0`**（原版唯一实现；**`self` = `rdi`→`rbx`**）。
+字段名与线上键序来自 E2（`lea rsi` 序列），**值偏移**来自 `lea rcx,[rbx+k]` / `add rbx,k` + `mov rcx,rbx`：
+
+| # | 字段 | 键长 | **值偏移** | `serialize_field` 单态 | E5 类型类 | 我方（`_scaffold/protocol.rs`） |
+|---|---|---|---|---|---|---|
+| 1 | `room_name` | 9 | **0x00** | `0x3cb250` | `String`（24 字节） | `String` ✅ |
+| 2 | `game_state` | 10 | **0x41** | `0x3cc260` | `enum GameState` | `String` ❌ |
+| 3 | `current_player_count` | 20 | **0x38** | `0x3cc060` | **`u32`**（4 字节） | ~~`i64`~~ → **`u32`** ✅ |
+| 4 | `address` | 7 | **0x18** | `0x3cbab0` | **32 字节、1 字节 tag、2 变体**的枚举，线上是串 | `String`（24 字节）❌ |
+| 5 | `axis_mode` | 9 | **0x3f** | `0x3cb560` | `enum AxisMode` | `String` ❌ |
+| 6 | `function_mode` | 13 | **0x3c** | `0x3cb670` | `enum FunctionMode` | `String` ❌ |
+| 7 | `turn_mode` | 9 | **0x3d** | `0x3cbf70` | `enum TurnMode` | `String` ❌ |
+| 8 | `time_mode` | 9 | **0x40** | `0x3cbce0` | `enum TimeMode` | `String` ❌ |
+| 9 | `locked` | 6 | **0x3e** | `0x3cbb80` | `bool` | `bool` ✅ |
+
+**偏移自校验（三条独立结论一致）**：
+* `0x00 + 24(String) = 0x18` ⇒ 第 4 字段 `address` 起于 `0x18` ✅
+* `0x38 + 4(u32) = 0x3c` ⇒ 第 6 字段 `function_mode` 起于 `0x3c` ⇒ **`current_player_count` 只能是 4 字节**
+* `0x3c`–`0x41` 恰好 6 个 1 字节字段（`function_mode 0x3c`/`turn_mode 0x3d`/`locked 0x3e`/`axis_mode 0x3f`/
+  `time_mode 0x40`/`game_state 0x41`）⇒ 全结构 `0x42`，对齐到 **0x48**
+* ⚠️ 所以 `address` 占 `0x18..0x38` = **32 字节**（String 只有 24）—— 这就是 T32 §82.8 第 3 条
+  「`address` vs `room_name` 是两个不同串类型」的**量化答案**。
+
+**5 个枚举的变体表（E6，逐位）**——我方 5/5 **完全对上**（变体名逐字、判别值逐项）：
+
+| 枚举 | 原版实现 | 跳表 | 变体（= 判别值） | 我方 |
+|---|---|---|---|---|
+| `GameState` | `0x46f020` | `0x1c17c0`（8 项） | `Connecting`=0 `Setup`=1 `WaitingForFunctions`=2 `CalculatingResults`=3 `SynchronizingResults`=4 `ExecutingResults`=5 `EndingGame`=6 `Disconnected`=7 | `turnstate::GameState` ✅ 8/8 |
+| `AxisMode` | 内联进单态 `0x3cb560` | `0x1be124`（4 项） | `NoAxis`=0 `OnlyMain`=1 `EveryFive`=2 `EveryUnit`=3 | `graphwar_mode_manager::AxisMode` ✅ 4/4 |
+| `FunctionMode` | 内联进单态 `0x3cb670` | 无（`cmp byte,0`+`cmovne`） | `NormalFunction`=0 `DiffEqFunction`=1 | `graphwar_mode_manager::FunctionMode` ✅ 2/2 |
+| `TurnMode` | 内联进单态 `0x3cbf70` | 无（`cmp byte,1`+`jne`） | `SequentialTurns`=0 `SimultaneousTurns`=1 | `graphwar_turn_manager::TurnMode` ✅ 2/2 |
+| `TimeMode` | `0x518a10` | `0x1c6350`（6 项） | `Timer30s`=0 `Timer1m`=1 `Timer2m`=2 `Timer3m`=3 `Timer5m`=4 `TimerInf`=5 | `graphwar_mode_manager::TimeMode` ✅ 6/6 |
+
+> **`Timer30s` 是真的 8 个字符**（字面量 `0x19f768`，LEN=8），不是 `Timer30` —— 我方 `Timer30s` 正确。
+> 这一条是 E6 的 LEN 自校验逮到的（跳表 case 0 的 `lea` → `jmp` → `mov ecx,8`），值得单独记一笔：
+> 第 5 个变体 `TimerInf` 也是 8 字节，两个短名字**共用同一条 `mov ecx,8`**。
+
+**`address` 的类型身份 = 推断，不改**：32 字节 + 1 字节 tag + 2 变体 + 线上是字符串，这四条形状
+观测得实；`0x3cbab0` 的尾调用 `0x3e73a0` 首指令就是 `cmp byte ptr [rdi], 0`（tag 在 +0）、
+V4 分支 `add rdi, 4`（跳过 4 字节 `Ipv4Addr`）。形状唯一对得上的常见类型是 **`std::net::SocketAddr`**
+（`size_of` = 32、两个变体 V4/V6、`"[::1]:35245"` 的 Display 与真实 LAN 报文逐字一致），
+但**拿不到符号** ⇒ 身份是 `推断`，按纪律**不改类型**，只登记（§109.6）。
+
+### 109.5 改了什么（每处：改前 / 改后 / 证据）
+
+| # | 位置 | 改前 | 改后 | 证据 | commit |
+|---|---|---|---|---|---|
+| 1 | `src/graphwar_game_recorder.rs` | `EventInfo { tick: u32, event: String, body: String }`（3 字段、顺序反） | `EventInfo { event: GraphwarEvent, tick: u32 }`；新增 `GraphwarEvent { name, body }` | §109.3 六条 | `2710953` |
+| 2 | `src/_scaffold/protocol.rs` | `current_player_count: i64` | `u32` | 布局 4 字节 + itoa u32 路径 | `2710953` |
+| 3 | `tests/`（4 处构造/字段路径） | `EventInfo { tick, event, body }`、`.event` | `EventInfo { event: GraphwarEvent{..}, tick }`、`.event.name` | 跟随 #1 的字段边界 | `2710953` |
+
+**为什么 #1 #2 落在同一个 commit**：`git add -A src` 把两处一起收了 —— 事后看应该分两个 commit
+（任务书要求「每处单独 commit」）。如实记在这里，不重写历史。
+
+**`tests/` 改动性质（对照 T52 先例）**：只改**构造写法与字段路径**（4 处），
+**断言一条没动** —— 比较的期望值（`"FunctionInfo"`、`1234`、`"{\"owner_id\":635}"` 等）逐字未变。
+理由：`EventInfo` 的字段边界变了，构造点不改就编不过；这是「跟随数据结构改动」的最小适配。
+
+### 109.6 只登记、不改（每条写清缺什么证据）
+
+| # | 事项 | 已有证据 | 为什么本轮不改 | 下一步需要 |
+|---|---|---|---|---|
+| 1 | **`GameInfo` 的 5 个字段仍是 `String`**（`_scaffold/protocol.rs`） | 5 个枚举的真类型+变体表全部逐位（§109.4） | 写进去就编不过：`tests/` 里 **20+ 个**文件用 `#[path = "../src/events.rs"] mod events;` 直接包含源文件，`events.rs` 一出现 `crate::turnstate::…` 就 `E0433: cannot find turnstate in the crate root`（**本轮实测**；T52 在另外 2 个文件上踩过同一个坑） | 先把那批测试改成引用真 crate（T52 对 2 个文件的做法），再改字段类型；`events.rs::GameInfo` 已把真类型写进文档注释 |
+| 2 | **`address` 的 32 字节枚类型**（形状=观测，身份=推断） | §109.4 末段 | 身份拿不到符号；改成 `SocketAddr` 若遇到非 socket-addr 串会让整条 `GameInfo` 解析失败（行为风险） | 找到构造点（`GameInfo` 的 `Serialize` 只有 2 个调用者：`0x3cbdb0` 单态、`0x457790`）；或 frida 在构造点读 32 字节 |
+| 3 | **协议 58 个字段的源码类型**（共用单态 `0x3cc060` = `u32`） | itoa u32 路径 + 布局 4 字节 | 要改 `WIRE_SPEC` 的 `ValType::I64` 与所有强类型结构体，属跨模块重构 | 先把 `ValType` 的语义从「线上形状」拆出「源类型」一列，再按单态逐字段标 |
+| 4 | **我方 3 处 `GameInfo` 形态**（`_scaffold/protocol.rs:1845`、`events.rs:304`、**T32 漏掉的** `_scaffold/protocol.rs:80::Broadcast`） | 原版只有**一个** `struct GameInfo` | 合并要动 broker / LAN 广播 / 测试三处调用点 | 先把 `Broadcast` 与 `GameInfo` 的关系定清楚（两者 9 字段同名同序，是同一个原版结构体的两个用途） |
+| 5 | **重复枚举**：`AxisMode` 3 处、`TimeMode` 2 处、`FunctionMode` 2 处、`TurnMode` 2 处 | 原版每个枚举只有**一个** serde 实现 | 改别的模块的语义超出「修证据一边倒的最小改动」 | 按 `graphwar_mode_manager` / `graphwar_turn_manager` 作规范位置，其余改 `pub use` |
+| 6 | **12 个非 serde 结构体只有尺寸下界** | E7 窗口（§109.1） | 判据要求「字段集合与顺序两边都有」，只有下界 ⇒ unknown | 对每个窗口找**调用方**做夹逼（上界 = 调用方只拷走多少字节），或找 alloc 尺寸立即数 |
+
+### 109.7 门槛与三轴（每处改动后跑，一位不许退）
+
+| 项 | 读数 | 命令 |
+|---|---|---|
+| `cargo test --offline` | **1826 通过 / 0 失败 / 1 ignored**（与任务书基线**逐位相同**；本轮改了 3 处源码 + 4 处测试构造，条数未变） | `cargo test --offline` |
+| `cargo test --offline --features gdext-bindings` | **1956 通过 / 0 失败 / 1 ignored** | 同上 + `--features gdext-bindings` |
+| `tools/coverage_matrix.py --check` | **OK**（527 个可归属函数；改了 `src/` ⇒ 重跑生成物一并提交） | `COVERAGE_MATRIX_UPSTREAM=… $PY tools/coverage_matrix.py --check` |
+| `tools/check_doc_refs.py` | **退出码 0**（无死链） | `$PY tools/check_doc_refs.py` |
+| `tools/boundary_audit.py --check` | **match 441 / mismatch 0 / multi 86**（与 T52 基线一致） | `$PY tools/boundary_audit.py --check` |
+| `tools/struct_audit.py tsv2 --check` | **OK（19 行）** | 见 §109.8 |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（一位没退；`--check-baseline` 自带 403 份语料指纹前置比对） | 见 §109.8 |
+| 冻结快照 | **403 份**（未动） | `ls …/replays \| wc -l` |
+
+### 109.8 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<你的 target>
+export PY=$MAIN/.reference/venv/bin/python
+R=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+
+# ① 审计表（重算 = 现场跑一遍二进制取证；--check = 与磁盘逐字节比）
+$PY tools/struct_audit.py tsv2              # 写 fixtures/struct_audit2.tsv
+$PY tools/struct_audit.py tsv2 --check      # 只校验
+$PY tools/struct_audit.py layout 0x5060d0   # GameInfo：9 字段的键序 / 值偏移 / 单态 / 类型类
+$PY tools/struct_audit.py mono 0x3cb560 0x3cb670 0x3cbf70 0x3cbce0 0x3cc260 0x3cc060
+$PY tools/struct_audit.py structs --min-off 4 --tsv   # 527 个可归属函数的固定偏移窗口（E7）
+$PY tools/struct_audit.py tsv --check       # 第一轮（§82）那张表**必须仍然 OK**（本轮改过 ser_triples）
+
+# ② 门槛
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py
+$PY tools/boundary_audit.py --check
+
+# ③ 三轴（分开跑，数字必须带轴名）
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+$PY tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $R
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+$PY tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $R
+cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict --drive batch --json c.jsonl
+$PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
+```
+
+### 109.9 遗留 / 下一轮建议
+
+1. **把 `tests/` 那批 `#[path]` 包含改成真 crate 引用**（§109.6-1）——这是解锁「`GameInfo` 5 个
+   枚举字段落地」的**唯一拦路石**，改完就能把 `events.rs::GameInfo` 的类型换成真枚举，
+   `_scaffold/protocol.rs` 再跟一层 `to/from` 转换。
+2. **`address` 的构造点取证**（§109.6-2）：`0x457790` 是 `GameInfo` 的另一个调用者（可能就是
+   LAN 广播的装配函数），读它就能定 `address` 那 32 字节是怎么写出来的（`SocketAddr` 会有
+   `movups`/两次 8 字节写 + tag 字节）。
+3. **非 serde 结构体的上界夹逼**（§109.6-6）：12 行 unknown 的共同缺口是「没有上界」，
+   做法是对每个窗口函数找调用方的 `movdqu` 拷贝长度。
+4. **`WIRE_SPEC` 的整数类型**（§109.6-3）：58 个字段都是 `u32`，这是协议层的系统性偏差。
+5. **`struct_audit2.tsv` 的 `GraphwarGameRecorder` 行值得单独看**：我方只有 2 个字段
+   （`subscribed`/`saves`），而 E7 窗口给出 `0x08/0x18/0x40/0x48` 四个偏移、下界 `0x49`
+   ⇒ **原版这个结构体有 4 个字段、我方少了 2 个**（`Vec<EventInfo>@0x18` 与
+   `Weak<RefCell<ModuleContainer>>@0x40`）—— 只是按判据只能记 `unknown`。

@@ -87,10 +87,10 @@ fn load_game_parses_jsonl() {
     let evs = load_game_at("user://replays/1782642754", text.as_bytes()).unwrap();
     assert_eq!(evs.len(), 2);
     assert_eq!(evs[0].tick, 1234);
-    assert_eq!(evs[0].event, "FunctionInfo");
-    assert!(evs[0].body.contains("\"owner_id\":635"));
+    assert_eq!(evs[0].event.name, "FunctionInfo");
+    assert!(evs[0].event.body.contains("\"owner_id\":635"));
     assert_eq!(evs[1].tick, 1235);
-    assert_eq!(evs[1].event, "TickInfo");
+    assert_eq!(evs[1].event.name, "TickInfo");
     // 名字拼出来的路径不参与解析，但不该 panic
     assert_eq!(
         load_game_bytes("1782642754", text.as_bytes()).unwrap().len(),
@@ -123,7 +123,7 @@ fn load_game_unzips() {
     assert!(_scaffold::replay_inflate::is_gzip(&gz));
     let evs = load_game_at("p", &gz).unwrap();
     assert_eq!(evs.len(), 1);
-    assert_eq!(evs[0].event, "FunctionInfo");
+    assert_eq!(evs[0].event.name, "FunctionInfo");
 }
 
 #[test]
