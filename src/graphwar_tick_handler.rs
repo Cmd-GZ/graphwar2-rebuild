@@ -490,6 +490,47 @@ impl GraphwarTickHandler {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 定步折叠：由"一帧的墙钟增量"折算成整数个 tick（T72 归一）
+// ---------------------------------------------------------------------------
+
+/// 把一帧的墙钟增量 `dt_seconds` 折成**整数个 tick**：定步 [`NANOS_PER_TICK`]，
+/// 不足一 tick 的余数留在 `carry_ns` 里带到下一帧。
+///
+/// # 为什么在模块里（T72 归一，不是原版的原样函数）
+///
+/// **原版没有这个函数**：它读**真墙钟**，用
+/// [`GraphwarTickHandler::get_time_to_tick`]（`0x519450`）的 while 循环一圈一圈
+/// [`GraphwarTickHandler::tick`]（`docs/06` §63.2 的③；§44.5 实测原版**不读** `delta`）。
+/// 我方 headless 里没有墙钟 ⇒ 两个驱动各自把 delta 折成 tick 数，而它们**折法不同**：
+///
+/// * `_scaffold/replay_driver.rs`（回放屏驱动）原本就是**整数纳秒**累加（对，与
+///   `add eax,0xfe502a` + `cmp edi,0x3a9c79d6` 的进位分支同源）；
+/// * `graphwar_replay_player.rs::advance_dt`（旧 `.gd` 的模型）原本是
+///   `tick += dt × 60` 的 **f64 累加**（会漂：`1/60` 与 `16 666 666 ns` 不是同一个数）。
+///
+/// 台账 C 档 `replay_driver::drive_frame`（与 `advance_dt` 两条时钟）就是这个问题。
+/// 现在定步规则**只有这一份**，两边都调它：整数纳秒、余数进位、每 tick 恰好
+/// `NANOS_PER_TICK`（`0xfe502a`）。速率因此是 `1e9 / 16 666 666 = 60.0000024 /s`
+/// —— 与原版一致（原版每 60 tick 少 40 ns，靠进位分支补）。
+///
+/// 档位：**推断**（形状来自 §63.2 的指令证据 + §44 的观测；"由 delta 折 tick"这层
+/// 是我方的墙钟替身，原版没有）。
+pub fn fold_dt_into_ticks(dt_seconds: f64, carry_ns: &mut u64) -> u64 {
+    if !dt_seconds.is_finite() || dt_seconds <= 0.0 {
+        return 0;
+    }
+    let ns = (dt_seconds * NANOS_PER_SECOND as f64).round();
+    if ns <= 0.0 {
+        return 0;
+    }
+    let ns = if ns >= u64::MAX as f64 { u64::MAX } else { ns as u64 };
+    *carry_ns = carry_ns.saturating_add(ns);
+    let n = *carry_ns / NANOS_PER_TICK as u64;
+    *carry_ns %= NANOS_PER_TICK as u64;
+    n
+}
+
 #[cfg(test)]
 mod handler_tests {
     use super::*;
