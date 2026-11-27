@@ -75,6 +75,37 @@ pub fn parse_message(text: &str) -> Option<RawMessage> {
     Some(RawMessage { kind: key, body, text: text.to_string() })
 }
 
+/// **严格版** [`parse_message`]：线上帧的解析入口。
+///
+/// 判据（与原版 serde 外部标签同口径）：整段文本必须是**恰好一个**顶层键、它的值必须是
+/// **对象**、尾部只许空白。多一个键 / 值不是对象 / 尾随垃圾 ⇒ `None`。
+///
+/// 为什么要两个入口（T76 台账 `fixtures/protocol_parse_audit.tsv` 的 2 号行）：
+/// [`parse_message`] 的契约是"**按前缀**取第一个键的对象"—— 回放行是
+/// `{"event":{…},"tick":N}`，`graphwar_replay_reader::parse_event_line` 正靠这个前缀语义
+/// 取 `event` 再回到原文取 `tick`；把它改严会让**整条回放读取链路**失效。
+/// 线上帧没有这个需求（帧本身就是单键 map）⇒ 线上路径（`_scaffold/broker.rs`）用本函数。
+pub fn parse_frame_message(text: &str) -> Option<RawMessage> {
+    let text = text.trim();
+    let inner = match text.strip_prefix('{').and_then(|_| {
+        let (v, end) = scan_value_at(text, 0)?;
+        if end != text.len() {
+            return None;
+        }
+        Some(&v[1..v.len() - 1])
+    }) {
+        Some(inner) => inner,
+        None => return None,
+    };
+    let pairs = scan_pairs(inner)?;
+    if pairs.len() != 1 {
+        return None; // 线上帧 = serde 外部标签的单键 map
+    }
+    let (kind, value) = pairs[0];
+    let body = object_body(value)?;
+    Some(RawMessage { kind: kind.to_string(), body: body.to_string(), text: text.to_string() })
+}
+
 /// LAN 广播 / `GameInfoEvent` 负载用的类型**别名**：见 [`GameInfo`]。
 ///
 /// 原版**只有一个** `struct GameInfo`（serde 名串 `struct GameInfo with 9 elements`，槽
@@ -92,6 +123,17 @@ pub use GameInfo as Broadcast;
 pub trait JsonObject {
     /// 取"对象文本"（`{…}` 或 `"k":v,…` 的内部体，实现者自己保证）。
     fn json_object_text(&self) -> &str;
+
+    /// 这个输入是**事件负载**还是**线上裸对象原文**？
+    ///
+    /// 两种形态的严格性不同，所以必须由**输入类型**区分（T76）：
+    /// * `&str` / `&String` = LAN 数据报原文。原版受控实验（`docs/archive/115` §5.3）证明
+    ///   只有"裸的 9 字段对象"被接受 ⇒ **绝不**下钻，否则变体 B/D 会漏过去；
+    /// * `&RawMessage` = 已经由 [`parse_message`] 解出名字的**事件负载**。原版 `GameInfo`
+    ///   事件只有一个字段 `game_info`（`WIRE_SPEC`）⇒ 顶层有 `game_info` 才下钻一层。
+    fn is_event_payload(&self) -> bool {
+        false
+    }
 }
 
 impl JsonObject for &str {
@@ -110,44 +152,35 @@ impl JsonObject for &RawMessage {
     fn json_object_text(&self) -> &str {
         &self.body
     }
+
+    fn is_event_payload(&self) -> bool {
+        true
+    }
 }
 
 /// 从消息体里取一个字符串字段，例如 `get_str(m, "game_name")`。
+///
+/// **严格（T76）**：只认 `body` 的**顶层**字段（子串式的 `find` 会让嵌套对象里的同名字段
+/// 也命中 ⇒ 变体 B 漏网）；值必须是一个完整的 JSON 字符串字面量，返回**内部原文、不解转义**
+/// （带转义的值请用 [`get_str_unescaped`]）。
 pub fn get_str(msg: &RawMessage, key: &str) -> Option<String> {
-    let pat = format!("\"{}\":", key);
-    let i = msg.body.find(&pat)? + pat.len();
-    let rest = msg.body[i..].trim_start();
-    if !rest.starts_with('"') {
-        return None;
-    }
-    let rest = &rest[1..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+    top_str(&msg.body, key)
 }
 
 /// 从消息体里取一个整数字段。
+///
+/// **严格（T76）**：顶层 + JSON 整数文法精确匹配。改前是"取数字前缀" ⇒ `"tick":12abc`
+/// 会得到 12、`"tick":1.5` 会得到 1（serde 这两种都是类型错 ⇒ 反序列化失败）。
 pub fn get_int(msg: &RawMessage, key: &str) -> Option<i64> {
-    let pat = format!("\"{}\":", key);
-    let i = msg.body.find(&pat)? + pat.len();
-    let rest = msg.body[i..].trim_start();
-    let end = rest
-        .find(|c: char| !(c.is_ascii_digit() || c == '-'))
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
+    top_int(&msg.body, key)
 }
 
 /// 取 `{"r":149,"g":5,"b":62}` 这样的颜色字段。
+///
+/// **严格（T76）**：顶层 + 三个通道都必须是 `u8` 范围（改前 `as u8` 会把 `r:300` 静默
+/// 回绕成 44；serde 的 `u8` 越界是反序列化失败）。
 pub fn get_color(msg: &RawMessage, key: &str) -> Option<(u8, u8, u8)> {
-    let pat = format!("\"{}\":", key);
-    let i = msg.body.find(&pat)? + pat.len();
-    let rest = msg.body[i..].trim_start();
-    let obj = read_object(rest)?;
-    let sub = RawMessage { kind: key.to_string(), body: obj, text: String::new() };
-    Some((
-        get_int(&sub, "r")? as u8,
-        get_int(&sub, "g")? as u8,
-        get_int(&sub, "b")? as u8,
-    ))
+    top_color(&msg.body, key)
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +265,349 @@ fn read_object(s: &str) -> Option<String> {
         i += 1;
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// 严格字段读取（T76）：只认**对象顶层**的字段，值与类型按线上文法精确校验
+// ---------------------------------------------------------------------------
+//
+// 为什么要有这一层（T76 的起点，`docs/06` §118.4 → §120）：
+// 改前 6 个 `get_*` 全是 `body.find("\"k\":")` —— 它在**任意深度**都能命中
+// （嵌套对象里、甚至别的字符串值内部），于是 `{"GameInfo":{"game_info":{…9 字段…}}}`
+// 这种**带事件外壳的整帧**也能被 `Broadcast::parse` "解析成功"（T67 实测：一接上去
+// selftest 的变体 B 断言当场变红）。原版丢弃的报文在我们这边"解析成功"= 证据缺口。
+//
+// ⇒ 字段读取必须是「**顶层 + 精确**」，与 serde 的 `visit_map`（只在自己这一层按名字
+// 逐个比字节）同口径。真值依据见 `fixtures/protocol_parse_audit.tsv` 头部：
+// `fixtures/protocol_live_frames.jsonl` 的 **1717 条线上真帧**里，**每一帧**的顶层键集
+// 与键序都等于 `WIRE_SPEC`（本轮机核 0 mismatch）。
+
+/// 扫一个字符串字面量（`i` 必须指向开头的 `"`），返回 `(内部原文, 闭合引号之后的位置)`。
+///
+/// 内部原文**不解转义**（保持 [`get_str`] 的旧契约）；`\` + 任意字符按 2 字节跳过，
+/// 未闭合 ⇒ `None`。
+fn scan_string_at(s: &str, i: usize) -> Option<(&str, usize)> {
+    let b = s.as_bytes();
+    if i >= b.len() || b[i] != b'"' {
+        return None;
+    }
+    let mut j = i + 1;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 2,
+            b'"' => return Some((&s[i + 1..j], j + 1)),
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// 扫一个值（对象 / 数组 / 字符串 / 标量原文），返回 `(值原文, 结束位置)`。
+///
+/// 对象与数组按括号配平（字符串内的括号不算）；标量截到顶层的 `,` / `}` / `]`。
+fn scan_value_at(s: &str, i: usize) -> Option<(&str, usize)> {
+    let b = s.as_bytes();
+    if i >= b.len() {
+        return None;
+    }
+    match b[i] {
+        b'"' => {
+            let (_, end) = scan_string_at(s, i)?;
+            Some((&s[i..end], end))
+        }
+        b'{' | b'[' => {
+            let mut depth = 0i32;
+            let mut j = i;
+            let mut in_str = false;
+            while j < b.len() {
+                let c = b[j];
+                if in_str {
+                    if c == b'\\' {
+                        j += 2;
+                        continue;
+                    }
+                    if c == b'"' {
+                        in_str = false;
+                    }
+                } else if c == b'"' {
+                    in_str = true;
+                } else if c == b'{' || c == b'[' {
+                    depth += 1;
+                } else if c == b'}' || c == b']' {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((&s[i..j + 1], j + 1));
+                    }
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                j += 1;
+            }
+            None
+        }
+        _ => {
+            let mut j = i;
+            while j < b.len() && b[j] != b',' && b[j] != b'}' && b[j] != b']' {
+                j += 1;
+            }
+            let raw = s[i..j].trim_end();
+            if raw.is_empty() {
+                return None;
+            }
+            Some((raw, j))
+        }
+    }
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && (b[i] as char).is_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// **严格**扫对象体：只接受 `"k":v,"k2":v2,…`；顶层键不许重复（serde 的 `visit_map`
+/// 遇重复字段直接报错）、值必须完整、尾部不许有多余字符、不许尾随逗号。
+///
+/// 与 [`split_fields`] 的分工：那个是**宽容**的（遇畸形即停，`extra` 原样保留靠它），
+/// 这个是**严格**的（typed 入口用它，畸形体一律 `None`）。
+fn scan_pairs(body: &str) -> Option<Vec<(&str, &str)>> {
+    let b = body.as_bytes();
+    let mut out: Vec<(&str, &str)> = Vec::new();
+    let mut i = skip_ws(b, 0);
+    if i == b.len() {
+        return Some(out); // `{}` 空体合法
+    }
+    loop {
+        if i >= b.len() || b[i] != b'"' {
+            return None;
+        }
+        let (key, after_key) = scan_string_at(body, i)?;
+        if key.contains('\\') {
+            return None; // 协议里的键都是纯 ASCII，真帧 0 例（1717 帧机核）
+        }
+        i = skip_ws(b, after_key);
+        if i >= b.len() || b[i] != b':' {
+            return None;
+        }
+        i = skip_ws(b, i + 1);
+        let (val, after_val) = scan_value_at(body, i)?;
+        if out.iter().any(|(k, _)| *k == key) {
+            return None; // serde：重复字段 = 反序列化失败
+        }
+        out.push((key, val));
+        i = skip_ws(b, after_val);
+        if i >= b.len() {
+            return Some(out);
+        }
+        if b[i] != b',' {
+            return None;
+        }
+        i = skip_ws(b, i + 1);
+        if i >= b.len() {
+            return None; // 尾随逗号
+        }
+    }
+}
+
+/// `body` 顶层字段 `key` 的值原文（含引号/括号）；键不在顶层 ⇒ `None`。
+///
+/// ⚠️ 这是 T76 的**核心**：**不下钻**。嵌套对象里的同名字段一律看不见 ——
+/// 这正是"变体 B（事件外壳）不再漏网"的原因。
+pub fn top_level_value<'a>(body: &'a str, key: &str) -> Option<&'a str> {
+    scan_pairs(body)?.into_iter().find(|(k, _)| *k == key).map(|(_, v)| v)
+}
+
+/// 值原文必须是**一个完整的对象字面量**，返回它的内部体（不含两端花括号）。
+fn object_body(raw: &str) -> Option<&str> {
+    let t = raw.trim();
+    if !t.starts_with('{') {
+        return None;
+    }
+    let (v, end) = scan_value_at(t, 0)?;
+    if end != t.len() {
+        return None;
+    }
+    Some(&v[1..v.len() - 1])
+}
+
+/// 顶层字段 `key` 的对象内部体（不含花括号）。
+pub fn top_level_object<'a>(body: &'a str, key: &str) -> Option<&'a str> {
+    object_body(top_level_value(body, key)?)
+}
+
+/// 变体名闸（T76）：线上事件的键名**就是** serde 外部标签的变体名，`Deserialize` 时
+/// serde 先按名字选变体 —— 名字不认识就是 "unknown variant" **解析失败**。
+///
+/// ⇒ 每个强类型 `parse` 的第一句都必须是它。改前没有这一句：`PosInfo::parse` 之类
+/// 拿到**别的**事件的报文也可能"解析成功"（只要字段恰好齐），这是比子串式更外一层
+/// 的宽容 —— 名字这一维根本没校验。
+fn kind_is(m: &RawMessage, name: &str) -> bool {
+    m.kind == name
+}
+
+/// 严格版 [`extra_fields`]：体不符合 JSON 对象文法 ⇒ `None`（typed 入口用它，
+/// 这样"畸形体"不会因为 `split_fields` 静默截断而变成"少几个 extra 字段"）。
+///
+/// `known` 里的键不进 `extra`；其余按**出现顺序**原样保留（键 + 值原文），供 [`emit_object`] 回发。
+fn strict_extra_fields(body: &str, known: &[&str]) -> Option<Vec<(String, String)>> {
+    Some(
+        scan_pairs(body)?
+            .into_iter()
+            .filter(|(k, _)| !known.contains(k))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )
+}
+
+/// 值原文必须是**一个完整的字符串字面量**，返回内部原文（不解转义）。
+fn as_string_literal(raw: &str) -> Option<&str> {
+    let (inner, end) = scan_string_at(raw, 0)?;
+    if end != raw.len() {
+        return None;
+    }
+    Some(inner)
+}
+
+/// JSON 整数文法：`-?(0|[1-9][0-9]*)`。serde 的 `i64` 只收这个形状
+/// （`12abc` / `1.5` / `+1` / `01` 全失败），改前的"取数字前缀"会把它们悄悄放过。
+fn as_i64_literal(raw: &str) -> Option<i64> {
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    raw.parse().ok()
+}
+
+/// JSON 数字文法（`-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?`），用作 `f64` 字段。
+fn as_f64_literal(raw: &str) -> Option<f64> {
+    let b = raw.as_bytes();
+    let mut i = 0usize;
+    if i < b.len() && b[i] == b'-' {
+        i += 1;
+    }
+    let int_start = i;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == int_start {
+        return None;
+    }
+    if b[int_start] == b'0' && i - int_start > 1 {
+        return None;
+    }
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        let fs = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == fs {
+            return None;
+        }
+    }
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        i += 1;
+        if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+            i += 1;
+        }
+        let es = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == es {
+            return None;
+        }
+    }
+    if i != b.len() {
+        return None;
+    }
+    raw.parse().ok()
+}
+
+/// `u8` 字段：整数文法 + 范围 0..=255（serde 的 `u8` 越界 = 错误，改前 `as u8` 会静默回绕）。
+fn as_u8_literal(raw: &str) -> Option<u8> {
+    u8::try_from(as_i64_literal(raw)?).ok()
+}
+
+/// 顶层字段取值：字符串（**不解转义**，与 [`get_str`] 一致）。
+fn top_str(body: &str, key: &str) -> Option<String> {
+    Some(as_string_literal(top_level_value(body, key)?)?.to_string())
+}
+
+/// 顶层字段取值：字符串（解转义）。
+fn top_str_unescaped(body: &str, key: &str) -> Option<String> {
+    unescape_json_string(as_string_literal(top_level_value(body, key)?)?)
+}
+
+/// 顶层字段取值：整数（JSON 整数文法，精确）。
+fn top_int(body: &str, key: &str) -> Option<i64> {
+    as_i64_literal(top_level_value(body, key)?)
+}
+
+/// 顶层字段取值：浮点（JSON 数字文法，精确）。
+fn top_f64(body: &str, key: &str) -> Option<f64> {
+    as_f64_literal(top_level_value(body, key)?)
+}
+
+/// 顶层字段取值：布尔（只认 `true` / `false` 两个字面量）。
+fn top_bool(body: &str, key: &str) -> Option<bool> {
+    match top_level_value(body, key)? {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// 顶层字段取值：`{"r":..,"g":..,"b":..}`（三个通道都走 [`as_u8_literal`]，越界 ⇒ `None`）。
+fn top_color(body: &str, key: &str) -> Option<(u8, u8, u8)> {
+    let inner = top_level_object(body, key)?;
+    Some((
+        as_u8_literal(top_level_value(inner, "r")?)?,
+        as_u8_literal(top_level_value(inner, "g")?)?,
+        as_u8_literal(top_level_value(inner, "b")?)?,
+    ))
+}
+
+/// 把字符串字面量的**内部原文**按 JSON 规则解转义。
+///
+/// 局限（未知）：`\uD83D\uDE00` 这类代理对会解成 U+FFFD（没有样本需要）。
+fn unescape_json_string(inner: &str) -> Option<String> {
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.char_indices();
+    while let Some((_, c)) = chars.next() {
+        match c {
+            '"' => return None, // 内部原文里不该出现裸引号（扫描阶段已排除）
+            '\\' => {
+                let (_, e) = chars.next()?;
+                match e {
+                    '"' => out.push('"'),
+                    '\\' => out.push('\\'),
+                    '/' => out.push('/'),
+                    'b' => out.push('\u{8}'),
+                    'f' => out.push('\u{c}'),
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    'u' => {
+                        let mut hex = String::new();
+                        for _ in 0..4 {
+                            hex.push(chars.next()?.1);
+                        }
+                        let v = u32::from_str_radix(&hex, 16).ok()?;
+                        out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
+                    }
+                    _ => return None,
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    Some(out)
 }
 
 
@@ -478,6 +854,292 @@ mod tests {
         assert!(parse_message("not json").is_none());
         assert!(parse_message(r#"{"A":{"x":1}"#).is_none(), "不配对的括号应拒绝");
     }
+
+    /// **T76 真值依据的机器化**：`fixtures/protocol_live_frames.jsonl` 的 **1717 条线上真帧**，
+    /// **每一帧**的顶层键集与键序都必须等于 `WIRE_SPEC`（本测试是本轮机核，不是抽查）。
+    ///
+    /// 为什么这条能当"严格解析"的判据：严格化的方向是「字段只认顶层 + 类型精确」，
+    /// 它必须**不丢任何一条真帧**。反过来说，只要 1717 帧全部通过，任何"改严把真帧改红"
+    /// 的可能都被排除了。台账 `fixtures/protocol_parse_audit.tsv` 头部引的就是这条。
+    #[test]
+    fn every_live_frame_has_exactly_the_wire_spec_top_level_fields() {
+        const LIVE: &str = include_str!("../../fixtures/protocol_live_frames.jsonl");
+        let mut checked = 0usize;
+        let mut by_kind: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for line in LIVE.lines() {
+            // 抓包记录是 JSON 行；负载字节在 `"hex": "<hex>"` 里（与
+            // `supplemented_event_tests::replays_every_live_frame_of_the_supplemented_kinds` 同源）。
+            let Some(pos) = line.find("\"hex\": \"") else { continue };
+            let rest = &line[pos + 8..];
+            let Some(end) = rest.find('"') else { continue };
+            let hex = &rest[..end];
+            let bytes: Vec<u8> = (0..hex.len() / 2)
+                .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("抓包 hex"))
+                .collect();
+            let text = std::str::from_utf8(&bytes).expect("线上负载应是 UTF-8");
+            let m = parse_message(text)
+                .unwrap_or_else(|| panic!("线上帧应能解出单键外壳：{text}"));
+            let spec = wire_spec(&m.kind)
+                .unwrap_or_else(|| panic!("{} 不在 WIRE_SPEC 里（1717 真帧应被 74 条规格覆盖）", m.kind));
+            let pairs = scan_pairs(&m.body)
+                .unwrap_or_else(|| panic!("{} 的负载不是合法 JSON 对象：{text}", m.kind));
+            let got: Vec<&str> = pairs.iter().map(|(k, _)| *k).collect();
+            let want: Vec<&str> = spec.fields.iter().map(|(k, _)| *k).collect();
+            assert_eq!(got, want, "{} 的顶层键集/键序与 WIRE_SPEC 不符：{text}", m.kind);
+            // 严格读取必须能取到**每一个**字段（顶层可见）
+            for (k, _) in spec.fields {
+                assert!(
+                    top_level_value(&m.body, k).is_some(),
+                    "{}.{} 在顶层取不到：{text}",
+                    m.kind,
+                    k
+                );
+            }
+            *by_kind.entry(m.kind.clone()).or_insert(0usize) += 1;
+            checked += 1;
+        }
+        assert_eq!(checked, 1717, "线上真帧总数应为 1717（fixtures/protocol_live_frames.jsonl）");
+        assert_eq!(by_kind.len(), 56, "线上真帧覆盖的事件种数变了");
+        assert_eq!(by_kind.get("TickReply"), Some(&504usize), "TickReply 帧数变了");
+    }
+
+    /// **反面对照（T76）**：字段只认顶层 —— 嵌套对象里的同名字段、以及别的**字符串值内部**
+    /// 出现的 `"key":` 都不许被当成顶层字段。改前这 4 条全都能"解析成功"（substring `find`）。
+    #[test]
+    fn nested_or_quoted_field_names_are_not_top_level_fields() {
+        // ① 嵌套一层对象里放齐所有字段
+        let m = parse_message(
+            r#"{"PosInfo":{"junk":{"entity_id":231,"pos_x":0.0,"pos_y":0.0,"radius":0.5}}}"#,
+        )
+        .expect("外壳合法");
+        assert!(PosInfo::parse(&m).is_none(), "嵌套对象里的字段不是顶层字段");
+        // ② 同名字段出现在**字符串值内部**
+        let m = parse_message(
+            r#"{"PosInfo":{"note":"x \"entity_id\":231","pos_x":0.0,"pos_y":0.0,"radius":0.5}}"#,
+        )
+        .expect("外壳合法");
+        assert!(PosInfo::parse(&m).is_none(), "字符串值内部的 \"key\": 不是字段");
+        // ③ 正对照：真帧的同形状必须照旧解得开（真值 = live1717 里的 PosInfo 帧）
+        let m = parse_message(
+            r#"{"PosInfo":{"entity_id":231,"pos_x":-21.5,"pos_y":5.9,"radius":0.5}}"#,
+        )
+        .expect("真帧形状");
+        assert_eq!(
+            PosInfo::parse(&m),
+            Some(PosInfo { entity_id: 231, pos_x: -21.5, pos_y: 5.9, radius: 0.5 })
+        );
+    }
+
+    /// **反面对照（T76）**：数字/字符串字面量按线上文法精确校验。
+    ///
+    /// 改前 `get_int` 是"取数字前缀" ⇒ `1.5`→1、`12abc`→12 都"解析成功"，
+    /// 而 serde 对 `i64` 的这两种输入都是**类型错 = 反序列化失败**。
+    #[test]
+    fn non_json_number_literals_are_rejected() {
+        for (line, why) in [
+            (r#"{"TurnInfo":{"player_id":1.5,"soldier_id":2}}"#, "整数位置给浮点"),
+            (r#"{"TurnInfo":{"player_id":12abc,"soldier_id":2}}"#, "整数后面跟垃圾"),
+            (r#"{"TurnInfo":{"player_id":+1,"soldier_id":2}}"#, "JSON 不允许前导 +"),
+            (r#"{"TurnCountInfo":{"turn_count":"3"}}"#, "字符串冒充整数"),
+            (r#"{"TurnCountInfo":{"turn_count":01}}"#, "JSON 不允许前导 0"),
+        ] {
+            let m = parse_message(line).expect("外壳与括号合法");
+            assert!(TurnInfo::parse(&m).is_none(), "{why}：TurnInfo 必须拒绝（{line}）");
+            assert!(
+                TurnCountInfo::parse(&m).is_none(),
+                "{why}：TurnCountInfo 必须拒绝（{line}）"
+            );
+        }
+        // 正对照：真帧里的整数/浮点照旧解得开
+        let m = parse_message(r#"{"TurnInfo":{"player_id":635,"soldier_id":636}}"#).unwrap();
+        assert_eq!(
+            TurnInfo::parse(&m),
+            Some(TurnInfo { player_id: 635, soldier_id: 636 })
+        );
+        let m = parse_message(r#"{"PosInfo":{"entity_id":231,"pos_x":-2.15e+1,"pos_y":5.9,"radius":0.5}}"#).unwrap();
+        assert_eq!(PosInfo::parse(&m).map(|p| p.pos_x), Some(-21.5));
+    }
+
+    /// **反面对照（T76）**：`u8` 通道越界必须拒绝。
+    ///
+    /// 改前 `get_color` 用 `as u8` ⇒ `r:300` 静默回绕成 44；serde 的 `u8` 越界是
+    /// 反序列化失败（`GraphwarColor` 三个通道都是 `u8`，单态 `0x3cc330`）。
+    #[test]
+    fn color_channel_out_of_u8_range_is_rejected() {
+        let m = parse_message(r#"{"ColorInfo":{"entity_id":1,"color":{"r":300,"g":0,"b":0}}}"#)
+            .expect("外壳合法");
+        assert_eq!(get_color(&m, "color"), None, "r=300 越界（改前会回绕成 44）");
+        let m = parse_message(r#"{"ColorInfo":{"entity_id":1,"color":{"r":-1,"g":0,"b":0}}}"#)
+            .expect("外壳合法");
+        assert_eq!(get_color(&m, "color"), None, "负数不是 u8");
+        let m = parse_message(r#"{"ColorInfo":{"entity_id":1,"color":{"r":149,"g":5,"b":62}}}"#)
+            .expect("外壳合法");
+        assert_eq!(get_color(&m, "color"), Some((149, 5, 62)), "真帧取值照旧解得开");
+        // `GraphwarColor::parse`（值结构体入口）同样不许回绕
+        let m = parse_message(r#"{"X":{"r":300,"g":0,"b":0}}"#).expect("合成外壳合法");
+        assert_eq!(GraphwarColor::parse(&m), None, "GraphwarColor::parse 也不许把 r=300 回绕");
+        let m = parse_message(r#"{"X":{"r":149,"g":5,"b":62}}"#).expect("合成外壳合法");
+        assert_eq!(GraphwarColor::parse(&m), Some(GraphwarColor::new(149, 5, 62)));
+        // 嵌套在别的字段里的 r/g/b 不算顶层字段
+        let m = parse_message(r#"{"X":{"c":{"r":149,"g":5,"b":62}}}"#).expect("合成外壳合法");
+        assert_eq!(GraphwarColor::parse(&m), None, "嵌套对象里的 r/g/b 不是顶层字段");
+    }
+
+    /// **反面对照（T76）**：变体名是 serde 外部标签的"选路键" —— 名字不同就是**别的**类型，
+    /// 字段恰好齐也不许当成自己。
+    ///
+    /// 改前 17 个手写 + 19 个宏生成实例的 `parse` 里**没有一处**比较 `m.kind`：
+    /// `PosInfo::parse` 拿到 `{"TurnInfo":{…PosInfo 的字段…}}` 也会"解析成功"。
+    #[test]
+    fn typed_parse_requires_its_own_variant_name() {
+        // ① 字段齐全但变体名是 TurnInfo ⇒ 不是 PosInfo
+        let m = RawMessage {
+            kind: "TurnInfo".into(),
+            body: r#""entity_id":231,"pos_x":-21.5,"pos_y":5.9,"radius":0.5"#.into(),
+            text: String::new(),
+        };
+        assert!(PosInfo::parse(&m).is_none(), "变体名 TurnInfo 不该被当成 PosInfo");
+        // ② 两个事件**字段形状完全相同**（entity_id + name），名字也必须能区分它们
+        let m = RawMessage {
+            kind: "NameInfo".into(),
+            body: r#""entity_id":229,"name":"user""#.into(),
+            text: String::new(),
+        };
+        assert!(NameRequest::parse(&m).is_none(), "NameInfo 的体不该被当成 NameRequest");
+        // ③ 正对照：同一段体，名字对上就必须解得开
+        let m = RawMessage {
+            kind: "PosInfo".into(),
+            body: r#""entity_id":231,"pos_x":-21.5,"pos_y":5.9,"radius":0.5"#.into(),
+            text: String::new(),
+        };
+        assert_eq!(
+            PosInfo::parse(&m),
+            Some(PosInfo { entity_id: 231, pos_x: -21.5, pos_y: 5.9, radius: 0.5 })
+        );
+    }
+
+    /// **反面对照（T76）**：必填的 `String` 字段缺失必须拒绝。
+    ///
+    /// 改前 `FunctionInfo::parse` / `FunctionUpdateRequest::parse` 用 `unwrap_or_default()`
+    /// ⇒ 缺 `function` 时静默变成空串（"静默丢字段"），而 serde 的 `Str` 是必填。
+    /// ⚠️ 但 `function` 取**空串**是合法值（真帧 `{"function":"",…}` 出现过，见
+    /// `emit_function_info` 的往返测试）—— 这条测的是"缺字段"，不是"空串"。
+    #[test]
+    fn missing_required_string_field_is_rejected() {
+        let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"corrected_function":null}}"#)
+            .expect("外壳合法");
+        assert!(FunctionInfo::parse(&m).is_none(), "缺 function ⇒ None（改前静默变空串）");
+        let m = parse_message(r#"{"FunctionUpdateRequest":{"player_id":635}}"#)
+            .expect("外壳合法");
+        assert!(
+            FunctionUpdateRequest::parse(&m).is_none(),
+            "缺 function ⇒ None（改前静默变空串）"
+        );
+        // 正对照 1：空串是合法取值
+        let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}"#)
+            .expect("外壳合法");
+        assert_eq!(
+            FunctionInfo::parse(&m),
+            Some(FunctionInfo {
+                owner_id: 231,
+                function: String::new(),
+                corrected_function: None
+            })
+        );
+        // 正对照 2：`corrected_function` 是 `OptStr`，缺失仍是 None（serde 对 Option 字段缺失的行为）
+        let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"function":"x"}}"#)
+            .expect("外壳合法");
+        assert_eq!(FunctionInfo::parse(&m).map(|f| f.corrected_function), Some(None));
+    }
+
+    /// 一条**裸的** 9 字段广播原文（形状与 `fixtures/protocol.jsonl` 里的 LAN 报文逐字段相同；
+    /// 受控实验里被接受的就是这个形状，`docs/archive/115` §5.3 的变体 C）。
+    const BARE_BROADCAST: &str = concat!(
+        r#"{"room_name":"VAR-C-nl","game_state":"Setup","current_player_count":2,"#,
+        r#""address":"[::1]:43717","axis_mode":"EveryUnit","function_mode":"NormalFunction","#,
+        r#""turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}"#
+    );
+
+    /// **负向测试（T76 ③）**：带事件外壳的"变体 B"喂给 `Broadcast::parse` 必须返回 `None`。
+    ///
+    /// 真值（不是自写断言）：`docs/archive/115-broker.md` §5.3 的**原版客户端受控实验** ——
+    /// 往 LAN 端口灌 5 个变体，只有"裸的 9 字段对象 + 结尾换行"（C）出现在 UI 里；
+    /// A（裸对象无换行）、**B（事件包裹 `{"GameInfo":{"game_info":…}}`）**、
+    /// D（`{"game_info":…}`）、E（`time_mode` = `Timers1m`）**全部被原版丢弃**。
+    ///
+    /// 改前：`Broadcast::parse` 是子串查找 ⇒ 变体 B 在嵌套的 `game_info` 里也能找到
+    /// `"room_name":` ⇒ **解析成功**（T67 实测：一接上 selftest 的变体 B 断言当场变红，
+    /// `docs/06` §118.4）。改后：字段只认顶层 ⇒ 变体 B/D 缺顶层 `room_name` ⇒ `None`。
+    #[test]
+    fn broadcast_parse_rejects_the_event_wrapped_variant_b() {
+        // ① 正对照：裸对象必须解得开 —— 否则下面那一串 `None` 什么也证明不了。
+        let info = Broadcast::parse(BARE_BROADCAST).expect("裸 9 字段对象必须能解析（受控实验变体 C）");
+        assert_eq!(info.room_name, "VAR-C-nl");
+        assert_eq!(info.current_player_count, 2);
+
+        // ② 变体 B：事件外壳（**这是 T67 只能靠 `is_bare_object()` 兜住的那条**）
+        let variant_b = format!(r#"{{"GameInfo":{{"game_info":{BARE_BROADCAST}}}}}"#);
+        assert!(
+            Broadcast::parse(variant_b.as_str()).is_none(),
+            "变体 B（事件外壳）必须被拒：{variant_b}"
+        );
+        // ③ 变体 D：只包一层 `game_info`（没有事件名）
+        let variant_d = format!(r#"{{"game_info":{BARE_BROADCAST}}}"#);
+        assert!(Broadcast::parse(variant_d.as_str()).is_none(), "变体 D 必须被拒");
+        // ④ 变体 E：枚举值域外（T66 起由 `TimeMode::from_str` 严格拒）
+        let variant_e = BARE_BROADCAST.replace(r#""time_mode":"Timer1m""#, r#""time_mode":"Timers1m""#);
+        assert!(Broadcast::parse(variant_e.as_str()).is_none(), "变体 E 必须被拒");
+        // ⑤ 9 个字段全藏在嵌套对象里（子串式改前一定会"解析成功"）
+        let nested = format!(r#"{{"junk":{BARE_BROADCAST}}}"#);
+        assert!(Broadcast::parse(nested.as_str()).is_none(), "嵌套对象里的字段不是顶层字段");
+
+        // ⑥ 反面对照的另一半：改前的形状闸 `is_bare_object()` 会**误拒**带 `{` 的房名
+        //    （`docs/06` §118.4 记的那条"推断"级缺陷）。删掉它之后这里是**合法**的。
+        let brace_room = BARE_BROADCAST.replace("VAR-C-nl", "a{b");
+        assert_eq!(
+            Broadcast::parse(brace_room.as_str()).map(|i| i.room_name),
+            Some("a{b".to_string()),
+            "房名里带 `{{` 是合法字符串内容，不该被形状闸误拒"
+        );
+    }
+
+    /// `GameInfo` 事件的**外壳**（`{"GameInfo":{"game_info":{…}}}`）仍必须解得开 ——
+    /// 变体 B 的"拒"不能把**真帧**一起拒掉。真值：`fixtures/protocol_live_frames.jsonl`
+    /// 里 52 条 `GameInfo` 帧的体**恒为** `{"game_info":{9 字段}}`。
+    #[test]
+    fn game_info_event_wrapper_round_trips() {
+        let info = Broadcast::parse(BARE_BROADCAST).expect("裸对象");
+        let frame = emit_game_info(&info);
+        let raw = parse_frame_message(&frame).expect("线上帧 = 单键对象");
+        assert_eq!(raw.kind, "GameInfo");
+        // 事件负载路径：顶层有 game_info ⇒ 下钻一层
+        assert_eq!(Broadcast::parse(&raw), Some(info.clone()));
+        // broker 的 `parse_game_info_event` 依赖这条逐字节往返
+        assert_eq!(emit_game_info(&Broadcast::parse(&raw).unwrap()), frame);
+    }
+
+    /// **严格版帧解析**：多键 / 尾随垃圾 / 值不是对象 都必须拒；
+    /// 而**前缀语义**的 `parse_message` 保持原样（回放行 `{"event":{…},"tick":N}` 靠它）。
+    #[test]
+    fn frame_message_parser_rejects_trailing_and_multiple_keys() {
+        assert!(parse_frame_message(r#"{"Tick":{"current_tick":1}}"#).is_some());
+        assert_eq!(
+            parse_frame_message(r#"{"Tick":{"current_tick":1}}"#).map(|m| m.body),
+            Some(r#""current_tick":1"#.to_string())
+        );
+        assert!(parse_frame_message(r#"{"Tick":{"current_tick":1}}x"#).is_none(), "尾随垃圾");
+        assert!(parse_frame_message(r#"{"Tick":{"current_tick":1},"junk":1}"#).is_none(), "多键");
+        assert!(parse_frame_message(r#"{"Tick":1}"#).is_none(), "值不是对象");
+        assert!(parse_frame_message("{}").is_none(), "空对象没有事件名");
+        assert!(parse_frame_message("not json").is_none());
+        // 前缀语义（回放读取的载重契约）**不变**
+        let replay_line = r#"{"event":{"NameInfo":{"entity_id":229,"name":"user"}},"tick":253}"#;
+        let prefix = parse_message(replay_line).expect("回放行靠前缀语义");
+        assert_eq!(prefix.kind, "event");
+        assert_eq!(prefix.body, r#""NameInfo":{"entity_id":229,"name":"user"}"#);
+        // 严格版对同一行必须拒（它不是线上帧）
+        assert!(parse_frame_message(replay_line).is_none());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -521,32 +1183,25 @@ pub struct FunctionInfo {
 }
 
 /// 取一个浮点字段。
+///
+/// **严格（T76）**：顶层 + JSON 数字文法（改前是"取数字前缀"）。
 pub fn get_f64(msg: &RawMessage, key: &str) -> Option<f64> {
-    let pat = format!("\"{}\":", key);
-    let i = msg.body.find(&pat)? + pat.len();
-    let rest = msg.body[i..].trim_start();
-    let end = rest
-        .find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.' || c == 'e' || c == 'E' || c == '+'))
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
+    top_f64(&msg.body, key)
 }
 
 /// 取布尔字段。
+///
+/// **严格（T76）**：顶层 + 只认 `true` / `false` 两个字面量（改前 `starts_with("true")`
+/// ⇒ `trueX` 也会被当成 `true`）。
 pub fn get_bool(msg: &RawMessage, key: &str) -> Option<bool> {
-    let pat = format!("\"{}\":", key);
-    let i = msg.body.find(&pat)? + pat.len();
-    let rest = msg.body[i..].trim_start();
-    if rest.starts_with("true") {
-        Some(true)
-    } else if rest.starts_with("false") {
-        Some(false)
-    } else {
-        None
-    }
+    top_bool(&msg.body, key)
 }
 
 impl AddObstacle {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "AddObstacle") {
+            return None;
+        }
         Some(AddObstacle {
             pos_x: get_f64(msg, "pos_x")?,
             pos_y: get_f64(msg, "pos_y")?,
@@ -557,6 +1212,9 @@ impl AddObstacle {
 
 impl PosInfo {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "PosInfo") {
+            return None;
+        }
         Some(PosInfo {
             entity_id: get_int(msg, "entity_id")?,
             pos_x: get_f64(msg, "pos_x")?,
@@ -568,14 +1226,24 @@ impl PosInfo {
 
 impl LifeInfo {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "LifeInfo") {
+            return None;
+        }
         Some(LifeInfo { entity_id: get_int(msg, "entity_id")?, alive: get_bool(msg, "alive")? })
     }
 }
 
 impl FunctionInfo {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "FunctionInfo") {
+            return None;
+        }
         let owner_id = get_int(msg, "owner_id")?;
-        let function = get_str(msg, "function").unwrap_or_default();
+        // `function` 是 serde 的 `Str`（必填）：缺字段 ⇒ `None`。改前 `unwrap_or_default()`
+        // 会把它静默变成空串 —— 那是"静默丢字段"（台账 fixtures/protocol_parse_audit.tsv）。
+        // `corrected_function` 是 `OptStr`：缺失与 `null` 都是 `None`（serde 对 Option 字段
+        // 缺失的行为就是 `None`），所以这里不用 `?`。
+        let function = get_str(msg, "function")?;
         let corrected_function = get_str(msg, "corrected_function");
         Some(FunctionInfo { owner_id, function, corrected_function })
     }
@@ -627,16 +1295,25 @@ pub struct FunctionUpdateRequest {
 
 impl TurnInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "TurnInfo") {
+            return None;
+        }
         Some(TurnInfo { player_id: get_int(m, "player_id")?, soldier_id: get_int(m, "soldier_id")? })
     }
 }
 impl TurnCountInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "TurnCountInfo") {
+            return None;
+        }
         Some(TurnCountInfo { turn_count: get_int(m, "turn_count")? })
     }
 }
 impl EndOfTurnInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "EndOfTurnInfo") {
+            return None;
+        }
         Some(EndOfTurnInfo {
             end_of_turn_tick: get_int(m, "end_of_turn_tick")?,
             time_mode: get_str(m, "time_mode")?,
@@ -645,19 +1322,29 @@ impl EndOfTurnInfo {
 }
 impl FunctionFireRequest {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "FunctionFireRequest") {
+            return None;
+        }
         Some(FunctionFireRequest { player_id: get_int(m, "player_id")? })
     }
 }
 impl FunctionFire {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "FunctionFire") {
+            return None;
+        }
         Some(FunctionFire { soldier_id: get_int(m, "soldier_id")? })
     }
 }
 impl FunctionUpdateRequest {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "FunctionUpdateRequest") {
+            return None;
+        }
         Some(FunctionUpdateRequest {
             player_id: get_int(m, "player_id")?,
-            function: get_str(m, "function").unwrap_or_default(),
+            // `function` 必填（serde `Str`）：缺字段 ⇒ `None`（改前静默变空串）。
+            function: get_str(m, "function")?,
         })
     }
 }
@@ -694,11 +1381,17 @@ pub struct DestroyObstacle {
 
 impl LifeQueuedDeath {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "LifeQueuedDeath") {
+            return None;
+        }
         Some(LifeQueuedDeath { entity_id: get_int(m, "entity_id")?, tick: get_int(m, "tick")? })
     }
 }
 impl EffectInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "EffectInfo") {
+            return None;
+        }
         Some(EffectInfo {
             effect_id: get_int(m, "effect_id")?,
             pos_x: get_f64(m, "pos_x")?,
@@ -710,6 +1403,9 @@ impl EffectInfo {
 }
 impl DestroyObstacle {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "DestroyObstacle") {
+            return None;
+        }
         Some(DestroyObstacle {
             pos_x: get_f64(m, "pos_x")?,
             pos_y: get_f64(m, "pos_y")?,
@@ -1285,7 +1981,7 @@ mod emit_turn_sequence_tests {
         let line = r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.087"}}"#;
         let m = parse_message(line).unwrap();
         let owner = get_int(&m, "owner_id").unwrap();
-        let function = get_str(&m, "function").unwrap_or_default();
+        let function = get_str(&m, "function").unwrap();
         let corrected = get_str(&m, "corrected_function");
         assert_eq!(emit_function_info(owner, &function, corrected.as_deref()), line);
     }
@@ -1361,46 +2057,12 @@ mod emit_end_of_turn_tests {
 
 /// 取字符串字段，并按 JSON 规则解转义。
 ///
-/// [`get_str`] 不解转义，遇到 `\"` 会提前截断；昵称与外观名都可能带引号，
+/// [`get_str`] 不解转义，遇到 `\"` 会原样返回；昵称与外观名都可能带引号，
 /// 所以本节统一用这个。
 ///
-/// 局限（未知）：`\uD83D\uDE00` 这类代理对会解成 U+FFFD（没有样本需要）。
+/// **严格（T76）**：顶层 + 必须是完整字符串字面量（改前是 `body.find`，任意深度都命中）。
 pub fn get_str_unescaped(msg: &RawMessage, key: &str) -> Option<String> {
-    let pat = format!("\"{}\":", key);
-    let i = msg.body.find(&pat)? + pat.len();
-    let rest = msg.body[i..].trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let mut out = String::new();
-    let mut chars = rest.char_indices();
-    while let Some((_, c)) = chars.next() {
-        match c {
-            '"' => return Some(out),
-            '\\' => {
-                let (_, e) = chars.next()?;
-                match e {
-                    '"' => out.push('"'),
-                    '\\' => out.push('\\'),
-                    '/' => out.push('/'),
-                    'b' => out.push('\u{8}'),
-                    'f' => out.push('\u{c}'),
-                    'n' => out.push('\n'),
-                    'r' => out.push('\r'),
-                    't' => out.push('\t'),
-                    'u' => {
-                        let mut hex = String::new();
-                        for _ in 0..4 {
-                            hex.push(chars.next()?.1);
-                        }
-                        let v = u32::from_str_radix(&hex, 16).ok()?;
-                        out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
-                    }
-                    _ => return None,
-                }
-            }
-            _ => out.push(c),
-        }
-    }
-    None // 没有闭合引号
+    top_str_unescaped(&msg.body, key)
 }
 
 /// 把字符串编成 JSON 字面量（带引号），与 serde_json 的字符串转义一致。
@@ -1556,7 +2218,10 @@ macro_rules! passthrough_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
-                Some(Self { extra: split_fields(&m.body) })
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
+                Some(Self { extra: strict_extra_fields(&m.body, &[])? })
             }
             pub fn to_msg(&self) -> String {
                 emit_object(stringify!($ty), &[], &self.extra)
@@ -1578,10 +2243,13 @@ macro_rules! entity_str_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     entity_id: get_int(m, "entity_id")?,
                     $field: get_str_unescaped(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &["entity_id", stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &["entity_id", stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -1678,10 +2346,13 @@ pub struct RankRequest {
 
 impl RankRequest {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "RankRequest") {
+            return None;
+        }
         Some(RankRequest {
             entity_id: get_int(m, "entity_id")?,
             rank: get_int(m, "rank"),
-            extra: extra_fields(&m.body, &["entity_id", "rank"]),
+            extra: strict_extra_fields(&m.body, &["entity_id", "rank"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -1706,10 +2377,13 @@ pub struct RankInfo {
 
 impl RankInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "RankInfo") {
+            return None;
+        }
         Some(RankInfo {
             entity_id: get_int(m, "entity_id")?,
             rank: get_int(m, "rank"),
-            extra: extra_fields(&m.body, &["entity_id", "rank"]),
+            extra: strict_extra_fields(&m.body, &["entity_id", "rank"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -1734,10 +2408,13 @@ pub struct VersionInfo {
 
 impl VersionInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "VersionInfo") {
+            return None;
+        }
         Some(VersionInfo {
             version: get_str_unescaped(m, "version")?,
             system: get_str_unescaped(m, "system")?,
-            extra: extra_fields(&m.body, &["version", "system"]),
+            extra: strict_extra_fields(&m.body, &["version", "system"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -1763,11 +2440,14 @@ pub struct BotAdded {
 
 impl BotAdded {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "BotAdded") {
+            return None;
+        }
         Some(BotAdded {
             connection_id: get_int(m, "connection_id")?,
             player_id: get_int(m, "player_id")?,
             level: get_int(m, "level")?,
-            extra: extra_fields(&m.body, &["connection_id", "player_id", "level"]),
+            extra: strict_extra_fields(&m.body, &["connection_id", "player_id", "level"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -2019,11 +2699,19 @@ impl GraphwarColor {
         format!(r#"{{"r":{},"g":{},"b":{}}}"#, self.r, self.g, self.b)
     }
 
+    /// `{"r":..,"g":..,"b":..}` 的三个通道。
+    ///
+    /// **严格（T76）**：三个键都必须是**顶层**字段、值都必须是 `u8` 范围（serde 的 `u8`
+    /// 越界/负数 = 反序列化失败；改前 `get_int(..)? as u8` 会把 `r:300` 静默回绕成 44）。
+    /// 多加的字段忽略（serde derive 默认）。
+    ///
+    /// ⚠️ 这里**没有**变体名闸：本结构体是 `ColorInfo.color` 的值（不是事件），
+    /// `tests/wire_format.rs` 用 `{"X":{"r":…}}` 这种合成外壳解它。
     pub fn parse(m: &RawMessage) -> Option<Self> {
         Some(Self {
-            r: get_int(m, "r")? as u8,
-            g: get_int(m, "g")? as u8,
-            b: get_int(m, "b")? as u8,
+            r: as_u8_literal(top_level_value(&m.body, "r")?)?,
+            g: as_u8_literal(top_level_value(&m.body, "g")?)?,
+            b: as_u8_literal(top_level_value(&m.body, "b")?)?,
         })
     }
 }
@@ -2083,35 +2771,52 @@ impl GameInfo {
     ///
     /// 5 个枚举字段**严格**按变体名解析（`GameState::from_str` 等），未知名字 ⇒ `None`：
     /// 与 serde 派生出来的 `Deserialize` 同口径（未知变体 = 反序列化失败）。
+    /// ## 严格性（T76：把 T67 记在 `docs/06` §118.4 的那条闸**收进 protocol.rs**）
+    ///
+    /// 两种入口形态的严格性**不同**，由输入类型定（见 [`JsonObject::is_event_payload`]）：
+    ///
+    /// * `Broadcast::parse(裸广播原文: &str)` —— 必须**本身就是** 9 字段裸对象。
+    ///   字段一律**只在顶层**找（[`top_level_value`] 不下钻），所以
+    ///   `{"GameInfo":{"game_info":{…}}}`（受控实验的**变体 B**）与
+    ///   `{"game_info":{…}}`（**变体 D**）都**缺顶层 `room_name` ⇒ `None`**。
+    ///   这正是原版行为（`docs/archive/115` §5.3：A/B/D/E 全丢，只有"裸对象 + 换行"被接受）。
+    ///   ⇒ `_scaffold/lan_v6_class.rs` 里那道具名闸 `is_bare_object()` 不再需要，已删。
+    /// * `GameInfo::parse(&RawMessage)` —— 事件负载：顶层有 `game_info` 就下钻**一层**
+    ///   （`WIRE_SPEC`：`GameInfo` 事件只有这一个字段），否则把这个体当 9 字段结构体
+    ///   （本 crate 两个解码入口共用同一个结构体，T66）。
+    ///
+    /// 字段级：5 个枚举按变体名严格解析（未知名字 ⇒ `None`）；`current_player_count` 必须
+    /// 是 `u32` 范围；缺任何必填字段 ⇒ `None`；**多余字段忽略**（serde derive 默认）。
     pub fn parse(obj: impl JsonObject) -> Option<Self> {
         let text = obj.json_object_text().trim();
-        let body = if text.starts_with('{') {
-            if !braces_balanced(text) {
-                return None;
+        let body = if obj.is_event_payload() {
+            // 事件负载：`{"game_info":{…}}` 就下钻一层；否则体本身就是 9 字段结构体。
+            match top_level_value(text, "game_info") {
+                Some(raw) => object_body(raw)?,
+                None => text,
             }
-            read_object(text)?
         } else {
-            text.to_string()
+            // 线上裸对象原文（LAN 数据报）：必须是完整对象字面量，**绝不下钻**。
+            object_body(text)?
         };
-        let m = RawMessage { kind: "GameInfo".into(), body, text: text.to_string() };
         Some(Self {
-            room_name: get_str_unescaped(&m, "room_name")?,
-            game_state: crate::turnstate::GameState::from_str(&get_str_unescaped(&m, "game_state")?)?,
-            current_player_count: u32::try_from(get_int(&m, "current_player_count")?).ok()?,
-            address: get_str_unescaped(&m, "address")?,
-            axis_mode: crate::graphwar_mode_manager::AxisMode::from_str(
-                &get_str_unescaped(&m, "axis_mode")?,
-            )?,
+            room_name: top_str_unescaped(body, "room_name")?,
+            game_state: crate::turnstate::GameState::from_str(&top_str_unescaped(body, "game_state")?)?,
+            current_player_count: u32::try_from(top_int(body, "current_player_count")?).ok()?,
+            address: top_str_unescaped(body, "address")?,
+            axis_mode: crate::graphwar_mode_manager::AxisMode::from_str(&top_str_unescaped(
+                body, "axis_mode",
+            )?)?,
             function_mode: crate::graphwar_mode_manager::FunctionMode::from_str(
-                &get_str_unescaped(&m, "function_mode")?,
+                &top_str_unescaped(body, "function_mode")?,
             )?,
-            turn_mode: crate::graphwar_turn_manager::TurnMode::from_str(
-                &get_str_unescaped(&m, "turn_mode")?,
-            )?,
-            time_mode: crate::graphwar_mode_manager::TimeMode::from_str(
-                &get_str_unescaped(&m, "time_mode")?,
-            )?,
-            locked: get_bool(&m, "locked")?,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::from_str(&top_str_unescaped(
+                body, "turn_mode",
+            )?)?,
+            time_mode: crate::graphwar_mode_manager::TimeMode::from_str(&top_str_unescaped(
+                body, "time_mode",
+            )?)?,
+            locked: top_bool(body, "locked")?,
         })
     }
 }
@@ -2137,9 +2842,12 @@ macro_rules! bool_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_bool(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2165,9 +2873,12 @@ macro_rules! i64_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_int(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2192,9 +2903,12 @@ macro_rules! opt_i64_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_int(m, stringify!($field)),
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2219,9 +2933,12 @@ macro_rules! str_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_str_unescaped(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2247,10 +2964,13 @@ macro_rules! i64_pair_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $a: get_int(m, stringify!($a))?,
                     $b: get_int(m, stringify!($b))?,
-                    extra: extra_fields(&m.body, &[stringify!($a), stringify!($b)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($a), stringify!($b)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2277,7 +2997,10 @@ macro_rules! empty_body_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
-                Some(Self { extra: split_fields(&m.body) })
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
+                Some(Self { extra: strict_extra_fields(&m.body, &[])? })
             }
             pub fn to_msg(&self) -> String {
                 emit_object(stringify!($ty), &[], &self.extra)
