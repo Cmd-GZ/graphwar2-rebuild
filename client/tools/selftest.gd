@@ -4918,7 +4918,7 @@ func _lobby_row_players(list: VBoxContainer, index: int) -> Label:
 		i += 1
 	return null
 
-## T67 把四段控制器搬回 Rust（`docs/06` §115）之后的**反向断言**。
+## T67 把四段控制器搬回 Rust（`docs/06` §118）之后的**反向断言**。
 ##
 ## 每一条的期望值都来自 **Rust 侧/二进制证据**，不是来自我方实现（`AGENTS.md` §0.5）：
 ## 搬走的规则如果被搬错（枚举值错、判据写反、屏名拼错），这里会红。所以这批断言的作用
@@ -4951,11 +4951,11 @@ func _test_controller_migration() -> void:
 	_expect(all_screens.size() == 15 and GwRootNode.screen_addr("PlayScreen") == 0x1bd92b,
 		"屏表：15 个名字 + PlayScreen 的 .rodata 地址 0x1bd92b（实际 0x%x）"
 			% GwRootNode.screen_addr("PlayScreen"))
-	# 原版屏表 vs 我方屏表的两处**已知不一致**（`docs/06` §115.6）：钉住它们，
+	# 原版屏表 vs 我方屏表的两处**已知不一致**（`docs/06` §118.6）：钉住它们，
 	# 免得哪天改好了却没人知道台账要更新。
 	_expect(all_screens.has("ConfirmPlay") and all_screens.has("ExitPopUp")
 		and not all_screens.has("ChatPopUp"),
-		"屏表：原版 15 槽是 ConfirmPlay + ExitPopUp 两项、且没有 ChatPopUp（我方屏表不同 ⇒ 台账 §115.6）")
+		"屏表：原版 15 槽是 ConfirmPlay + ExitPopUp 两项、且没有 ChatPopUp（我方屏表不同 ⇒ 台账 §118.6）")
 	# 切屏决策：命中 ⇒ 显示、其余 ⇒ 隐藏（4 个条目，两条臂都验）。
 	var plan := GwRootNode.show_plan("LanLobby", false, false)
 	var shown := 0

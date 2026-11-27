@@ -831,7 +831,7 @@ fn campaign_progress_resets_to_zero_on_a_bad_file() {
 // `campaign.gd` 里那份 `const LEVELS`（21 条）逐字段、逐字节地与内核 `LEVEL_INFO` 比对。
 // 那说明**同一张表存在两份**：改内核不改 `.gd`，界面就显示旧数据；只靠一条测试拉着。
 //
-// T67（`docs/06` §115 / 台账 `fixtures/controller_migration3_ledger.tsv` C02/C04/C05/C07）
+// T67（`docs/06` §118 / 台账 `fixtures/controller_migration3_ledger.tsv` C02/C04/C05/C07）
 // 把表搬走了：`campaign.gd` 现在只调 `GwCampaignControl`（`src/_scaffold/campaign_control_class.rs`），
 // 而那个类**没有自己的数据** —— 它逐字段读 `graphwar_campaign_control::LEVEL_INFO`。
 // ⇒ "客户端表 == 内核表"这件事从"两条拷贝互相钉住"变成"**只有一份**，结构上不可能漂移"。

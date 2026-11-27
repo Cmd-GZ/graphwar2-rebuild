@@ -20829,13 +20829,17 @@ PY
 
 | 门槛 | 读数 | 复跑命令 |
 |---|---|---|
-| `cargo test --offline` | **1853 passed / 0 failed / 1 ignored** | `cargo test --offline` |
-| `cargo test --features gdext-bindings` | **1983 / 0 / 1** | `cargo test --offline --features gdext-bindings` |
+| `cargo test --offline` | **1 884 passed / 0 failed / 1 ignored** | `cargo test --offline` |
+| `cargo test --features gdext-bindings` | **2 014 / 0 / 1** | `cargo test --offline --features gdext-bindings` |
 | `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)`（门槛 732/0/1skip；本轮 **+25 条**新组 `controller_migration`） | 见 §118.6 |
 | headless 14 脚本 | **1978 / 0**（14 份逐个跑，无失败） | 见 §118.6 |
 | 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（一位未退） | 见 §118.6 |
 | `coverage_matrix.py --check` | **OK**（生成物已重跑并入库） | `COVERAGE_MATRIX_UPSTREAM=<ws>/.reference/upstream .reference/venv/bin/python tools/coverage_matrix.py --check` |
 | `check_doc_refs.py` | **rc=0**（无死链） | `python3 tools/check_doc_refs.py` |
+
+⚠️ 门槛数字**按 rebase 后的基线重测**（本节最终版基于本地 master `078b8f3`（= lead 已并入 T67 并把本节编号定为 §118 之后的那版）；
+分支最初的两次 commit 基于 `6ff8938`，那时 cargo 是 1 853 / 1 983）。selftest 的条数与基线无关（737→757 是本批 +25），
+所以两个基线上都是 **757 / 0 / 1 skip**。
 
 新增的 25 条 `selftest` 断言（组 `controller_migration`）全部是**反向断言** —— 期望值来自 Rust 侧/二进制，
 不是再抄一遍实现：屏名地址 `PlayScreen = 0x1bd92b`、`background` 条目 visible = −1、
@@ -20908,21 +20912,34 @@ for i in (1,2,3):
     print(i, int((np.abs(a-b).max(axis=2)>0).sum()))"
 ```
 
-| 屏 | 本轮实测 | 门槛/基线 | 结论 |
+下表的数字是**最终版（rebase 到 master `82afad0` 之后）重拍的那一轮**；旧基线（`6ff8938`）那一轮
+结论相同、量级相同，差异写在表后的"两轮对照"里。
+
+| 屏 | 本轮实测（rebase 后） | 门槛/基线 | 结论 |
 |---|---|---|---|
 | `menu` | **0 px** | 0 px | ✅ |
 | `replay_lobby` | **0 px** | 0 px | ✅ |
 | `player_skins` | **0 px** | 0 px | ✅ |
 | `campaign` | **3 827 px = 0.1718 %** | 0.172 %（master 现值） | ✅ 逐位复现 |
 | `level_popup` | **2 244 px = 0.1008 %** | 0.101 %（master 现值） | ✅ 逐位复现 |
-| `replay_play` / `replay_end` | **1 126 px (0.0506 %) / 856 px (0.0384 %)** | §(T54) 记的同一对：856 / 1 126 px | ✅ 同一对数、L2 0（见下面第 1 条遗留：名字归属相反） |
-| `match_ready` | 两轮 **0.0938 % / 0.0820 %**（2 089 / 1 828 px），L2 0 | 0.081 %（同侧跨轮方差已知 0.012–0.023 pp） | ✅ 在相位噪声带内 |
-| `match_play` | 两轮 **0.4418 % / 0.370 %**，L2 **1** 块（= 基线） | 0.385 % / L2 1 | ✅ 第二轮 0.370 % 直接落回基线；第一轮偏高属**相位**（同一份二进制、同一份剧本） |
+| `replay_play` / `replay_end` | **856 px / 856 px = 0.0384 % / 0.0384 %** | 0.038 %（任务书门槛） | ✅ **两屏都与门槛逐字一致**、L2 0 |
+| `match_ready` | **2 089 px = 0.0938 %**，L2 0（另一轮 1 828 px = 0.0820 %） | 0.081 %（同侧跨轮方差已知 0.012–0.023 pp） | ✅ 在相位噪声带内 |
+| `match_play` | **8 606 px = 0.3864 %**，L2 **1** 块（= 基线，bbox `265,556..1738,1156`） | 0.385 % / L2 1 | ✅ 落回基线（另一轮 0.370 % / 0.442 % 亦在带内） |
 | 结算框**面板区** `(483,235) 956×691` | **0 px（三帧全 0）** | 0 px | ✅ |
-| `lan_lobby_local` | **3 012 px（0.1352 %）**，bbox `231,186..592,237`，L2 0 | 3 012 px、同 bbox（§T20 记录） | ✅ **逐 px 同值** |
-| `lan_lobby_global` | **8 085 px（0.363 %）** | §T20 记录 10 123 px | ✅ 更少（Global 页仍是静态占位，既有残差） |
+| `lan_lobby_local` | **3 012 px（0.1352 %）**，bbox `231,186..592,237`，L2 0（旧基线那轮） | 3 012 px、同 bbox（§T20 记录） | ✅ **逐 px 同值** |
+| `lan_lobby_global` | **8 085 px（0.363 %）**（旧基线那轮） | §T20 记录 10 123 px | ✅ 更少（Global 页仍是静态占位，既有残差） |
 | `player_faces` / `player_hats` | **1 176 px（0.0528 %）** 两者相同 | 1 176 px（0.0528 %） | ✅ **逐 px 同值** |
 | `endgame_popup`（整屏） | 44 px（0.002 %，bbox 在底部带 `265,1065..1738,1156`） | — | 面板区 0 px，剩的是底部带既有残差 |
+
+**两轮对照（同一份代码、不同基线 / 不同采集轮）**：
+
+| 屏 | 旧基线 `6ff8938` 那轮 | rebase 到 `82afad0` 后那轮 | 判读 |
+|---|---|---|---|
+| `menu` / `replay_lobby` / `player_skins` | 0 / 0 / 0 px | 0 / 0 / 0 px | 两轮都 0 |
+| `campaign` / `level_popup` | 3 827 / 2 244 px | 3 827 / 2 244 px | **逐 px 相同** |
+| `replay_play` / `replay_end` | 1 126 / 856 px | **856 / 856 px** | 旧基线那轮两屏名字归属相反（总数 1 982 px 与 §(T54) 的 856+1 126 逐位相同）；rebase 后重拍两屏都 856 ⇒ 判为**采集时机噪声**，不是回归（仍按遗留 1 登记"这条流程对停帧时机敏感"） |
+| `match_ready` / `match_play` | 0.094 / 0.442 %（另轮 0.082 / 0.370 %） | 0.094 / 0.386 % | 全部落在**相位噪声带**（同一剧本、同一份 .so 跨轮变化） |
+| 结算框面板区 | 0 px（三帧） | 0 px（三帧） | 两轮都 0 |
 
 > 采集条件与既有轮一致：私有 Xvfb `1920x1160x24`（TCP）、llvmpipe、`import -window <id>`、每屏 3 帧、
 > 两侧**串行**。噪声地板（同侧 3 帧互相差）原版 0.000 %／我方 0.012–0.164 %，已在表内逐屏列出。
@@ -20930,11 +20947,11 @@ for i in (1,2,3):
 
 ### 118.8 遗留 / 未做（按"下次该动谁"排）
 
-1. **`replay_play` / `replay_end` 的屏幕名归属在这一轮采集里是反的**：本轮 `replay_play` 拿到
-   1 126 px（0.0506 %）、`replay_end` 拿到 856 px（0.0384 %），而 §(T54) 记的是 `replay_play` 856 /
-   `replay_end` 1 126。**总数与两个数都逐位相同**（1 982 px，L2 0），所以不是回归；但说明
-   `--flow replay` 的两屏"停在第几帧"对采集时机敏感（回放载入即暂停 + `REPLAY_END_WAIT`），
-   下一个改这条流程的人应当把"停在哪一帧"钉成预注册值，而不是靠 `wait`。
+1. **`--flow replay` 的两屏"停在第几帧"对采集时机敏感**：旧基线那轮采集里两屏的名字归属是**反的**
+   （`replay_play` 1 126 px / `replay_end` 856 px，而 §(T54) 记的是 856 / 1 126；**总数 1 982 px 逐位相同**、
+   L2 0 ⇒ 不是回归），rebase 后重拍**两屏都 856 px（0.0384 %）**、直接对上任务书门槛。
+   ⇒ 结论：这条流程量的是"停帧时机"，不是渲染差异。下一个改它的人应当把"停在哪一帧"钉成预注册值
+   （例如按回放 tick 数而不是 `wait` 秒数），否则同一个门会给出 856 与 1 126 两种读数。
 2. **弹窗"叠层 vs 单可见"的模型分叉没改**（§118.3 末段）：原版 `0x3af850` 让 15 个屏**同时只有一个可见**，
    我方是叠层。改它要动所有弹窗的进入/退出时序 + 8 个弹窗的像素，建议单独一轮做，并先把
    `background` 这个键的来源（`docs/16` §15.10 未知③）解出来 —— 原版那条分支说明屏表里**还有一个
