@@ -21300,6 +21300,10 @@ T74 的授权范围是"只改档位与出处，不改结论内容"，所以下�
 `0x51d312`（在变体 B `0x51d080` 里）⇒ `0x4eb830` **不是解析器的后处理**。
 ⇒ 这条 `[观测]` 的结论应该改（属于 T75 那类"结论级真错"），**登记待派活**。
 
+> **2026-11-27 结案（T79）**：本节三条已由 lead 批准改结论并落地 —— `02 §3` 改成 `-(x^2)`、`02 §4 #3` 中间结构改成
+> `sin(2)^x * ␀`、`02 §4 #5` 整条重写（解析期不折；`0x4eb830` 是 `remove_offset`；**真折叠在 `0x4ebbe0`，只在函数进化器里**）。
+> 逐条读数、复跑命令、以及"同一错还留在 5 处文档"的清单见 **§123**。
+
 ### 120.4 「不可升」与「补到一半」清单（本轮最该留下的东西）
 
 | # | 条目 | 现在档 | 为什么到不了 / 缺什么 | 下一步需要什么 |
@@ -21797,3 +21801,217 @@ T37（§85）判出 **341 条 `S-self`**；T46 换 19（§96）、T59 换 50（�
      ⇒ 结构性换不了，建议下一轮**只做口径审计**（不再重复尝试）。
 * **两个"可继续做深"的口子**：① `EmptyRoster::Skip` 到底要不要留（§122.10 第 3 条）；
   ② `win_rule` 的 `0x4759f0` 双零落点——拿到它就能把「双零终局 winner 字段」从推断升到逐位。
+
+## 123. T79：`docs/guide/02` 三处真值更正 —— `-x^2` 是 `-(x²)`、`sin^2(x)` 的中间结构、**「常量折叠」挂错了地址**（真折叠在 `0x4ebbe0`，只在函数进化器里跑）（2026-11-27，任务 T79 / `task-74` / 分支 `agent/guide-fix2`）
+
+来源：§120.3（T74 登记的 **2 条结论级矛盾** + 1 条「顺手复核到的问题」）与 [`docs/21`](21-guide-manual.md) §9.4，lead 本轮批准改结论。
+做法：**每条先自己复核再改**（真侧一律自己跑，不转引 T74 的读数）→ 原文划线保留 + 就地更正块 + 写明依据与档位。
+判据沿用 §111.1 / §120.1 的 R1–R4，一个字没放宽；**按弱的判**（一条里既有值级读数又有推断成分时记弱档）。
+
+**改动范围**：`docs/guide/02-函数与弹道.md`（§3 一行、§4 #3、§4 #5、§10 表内同一结论）、`docs/21` §10、`docs/06`（本节 + §120.3 末尾加一行"已裁决"指针）。
+**没碰** `src/**`、`tests/**`、`client/**`、`fixtures/**`、门槛/护栏文件。
+
+### 123.1 三条各是什么、改成什么（结果总表）
+
+| # | 位置 | 改前（原句，正文里已划线保留） | 改后 | 性质 |
+|---|---|---|---|---|
+| ① | `guide/02 §3` 表「一元负号与 `^`」 | 负号比 `^` 松 ⇒ `-x^2` = `(-x)^2` | 负号比 `^` 松 ⇒ `-x^2` = **`-(x^2)`** | **结论改**（原句划线） |
+| ② | `guide/02 §4` #3「`sin^2(x)` 的灾难」 | 解析成 `sin(空) ^ 2 * x` | 解析成 **`sin(2)^x * ␀`**（`␀` = 缺失操作数 ⇒ 按 #4 补 `CONST 0`） | **只改中间结构**（结论「不是 `sin(x)^2`、值恒 0」不变） |
+| ③ | `guide/02 §4` #5「常量折叠」 | 「解析后有一趟折叠（`0x4eb830`）：纯常量子树压成一个 `CONST`。`2*3+1` 直接变成 `CONST(7.0)`」 | **解析期不折**；折叠**确实存在**但在 **`0x4ebbe0`**，**只在函数进化器里**跑；`0x4eb830` 是 **`MathFunction::remove_offset`**（剥最外层 `± CONST`） | **改地址 + 改作用域**（原句划线） |
+| ③b | `guide/02 §10` 表内「`sin^2(x)` 结果很怪」 | `sin(空)^2 * x` = `0^2 * x` = `0` | 与 ② 同步（并去掉该格重复两遍的「（注意…）」） | 一致性 |
+
+档位：①② 原本就是 `[逐位]`、本轮**仍是 `[逐位]`**（读数见 123.2/123.3，都是值级）；③ 原本 `[观测]`、本轮**仍是 `[观测]`**
+（值级读数够 `[逐位]`，但「折叠函数叫什么名」只有预测归因 ⇒ **按弱的判**）。⇒ 九章四档计数**不变**：`61 / 536 / 128 / 81`（复算见 123.7）。
+
+### 123.2 ① `-x^2` = **`-(x²)`**：真 tag 流 + 求值双读数，**我方侧逐位相同**
+
+真解析器 `0x4ed670`、真求值器 `0x4eb9d0`（`tools/bitexact_run.py`，unicorn 直调）：
+
+| 表达式 | 真 tag 流（16 B/token：`tag:value`） | 求值读数 |
+|---|---|---|
+| `-x^2` | `5:—, 8:—, 0:—, 17:0x4000000000000000`（**`NEG POW VAR_X CONST(2)`**） | `x=3` → **`0xc022000000000000` = −9.0**；`x=2` → `−4.0`；`x=1` → `−1.0`；`x=−3` → `−9.0` |
+| `(-x)^2` | `8:—, 5:—, 0:—, 17:0x4000000000000000`（**`POW NEG VAR_X CONST(2)`**） | `x=3` → **`0x4022000000000000` = +9.0** |
+| `-3^2` | `5, 8, 17:C(3), 17:C(2)` | （常量也能看出是 `−(3²)`） |
+
+⇒ 两种写法是**两棵不同的表达式**（tag 顺序都不同），`-x^2` 的负号在 `^` **外面** ⇒ **`-(x²)`**。旧结论 `(-x)^2` 把内外写反，
+但同一行前半句「负号比 `^` 松」本来是**对的**（`NEG` 吃整个 `POW`）——这也解释了为什么 `docs/03` §3 早在 2026-11-08 就改成 `-(x^2)`。
+**我方侧**（`examples/bitexact_harness`，同一组输入）：`parse` 的 **tag 流 + CONST 位型 12/12 与真侧相同**、`eval` 的 **f64 位型 9/9 相同**。
+
+### 123.3 ② `sin^2(x)`：`sin` 吃掉的是 `2`，`x` 是 `^` 的右操作数，缺的是 `*` 的另一侧
+
+真 tag 流 **`6:—, 8:—, 14:—, 17:0x4000000000000000, 0:—`**（`fixtures/parse_matrix_truth.tsv` id **576** 同形）。
+按前缀序还原成树：`MUL( POW( SIN( CONST(2) ), VAR_X ), ␀ )` ⇒ 人类写法 **`sin(2)^x * ␀`**，`␀` 按 #4 补 `CONST 0` ⇒ **值 0**。
+
+- tag 号不是照抄的：另跑单函数探针 `sin(x)`→`14,0`、`cos(x)`→`15,0`、`tan(x)`→`16,0`、`ln(x)`→`11,0`、`log(x)`→`10,0`、`abs(x)`→`13,0`、`sqrt(x)`→`9,0`、`exp(x)`→`12,0` ⇒ **14 = SIN**（`docs/03` §12 的 tag 表由此独立复核）。
+- 求值边界（真求值器，7 组）：`x=0 / 1 / 3 / −2 / 1e300` → **全 `0x0000000000000000`**；**`x=NaN` → `0x7ff8000000000000`（NaN）**（因为 `0·NaN = NaN`）。
+  对照 `sin(x)^2` 在 `x=3` 是 **`0x3f94648f687dd0a8` = 0.0223…** ⇒ 确实**不是** `sin(x)^2`。
+- **我方侧**：`parse` tag 流 + CONST 位型 **12/12 相同**、`eval` **7/7 逐位相同**。
+
+⇒ 原文「`sin(空) ^ 2 * x`」错在两处：`sin` 后面紧跟的是 `^`、但 `sin` 吃的是 `^` **后面的** primary `2`（不是"空"）；
+`x` 落在 `^` 的右操作数（不是 `*` 的右操作数）。结论（不是 `sin(x)^2`、值恒 0）不动。
+
+### 123.4 ③ 「常量折叠」：**手册挂错了地址、也说错了位置** —— 折叠本身是真的，只是在函数进化器里
+
+#### (a) 解析期**没有**折叠（真解析器 tag 流，运算符全在）
+
+| 表达式 | 真 tag 流 | 说明 |
+|---|---|---|
+| `1+2*3-4/5^6` | `4,3,17:C(1),6,17:C(2),17:C(3),7,17:C(4),8,17:C(5),17:C(6)` | 11 个 token，`+ − * / ^` **一个没少** |
+| `2*3+1` | `3,6,17:C(2),17:C(3),17:C(1)` | 手册举的例子：解析产物**不是** `CONST(7.0)` |
+| `1+2+3` / `2*3` / `2+3` / `sqrt(4)+sqrt(9)` / `2^3^2` | `3,3,C1,C2,C3` / `6,C2,C3` / `3,C2,C3` / `3,9,C4,9,C9` / `8,8,C2,C3,C2` | 纯常量也**不折** |
+
+我方侧同组输入 **12/12 相同**（tag + CONST 位型）⇒ **我方 `parse` 也没有折叠**。
+
+#### (b) `0x4eb830` 不是折叠，是 `MathFunction::remove_offset`
+
+- **边界**：`.eh_frame` FDE **`0x4eb830..0x4eb920`（`0xf0` = 240 B）**；`tools/addr_probe.py fde 0x4eb830`。
+- **归属/名字**：`fixtures/name_to_addr.tsv:348`（2 个双向唯一 `panic::Location` 锚 = `src/math_function.rs:52:43` 与 `:53:43`；
+  Windows 侧 `fixtures/windows_name_to_addr.tsv:30` 同一函数，2/2）；`addr_probe.py locs 0x4eb830` → `src/math_function.rs:53:43`（×2）。
+- **行为（直调真函数，值级）**：输入输出都是 `Vec<Token>`，看着像"剥掉函数最外层的常量偏移"：
+
+| 输入 token 序列 | 真函数返回 |
+|---|---|
+| `[ADD, VAR_X, CONST(3)]` | `[VAR_X]` |
+| `[SUB, VAR_X, CONST(3)]` | `[VAR_X]` |
+| `[SUB, ADD, VAR_X, CONST(3), CONST(1)]` | `[VAR_X]`（连剥两层） |
+| `[ADD, SIN, VAR_X, CONST(3)]` | `[SIN, VAR_X]` |
+| `[ADD, CONST(8), CONST(3)]` | `[CONST(8)]` |
+| `[MUL, VAR_X, CONST(3)]` / `[ADD, VAR_X]` / `[ADD, VAR_X, VAR_Y, CONST(3)]` | **原样不动** |
+
+- **指令级**（`addr_probe.py dis 0x4eb830`）：`0x4eb864 mov eax,[r12]` + `0x4eb868 add eax,-3` + `0x4eb86b cmp eax,2` + `0x4eb86e jae` ⇒
+  **首 token 必须是 tag 3/4（`ADD`/`SUB`）**；`0x4eb878/0x4eb87b/0x4eb87e` 三句 `xorps` 后 `0x4eb887 call 0x4eb9d0`（**`x=y=dy=0` 下试算，返回值丢弃**，
+  只读回 `[rsp]` 里的消费计数 `0x4eb88c mov r13,[rsp]`）；`0x4eb890/0x4eb894` 要求消费到 `len−1`；`0x4eb899 cmp dword [r12+rbp],0x11` 要求**末 token 是 CONST**；
+  最后两次 `call r15`（`0x4eb8c0`/`0x4eb8d8`，`memmove`）把首尾两个 token 挤掉、`[r14+0x10]` 递减。
+  **全程没有任何"把算出的 f64 写成一个 CONST token"的写点** ⇒ 它不可能做常量折叠。
+- **调用图**：`call rel32` = **0**；唯一引用是**重定位槽 `0x9bc250`** 的使用点 **`0x51d312`**（在 `0x51d080` = `GraphwarFunctionEvolutionator::calculate_functions_old`，
+  `fixtures/callgraph_roles_control.tsv:352`），而且**能被跳过**：`0x51d2fc cmp byte ptr [rax+0x5c],0` + `0x51d308 jne 0x51d318` 跳过后才到 `0x51d312`。
+  ⇒ 与 T74 的读数一致，本轮补上**函数名**与**条件分支**两条。
+
+#### (c) 折叠真的存在：`0x4ebbe0`（预测名 `MathFunction::simplify_recursive`）
+
+- **边界**：FDE **`0x4ebbe0..0x4ec154`（`0x574` = 1396 B）**；`addr_probe.py locs 0x4ebbe0` → `src/math_function.rs:184:24`（1 个锚）。
+  名字只有**预测/高置信**归因（`fixtures/unnamed_attrib.tsv:176` A 个体 score=2.70；`fixtures/function_coverage.tsv:474` 记 "hyb:高置信 / P3 未命中"）
+  ⇒ **名字档位 `[推断]`，行为档位 `[逐位]`（直调读数）**。
+- **行为（直调真函数，值级）**：
+
+| 输入 token 序列 | 真函数返回 |
+|---|---|
+| `[MUL, CONST(2), CONST(3)]` | **`[CONST(6.0)]`** |
+| `[ADD, CONST(1), MUL, CONST(2), CONST(3)]` | **`[CONST(7.0)]`** ← 与手册那句 `2*3+1 → CONST(7.0)` 完全一致 |
+| `[SIN, CONST(2)]` | `[CONST(0.9092974268256817)]`（一元也折） |
+| `[POW, CONST(2), CONST(10)]` | `[CONST(1024.0)]` |
+| `[ADD, VAR_X, CONST(3)]` / `[MUL, CONST(2), VAR_X]` | **原样不动**（含变量不折） |
+
+- **指令级**：两个子结果都必须是单个 `CONST`（`0x4ebdbf cmp dword [r14],0x11` + `0x4ebdca cmp dword [r12],0x11`）→
+  `0x4ebde3 call 0x4eb920`（**per-tag 常量算子分派**：跳表 `0x1c3c24`，`addsd 0x4eb965` / `subsd 0x4eb94f` / `mulsd 0x4eb985` / `divsd 0x4eb96a` /
+  `sqrtsd 0x4eb95a` / libm 走 GOT 槽 `0x9bc258`…）→ `0x4ebe11 mov qword ptr [rax+rcx],0x11` + `0x4ebe1f movsd [rax+rcx+8],xmm0`（写回一个 `CONST`）。
+- **调用图**：`call rel32` **7 处 = 3 处自递归**（`0x4ebcbf`/`0x4ebd92`/`0x4ebda2`）**+ 4 处外部**：
+  `0x51b993`、`0x51bdd7`（都在 `0x51b440` = `calculate_functions`，`fixtures/callgraph_roles_control.tsv:351`）与
+  `0x51d3c5`、`0x51e564`（都在 `0x51d080` = `calculate_functions_old`）。
+  ⇒ **折叠只在 AI 进化路径里跑**（两处都是 `graphwar_function_evolutionator`），**解析器不调它**（解析器 `0x4ed670` 的 FDE 内没有到 `0x4ebbe0` 的调用）。
+
+#### (d) 一句话裁决
+
+手册那句话是**「现象对、地址错、位置错」**：`2*3+1 → CONST(7.0)` 这个现象**真的存在**（`0x4ebbe0` 直调逐位复现），
+但它是**函数进化器**在处理候选函数串时做的，**不是解析器后处理**，`0x4eb830` 则是另一个函数（`remove_offset`）。
+对攻略读者的结论：**玩家写的 `2*3+1` 不会被折成 `7`**（对局里 f(x) 文本、求值、弹道都不受影响）。
+
+### 123.5 ③ⓑ 我方 `src/` 侧核查：**没有多实现折叠**（不是复原错误里的"多做了"），而是**少实现两个原版函数**
+
+| 检查 | 读数 |
+|---|---|
+| `grep -rn "折叠" src/*.rs` | 只有**键盘死键折叠**（`graphwar_function_input::fold_composed`，`0x1c3d5c` 跳转表）与回放去重（`replaydiff`）—— **没有常量折叠** |
+| `src/math_function.rs` 全部 `pub fn` | `lex` / `parse` / `eval` + `m_hypot`/`m_log10`/`m_ln` + `to_text` 族 ⇒ **无折叠、无 `remove_offset`、无 `simplify_recursive`** |
+| `src/polish_notation_converter.rs`（286 行） | 只有前缀重排 + **缺操作数补 `CONST 0`**（`0x4f56f7 movq $0x11`，这是原版行为）⇒ 无折叠 |
+| `src/graphwar_function_evolutionator.rs` | 随机器 + `evolve`/`fitness`/`crossover`；**没有**折叠/去偏移步骤 |
+| `fixtures/function_coverage.tsv` | `0x4eb86a remove_offset` = **F3**（"真名 `remove_offset` 在我方没有同名实现函数"）、`0x4ebbe0 simplify_recursive` = **F3**（"预测名未命中"） |
+
+⇒ **结论：我方没有实现原版没有的折叠**（不存在"多做了"的复原错误）。
+反方向有个**缺口**：原版这两条在函数进化路径里被调用，我方一条都没有 ⇒ 若原版"先 `remove_offset` 再折叠"再拿去打分，
+**我方 AI 打分的输入 token 形状与原版可能不同**（解析/求值/弹道/评分核心的**数值不受影响**——折叠只改 token 形状，且我方 `parse` 输出与真侧逐位相同）。
+本轮**不动 `src/`**（授权只到文档）；处置建议见 123.9。
+
+### 123.6 同一个错还留在哪些地方（**不在本轮改动范围，登记给 lead 派活**）
+
+| 位置 | 现在写的 | 应改成 |
+|---|---|---|
+| `docs/03-function-language.md` §4.3（`:131` 附近） | "解析完成后有一趟折叠（`0x4eb830`）：纯常量子树被压成一个 `CONST`" | 同本节 123.4：解析期不折；`0x4eb830` 是 `remove_offset`；折叠在 `0x4ebbe0`（进化器） |
+| `docs/01-architecture.md:51` | 框图节点"`graphwar_function_manager.rs` 解析 + 常量折叠 @0x4eb830" | 拆成"解析 @0x4ed670"与"折叠 @0x4ebbe0（进化器）" |
+| `docs/02-module-map.md:13` | "（常量折叠）｜—｜`0x4eb830`｜纯常量子树折叠【已验证】" | 同上（`0x4eb830` 改名 `remove_offset`；折叠指 `0x4ebbe0`） |
+| `src/lib.rs:114`（注释） | "原程序还有一趟常量折叠（@0x4eb830），但它不改变数值结果……故本 crate 暂未单列该步骤" | 地址错；且"不改变数值结果"只对**求值**成立，对**进化器打分的输入形状**不成立 ⇒ 改注释时别再说"暂不单列没关系" |
+| `docs/guide/05-武器与技巧.md:257` | "解析成 `sin(空)^2 * x` = `0` `[观测]`" | 中间结构同 ② 更正（该章不在本轮范围；且这里只有 `[观测]`，可一并升 `[逐位]`） |
+
+### 123.7 门槛读数
+
+| 项 | 读数 |
+|---|---|
+| `python3 tools/check_doc_refs.py` | **rc=0** |
+| `python3 tools/docsec.py check docs/06-verification.md` | 节数 **121**、范围 **1..123**、断号 `[43, 89]`（历史缺口）、**无重复号 / 无冲突标记 / 无空心节 / 无子节重号** |
+| 九章四档计数（`docs/guide` 重跑） | **`[逐位] 61 / [观测] 536 / [推断] 128 / [未知] 81`**，与 `guide/README` 统计表**一致**；02 章 `29/48/12/6`、行数 **407**（与表一致） |
+| 改动范围 | `docs/guide/02-函数与弹道.md`、`docs/21-guide-manual.md`、`docs/06`（本节 + §120.3 一行指针）；**未碰** `src/**`、`tests/**`、`client/**`、`fixtures/**`、护栏/门槛 |
+
+### 123.8 复跑命令（全部自己曾跑过；工具都在仓库里）
+
+```bash
+# ① 解析器 0x4ed670 / 求值器 0x4eb9d0：真侧 ↔ 我方侧
+printf '[parse]\nA|-x^2\nB|sin^2(x)\nC|1+2*3-4/5^6\nD|2*3+1\nK|(-x)^2\nM|1+2+3\n' > /tmp/p.txt
+.reference/venv/bin/python tools/bitexact_run.py real --mode parse --in /tmp/p.txt --out /tmp/pr.txt
+CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target \
+  .reference/venv/bin/python tools/bitexact_run.py ours --mode parse --in /tmp/p.txt --out /tmp/po.txt
+# ⚠️ 逐位比较只认 tag 流 + CONST 位型：非 CONST token 的 value 字段不是契约（§120.2① 已声明）
+printf '[eval]\nx3|-x^2|0x4008000000000000|0x0000000000000000|0x0000000000000000\n' > /tmp/e.txt
+.reference/venv/bin/python tools/bitexact_run.py real --mode eval --in /tmp/e.txt --out /tmp/er.txt   # → 0xc022000000000000
+
+# ② 静态：两个函数的边界/调用/归属
+.reference/venv/bin/python tools/addr_probe.py fde     0x4eb830   # 0x4eb830..0x4eb920 (0xf0)
+.reference/venv/bin/python tools/addr_probe.py dis     0x4eb830   # 首 token∈{ADD,SUB} / 末 token=CONST / 两次 memmove
+.reference/venv/bin/python tools/addr_probe.py callers 0x4eb830   # call rel32=0；槽 0x9bc250 → 0x51d312
+.reference/venv/bin/python tools/addr_probe.py callers 0x4ebbe0   # 7 处 = 3 自递归 + 4 外部（0x51b440 / 0x51d080）
+.reference/venv/bin/python tools/addr_probe.py locs    0x4ebbe0   # src/math_function.rs:184:24
+
+# ③ 直调两个函数（与 tools/bitexact_run.py 同一 gwemu 装载器；Vec<Token> = {cap,ptr,len}，token = {tag:u64,value:f64}）
+.reference/venv/bin/python - <<'PY'
+import os, sys, struct
+sys.path.insert(0, os.path.join(os.getcwd(), ".reference/analysis-repo/analysis"))
+from gwemu import Gw
+ADD,SUB,MUL,POW,SIN,CONST,X,Y = 3,4,6,8,14,17,0,1
+
+def call(fn, toks):
+    g = Gw(); inp = g.make_vec(toks)
+    if fn == 0x4eb830:                      # remove_offset: rdi = &mut Vec
+        out = inp
+        args = [inp]
+    else:                                   # simplify_recursive: (out, in, &mut idx)
+        out = g.alloc(24); g.wq(out,0); g.wq(out+8,8); g.wq(out+16,0)
+        idx = g.alloc(8); g.wq(idx,0)
+        args = [out, inp, idx]
+    try:                                    # 见本节末尾注：call 返回时读 rax=0xdeadbeef 会抛，结果早就写回了
+        g.call(fn, args)
+    except Exception:
+        pass
+    ptr, ln = g.rq(out+8), g.rq(out+16)
+    return [(struct.unpack("<Q", g.rd(ptr+i*16,8))[0],
+             struct.unpack("<d", g.rd(ptr+i*16+8,8))[0]) for i in range(ln)]
+
+print("remove_offset  [ADD,VAR_X,C(3)]        ->", call(0x4eb830, [(ADD,0),(X,0),(CONST,3.0)]))
+print("remove_offset  [MUL,VAR_X,C(3)]        ->", call(0x4eb830, [(MUL,0),(X,0),(CONST,3.0)]))
+print("fold           [MUL,C(2),C(3)]         ->", call(0x4ebbe0, [(MUL,0),(CONST,2.0),(CONST,3.0)]))
+print("fold           [ADD,C(1),MUL,C2,C3]    ->", call(0x4ebbe0, [(ADD,0),(CONST,1.0),(MUL,0),(CONST,2.0),(CONST,3.0)]))
+print("fold           [ADD,VAR_X,C(3)]        ->", call(0x4ebbe0, [(ADD,0),(X,0),(CONST,3.0)]))
+PY
+```
+
+（注：函数 `ret` 回 `0xdeadbeef` 后，`emu.call` 末尾会去 `rq(rax)` 读那个哨兵地址而抛 `UC_ERR_READ_UNMAPPED`；**结果是抛之前就已经写回 Vec 的**，所以上面 `try/except` 掉即可 —— 本轮就是这么做读的。）
+
+### 123.9 遗留 / 需 lead 裁决
+
+1. **`remove_offset` / `simplify_recursive` 两条原版函数我方还没有**（`fixtures/function_coverage.tsv` 已登记 F3）。
+   收口建议顺序：先补 `0x4ebbe0`（折叠，判据用 123.4(c) 的输入输出 token 位型），再补 `0x4eb830`（去偏移，判据用 123.4(b) 的表）；
+   两者都只被 `0x51b440` / `0x51d080` 调用，**动之前要先追** 这两个函数里"折叠结果拿去干什么"（喂 `score_function`？还是只为了显示），
+   否则补了也不知道该接在哪。**本轮没动 `src/`。**
+2. **`0x4ebbe0` 的名字仍是推断**（预测 `simplify_recursive`、`src/math_function.rs:184:24` 单锚）。要升档需要 Windows/arm64 侧的一对一符号锚。
+3. **进化路径的数值差异未验证**：折叠会改变喂给打分的 **token 形状**（可能连带 `esi`/`score`）。要判"我方 AI 与原版 AI 是否同分"，
+   得拿真二进制的 `calculate_functions{,_old}` 在固定输入上对拍 —— 这是下一件**独立**的活（steam 原版 + unicorn 两路）。
+4. **同一谎还在 5 处**（123.6 的表），其中 `src/lib.rs:114` 的注释**改它会动 `src/`**，需 lead 派活用指令级证据改；`docs/01`/`02`/`03`/`guide/05` 属纯文档。
+5. **本轮范围外但顺手记下**：`guide/02 §10` 那格原本有重复两遍的「（注意：`sin(空)` = `sin(0)` = 0，整式的值恒 0）」——
+   应是某次合并的残留，本轮随 ② 一起清掉（改为一条 `sin(2)` 更正说明）。
