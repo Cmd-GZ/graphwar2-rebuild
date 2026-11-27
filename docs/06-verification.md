@@ -21882,7 +21882,7 @@ T37（§85）判出 **341 条 `S-self`**；T46 换 19（§96）、T59 换 50（�
   **首 token 必须是 tag 3/4（`ADD`/`SUB`）**；`0x4eb878/0x4eb87b/0x4eb87e` 三句 `xorps` 后 `0x4eb887 call 0x4eb9d0`（**`x=y=dy=0` 下试算，返回值丢弃**，
   只读回 `[rsp]` 里的消费计数 `0x4eb88c mov r13,[rsp]`）；`0x4eb890/0x4eb894` 要求消费到 `len−1`；`0x4eb899 cmp dword [r12+rbp],0x11` 要求**末 token 是 CONST**；
   最后两次 `call r15`（`0x4eb8c0`/`0x4eb8d8`，`memmove`）把首尾两个 token 挤掉、`[r14+0x10]` 递减。
-  **全程没有任何"把算出的 f64 写成一个 CONST token"的写点** ⇒ 它不可能做常量折叠。
+  **全程没有任何"把算出的 f64 写成一个 CONST token"的写点**（整个函数体里唯一出现 `0x11` 的地方就是 `0x4eb899` 那条 **`cmp`**）⇒ 它不可能做常量折叠。
 - **调用图**：`call rel32` = **0**；唯一引用是**重定位槽 `0x9bc250`** 的使用点 **`0x51d312`**（在 `0x51d080` = `GraphwarFunctionEvolutionator::calculate_functions_old`，
   `fixtures/callgraph_roles_control.tsv:352`），而且**能被跳过**：`0x51d2fc cmp byte ptr [rax+0x5c],0` + `0x51d308 jne 0x51d318` 跳过后才到 `0x51d312`。
   ⇒ 与 T74 的读数一致，本轮补上**函数名**与**条件分支**两条。
