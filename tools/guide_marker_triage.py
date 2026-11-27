@@ -60,6 +60,7 @@ r"""guide_marker_triage.py —— `docs/guide/**` 的 `[逐位]` 标记分档台
 
 ```bash
 python3 tools/guide_marker_triage.py --self-test                 # 正/负对照，必须全 PASS
+python3 tools/guide_marker_triage.py --self-test --rev <c>       # 同上；回改前后都能跑（对照行会把标记还原再判）
 python3 tools/guide_marker_triage.py --emit /tmp/triage.tsv      # 出当前工作树的台账
 python3 tools/guide_marker_triage.py --rev <pre-change-commit> \
         --emit /tmp/triage-before.tsv                            # 回改之后复算（取旧版本）
@@ -67,6 +68,7 @@ python3 tools/guide_marker_triage.py --apply --rev <c> --dry-run # 只打印将�
 ```
 
 `--rev` 让台账**在回改之后仍可复算**：改完标记再跑，分母就变了，台账无法核对。
+`--self-test` 两种状态都能跑：它先把对照行里的 `[观测]`/`[推断]` 还原成 `[逐位]` 再判（比的是证据形态）。
 `--apply` 只做两件事：`O` → 把该处 `[逐位]` 换成 `[观测]`；`I` → 换成 `[推断]` 并补"（缺：…）"。
 `T`/`U`/`M` 一个字符都不动。
 
@@ -289,6 +291,15 @@ HOW_TO_UPGRADE = {
 # key = "文件名:行号"（行号取自 --rev 的那一版；回改只换标记不改行数 ⇒ 行号稳定）
 OVERRIDES: dict[str, tuple[str, str, str]] = {
     # —— 过松：自动判据把"字面量/逐字节"算成 T，但该条的结论本身是结构/顺序级
+    # —— 过严：结论本身就是一个值、且给了二进制里的编码 ⇒ 按 R1 补回 T
+    "06-时钟与回合推进.md:18": ("T", "T2b",
+        "结论 = 一 tick = 16 666 666 ns；证据 = `0x519840` 的 `add eax,0xfe502a` —— 立即数 `0xfe502a` "
+        "读出来就是 16666666，与所写值逐字节相等（R1）。原判 O 时漏了'结论本身就是这个值'"),
+    "06-时钟与回合推进.md:40": ("T", "T2b",
+        "同上（`0xfe502a` 立即数 = 16666666）；本条结论就是该值与其截断性质 ⇒ R1"),
+    "07-联机协议.md:65": ("T", "T2b",
+        "结论 = 读侧上限 4096；证据 = `cmp w24,#1,lsl #12` —— 编码 `1<<12` 就是 4096（R1）。"
+        "与 `07:66`（写侧 65535，只给函数地址、没给编码）判 O 的区别正在这里"),
     # —— 过严：结论本身就是"字节事实"（偏移 + 长度 + 内容都给了）⇒ 补回 T
     "01-对局规则.md:286": ("T", "T2b",
         "结论 = 载荷恰好 1 个字段；证据 = `mov r9d,1` 立即数 + `.rodata` 的名字串内容"
@@ -373,8 +384,8 @@ POSITIVE_CONTROLS = [
      "只有指令地址 + 读懂了它发什么事件，无值级比较结果"),
     ("03-关卡与战役.md", "全部 21 行：`S`/`C` 与 385 份回放的 `R`", "O",
      "两路证据交叉 + 回放 21/21 = 观测（README §2 第三个示例）"),
-    ("07-联机协议.md", "arm64 `0x45c590 cmp w24,#1,lsl #12`", "O",
-     "只有指令地址 + 编码方式（`1<<12`），没有与真二进制输出的值级对拍结果"),
+    ("06-时钟与回合推进.md", "`0x51b7cf cmp $0x19`", "O",
+     "引了立即数 `0x19`(=25)，但本条结论是'AI 每代开头查一次、与代数跑满共用出口'（控制流）⇒ R4"),
 ]
 
 
@@ -438,9 +449,17 @@ def self_test(rev: str | None) -> int:
         in_fence = fence_mask(lines)
         hits = 0
         for i, line in enumerate(lines):
-            if MARKER not in line or needle not in line:
+            if needle not in line:
                 continue
-            cls, rule, why = classify(block_for(lines, i, in_fence), "")
+            # 回改之后这一行的标记已经变成 [观测]/[推断]；正对照要比的是**证据形态**，
+            # 所以先把标记还原成 [逐位] 再判（这样同一套对照在回改前后都能跑）。
+            probe = lines[:]
+            if MARKER not in line:
+                restored = re.sub(r"`\[(观测|推断)\]`(（缺：[^）]*）)?", "`" + MARKER + "`", line)
+                restored = re.sub(r"\[(观测|推断)\](（缺：[^）]*）)?", MARKER, restored)
+                probe[i] = restored
+                in_fence = fence_mask(probe)
+            cls, rule, why = classify(block_for(probe, i, in_fence), "")
             hits += 1
             ok = cls == want
             print(f"  {'PASS' if ok else 'FAIL'} {fname}:{i+1} [{rule}]->{cls} 期望{want} :: {reason}")
@@ -504,7 +523,7 @@ def emit(rev: str | None, out_path: str | None) -> int:
     return 0
 
 
-MISSING_NOTE = "（缺：与真二进制对拍的值级证据）"
+MISSING_NOTE = "（缺：可复核指针 —— 地址 / `.rodata` 偏移 / 样本数）"
 DUP_RE = re.compile(r"`\[(观测|推断)\]`(\s*[+/,、]\s*)`\[\1\]`")
 
 
@@ -528,11 +547,15 @@ def apply(rev: str | None, dry_run: bool) -> int:
             if MARKER not in line:
                 print(f"  ！{name}:{r['line']} 已不含 [逐位]，跳过", file=sys.stderr)
                 continue
+            # 标记可能被反引号包住（`` `[逐位]` ``）：注记要加在反引号**外面**
+            quoted = "`" + MARKER + "`"
             if r["class"] == "O":
                 new = line.replace(MARKER, "[观测]")
                 changed["O"] += 1
             else:
-                new = line.replace(MARKER, "[推断]" + MISSING_NOTE, 1)
+                new = line.replace(quoted, "`[推断]`" + MISSING_NOTE, 1)
+                if MARKER in new:      # 不是被反引号包住的形式
+                    new = new.replace(MARKER, "[推断]" + MISSING_NOTE, 1)
                 changed["I"] += 1
             new = DUP_RE.sub(lambda m: f"`[{m.group(1)}]`", new)
             lines[i] = new
