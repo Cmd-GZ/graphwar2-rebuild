@@ -19807,6 +19807,222 @@ A–E 分布：`A 89 / B 41 / C 0 / D 11 / E 0`（`B` = 档位不匹配或真错
 「物证」列为准**：那 12 条里凡是被后续轮次修掉的，把台账判定改成"已修复（谁/哪轮）"即可，不要删行。
 ## 113. T62：`game_client` 的 19 条 + `play_screen_control` 的 6 条 F3 —— **21 条落成独立函数**（两模块 F3 缺口 **19/36 → 0/36**、**6/10 → 4/10**），函数级复原率 **249/527 → 270/527（51.2%）**（2026-11-27，任务 T62 / 分支 `agent/f3-game-client`）
 
+台账（先于本节单独提交）：[`fixtures/game_client_anchors.tsv`](../fixtures/game_client_anchors.tsv)（21 条已落 + 4 条未落）。
+本节所有数字都是本机可复跑的，命令在 §113.8。
+
+### 113.1 起点读数与任务书**不一致**（任务书的前提被证伪）
+
+任务书写的是"函数级复原率 214/527（F1 214 / F2 139 / F3 174）"。本分支起点**实测是 249/527**：
+
+```text
+$ python3 tools/function_coverage.py --stats        # 本节落码前的输出
+  F1 有实现+有物证    249  ( 47.2%)
+  F2 有实现+无物证    105  ( 19.9%)
+  F3 只有文件/骨架    173  ( 32.8%)
+```
+
+原因不是判据变了，而是**生成物过期**：`fixtures/function_coverage.tsv` 最后一次重算是 T55 的
+`69dddae`，之后 T57（`_scaffold` 语义搬家 **402 个函数**，`docs/06` §104）、T58、T59 已把一批
+`scaffold-only` 的 F2 变成 F1，但**没有回写这张表**。⇒ 本轮按纪律重跑生成物，一并带进来
+**34 条 F2→F1 + 1 条 F3→F1（`0x4bd430`，与本任务无关）**；**本任务自己的贡献 = 21 条 F3→F1**。
+读者若要复核"我这个任务改了多少"，请按 **21** 算，不要按 249→270 之外的差额算。
+
+| 口径（分母 527） | 起点（本分支实测） | 终点（本节提交） | Δ |
+|---|---|---|---|
+| F1 有实现 + 有物证 | **249**（47.2%） | **270**（51.2%） | **+21** |
+| F2 有实现 + 无物证 | 105 | 105 | 0 |
+| F3 只有文件/骨架 | **173** | **152** | **−21** |
+| M2 = F1+F2（有对应代码的上限） | 354（67.2%） | 375（71.2%） | +21 |
+
+单模块（`tools/function_coverage.py --module <file>`）：
+
+| 模块 | 起点 F1/F2/F3 | 终点 F1/F2/F3 | 说明 |
+|---|---|---|---|
+| `graphwar_game_client.rs`（36 行） | 6 / 11 / **19** | **25 / 11 / 0** | 19 条 F3 **全部落地**；剩 11 条 F2 里 4 条是 `setup_control` 的 hyb、2 条是 `process`/`new` 的跨模块同名、2 条是 `_scaffold`-only、3 条是 `0x3d7380`/`0x517690`/`0x518400` |
+| `graphwar_play_screen_control.rs`（10 行） | 1 / 3 / **6** | **3 / 3 / 4** | 6 条里落 2 条（`enable_replay_buttons` / `disable_replay_buttons`），剩 4 条见 §113.6 |
+
+### 113.2 落成的 21 条（vaddr｜真名｜FDE（字节）｜语义｜档位）
+
+真名与 `Location` 一律取自 `fixtures/boundary_audit.tsv`（`name_src=v2唯一锚` 是符号表真名，
+`hyb:*` 是结构指纹预测的候选名，**不当结论**）；FDE 与字节数取自 `tools/addr_probe.py fde`。
+
+**A. `graphwar_game_client.rs` 的 19 条**
+
+| vaddr | 真名 | FDE（字节） | 语义（一句话） | 档位 |
+|---|---|---|---|---|
+| `0x516450` | `GraphwarGameClient::get_module`（`hyb:推断`） | `0x516450..0x5164ab`（0x5b） | `borrow` 模块容器 → `get::<GraphwarTickHandler>()` → `unwrap` → 返回句柄 | 观测 |
+| `0x5164b0` | 同上（`hyb:推断`） | `0x5164b0..0x51650b`（0x5b） | 与上条逐条同形，`get::<GraphwarGameRecorder>()` | 观测 |
+| `0x516510` | `GraphwarGameClient::fire_function`（`v2唯一锚`） | `0x516510..0x51696e`（0x45e） | 先把函数文本转给 `0x516ad0`，再对每个「当前回合且**非**电脑玩家」push `FunctionFireRequest`(32)`{player}` | 观测 |
+| `0x516ad0` | `GraphwarGameClient::update_function`（`v2唯一锚`） | `0x516ad0..0x516fd0`（0x500） | 对每个「当前回合且非电脑玩家」push `FunctionUpdateRequest`(34)`{String, player}` | 观测 |
+| `0x516fd0` | `GraphwarGameClient::wait_for_players`（`v2唯一锚`） | `0x516fd0..0x5172c5`（0x2f5） | **阻塞轮询**：没等到本地 player 就 `process` 一帧 + `sleep(1 ms)`，直到查到 | 观测 |
+| `0x5172d0` | `GraphwarGameClient::send_chat_message`（`v2唯一锚`） | `0x5172d0..0x51748d`（0x1bd） | **没连接 ⇒ 一条都不发**；已连接 ⇒ push `ChatMessageRequest`(70)`{entity_id, message}` | 观测 |
+| `0x517490` | `GraphwarGameClient::request_lock_change`（`v2唯一锚`） | `0x517490..0x5175ac`（0x11c） | 读 `GameStateManager+0x136` 那个 bool，**取反**后 push `LockRequest`(68)`{lock}` | 观测（字段含义推断） |
+| `0x5175b0` | `GraphwarGameClient::request_game_name_change`（`hyb:推断`） | `0x5175b0..0x517684`（0xd4） | 把 `&str` 复制成 `String`，push `GameNameRequest`(22)`{game_name}` | 观测 |
+| `0x515590` | `GraphwarBackend::start_client_to_local_server`（`hyb:高置信`） | `0x515590..0x515996`（0x406） | 8 步编排：前置守卫 → 装配事件 → 重置处理器 → 建 recorder → connect → 装 `self+0x1e0` → resubscribe → 发 `GameNameRequest` | 观测（1 步语义推断） |
+| `0x5159a0` | `GraphwarBackend::start_client_to_remote_server`（`hyb:高置信`） | `0x5159a0..0x515b24`（0x184） | 与上条**共尾**，少两道守卫与那条 `GameNameRequest` | 观测 |
+| `0x4d8a00` | —（`v2` 无名） | `0x4d8a00..0x4d8af4`（0xf4） | `remove_soldier_request_event` **实例化 B**：`{tag\|17, i32}` push | 观测 |
+| `0x4d8d30` | — | `0x4d8d30..0x4d8e24`（0xf4） | `change_team_request_event` 实例化 B：`{tag\|11, i32}` | 观测 |
+| `0x4d8ff0` | — | `0x4d8ff0..0x4d90e0`（0xf0） | `turn_mode_change_request_event` 实例化 B：`{tag\|20, i32}` | 观测 |
+| `0x4d9270` | — | `0x4d9270..0x4d9364`（0xf4） | `add_soldier_request_event` 实例化 B：`{tag\|16, i32}` | 观测 |
+| `0x4d9370` | — | `0x4d9370..0x4d9464`（0xf4） | `remove_player_request_event` 实例化 B：`{tag\|12, i32}` | 观测 |
+| `0x4d9500` | — | `0x4d9500..0x4d95f0`（0xf0） | `time_mode_change_request_event` 实例化 B：`{tag\|21, i32}` | 观测 |
+| `0x4d95f0` | — | `0x4d95f0..0x4d96e0`（0xf0） | `axis_mode_change_request_event` 实例化 B：`{tag\|18, i32}` | 观测 |
+| `0x3d6080` | `GraphwarReplayPlayer::toggle_pause`（`v2唯一锚`） | `0x3d6080..0x3d619e`（0x11e） | 切 TickHandler 的 `now` 覆盖值：没冻 ⇒ 写成 now；已冻 ⇒ `base += (now−frozen)` 再写回 1e9 哨兵 | 观测 |
+| `0x3d7630` | `GraphwarReplayPlayer::is_paused`（`v2唯一锚`） | `0x3d7630..0x3d76ef`（0xbf） | 返回 `TickHandler+0x28 != 1e9`（= 覆盖值已设） | 观测 |
+
+**B. `graphwar_play_screen_control.rs` 的 2 条**
+
+| vaddr | 真名 | FDE（字节） | 语义 | 档位 |
+|---|---|---|---|---|
+| `0x3d9b50` | `GraphwarPlayScreenControl::enable_replay_buttons`（`v2唯一锚`） | `0x3d9b50..0x3d9e3d`（0x2ed） | 5 个节点置 `(0,0,0,1,1)`（对局控件关 / 回放控件开）⇒ 回放视图 | 观测 |
+| `0x3d9e40` | `GraphwarPlayScreenControl::disable_replay_buttons`（`v2唯一锚`） | `0x3d9e40..0x3da12a`（0x2ea） | 同一批节点置 `(1,1,1,0,0)`（与上条逐项互补） | 观测 |
+
+两条的 `(节点名, 布尔)` 与每一跳地址在 `src/graphwar_play_screen_control.rs` §2 就已有（T30 起），
+本轮补的只是**函数体**：每块 4 跳 `0x4068f0`(clone) → `0x3ab190/0x3ab290`(取节点) →
+`0x4066c0`(`upcast_ref`, len 0xa) → `*0x9ba978`(收一个 bool)。
+
+### 113.3 事件载荷：两条**独立来源**相交（这是本节最硬的一层证据）
+
+本轮每条构造事件的函数，tag 都是函数体里的 `movabs $0x80000000000000NN` / `add $0xNN` **立即数**；
+载荷形状是 `mov`/`movups` 的落位。它们与 `src/_scaffold/protocol.rs` 的 `WIRE_SPEC`
+（**线上真字节**的字段表，`docs/07` §3.3；其中 4 类还拿到过 T53 官服真帧）**逐条对上**：
+
+| 事件 | tag | 二进制里的立即数（指令地址） | 本轮读出的载荷 | `WIRE_SPEC` 字段 | 结论 |
+|---|---|---|---|---|---|
+| `GameNameRequest` | 22 | `0x51763e movabs 0x…16`、`0x5157d3` | `String`（alloc+memcpy 出来的 24 B） | `game_name: Str` | 一致 |
+| `FunctionFireRequest` | 32 | `0x5167a5 add r12,0x21` | 一个 i32 `player` | `player_id: I64` | 一致 |
+| `FunctionUpdateRequest` | 34 | `0x516df6 add r13,0x23` | `String` + i32 `player` | `player_id` + `function` | 一致 |
+| `LockRequest` | 68 | `0x51750b add r15,0x45` | 一个 **bool**（`xor al,1` 之后） | `lock: Bool` | 一致（含取反） |
+| `ChatMessageRequest` | 70 | `0x517371 add r12,0x47` | `String` + i64 `entity_id`（来自 conn_handler `+0x1c`） | `entity_id: I64` + `message` | 一致 |
+| 8×2 请求构造器 | 11/12/16/17/18/20/21 | 21 条各自的 `movabs`（见台账） | `{tag, i32}` | 各自的单字段 | 一致 |
+
+⇒ 这 6 类事件的"发什么"现在有**指令 + 线上字段表**两路相交，不再只是"照着 WIRE_SPEC 编"。
+
+### 113.4 顺带解决 / 更正的旧结论
+
+1. **`graphwar_tick_handler.rs` 的一条 `未知` 有答案了。** 该文件的模块文档写着
+   "`M+0x20`/`M+0x28`（`now` 的覆盖值）…**没有**观测到原版哪个函数把它设成真时间"。
+   那个写入者就是 `0x3d6080` 的 `0x3d611b mov [rbx+0x38],rax` / `0x3d611f mov [rbx+0x40],edx`
+   （`rax/edx` = `call *0x9ba8f8` 取到的时钟）。**`toggle_pause` 就是那个写入者**，
+   解冻臂则把"暂停了多久"加回 base（`0x3d6100 call 0x90cdd0` → `0x3d6110 call 0x90c180`）。
+2. **`docs/16-client.md` §17 的"状态查询 4 条"这条分类进一步作废。** 那 4 条里
+   `0x516450`/`0x5164b0` 本轮读清：它们是 `get_module::<T>` 的**两个单态化**
+   （`0x46aa50` = `GraphwarTickHandler` 的 getter、`0x46aea0` = `GraphwarGameRecorder` 的 getter，
+   `docs/02` §22.3 的 25 模块表），不是"查一次状态"。**`ORIG_FUNCS` 的 `class` 仍是 `StateQuery`**
+   ——`tests/graphwar_game_client.rs` 把"4 条"写死了，本任务不许改 `tests/`，所以只在
+   `src/graphwar_game_client.rs` §12.2 的注释里就地标出这条分类已过时（与 §8 同样处理）。
+3. **`0x516510` 的"语义未解"结案**：它是 `fire` 的落地 —— 先转 `update_function`（`0x51652e call *0x9ba888`），
+   再逐玩家发 `FunctionFireRequest`；判别值走的是 `add r12,0x21`（不是 `movabs`），
+   这就是上一轮"未定位"的原因。
+4. **`0x5172d0` 的"内层 `0x46b180` 未解"结案**：`0x46b180` = `get_module::<GraphwarClientConnectionHandler>`
+   （`docs/02` §22.3 表），所以 `send_chat_message` 是"先查连接模块再发"，
+   而**不是**"直接往队列里塞"——`0x517337 cmp byte [%r14+0x18],0` 那道**连接守卫**是本轮新发现：
+   **没连接时一条事件都不发**（`0x51733c je` 直接走收尾）。
+5. **`wait_for_players` 是阻塞式**（`process` 一帧 + `sleep(1_000_000 ns)` 轮询），
+   不是异步等待；这解释了 `docs/16-client.md` §48 里"帧数与 tick 数对不上"的一类场景。
+6. **`0x3d7380`（`GraphwarReplayPlayer::process`）与 `0x3dcbb0` 仍是 F2**：它们的同名实现在
+   `src/graphwar_game_client.rs:743`（`process` 的定步循环），
+   **是跨模块自由函数同名**⇒ 判据只能给 F2（不是本轮漏做，是 `function_coverage_plan.txt`
+   预注册的 R5c 判法如此）。
+
+### 113.5 为什么这 21 条算 F1，而不是"又一批 register-only"
+
+`tools/function_coverage.py` 的判据是**预注册**的（`fixtures/function_coverage_plan.txt`）：
+F1 要求 ①能找到**实现函数**、②能**指认**到原版函数（真名 `P1` 或地址引用 `P2`）、③模块档位是
+`逐位`/`观测`。本轮 21 条逐条满足：
+
+* **指认**：**9 条靠真名**（`pin=name` 7 条：`0x516510`/`0x516ad0`/`0x516fd0`/`0x5172d0`/`0x517490`/
+  `0x3d9b50`/`0x3d9e40`，同名且**同 `impl` 类型**；`pin=name-soft` 2 条：`0x3d6080`/`0x3d7630`，类型名被改过）；
+  **12 条靠地址** `P2`（函数 doc 里第一个可复核的 bit 就是 vaddr，机制与 T30 起一直用的那套一致）；
+* **实现**：每条都是**独立 `fn`**，函数体第 1 行写 vaddr，关键指令地址写在行内注释里；
+* **档位**：`graphwar_game_client.rs` / `graphwar_play_screen_control.rs` 在
+  `docs/coverage-matrix.tsv` 里都是 `观测`，够 F1 的门槛。
+
+⚠️ 两条 `ReplayPlayer` 方法拿到的是 `pin=name-soft`（F1，但 `type_check=renamed`）：
+原版真名是 `GraphwarReplayPlayer::toggle_pause`，我方类型叫 `ReplayPlayer`
+（`src/graphwar_replay_player.rs:660`）⇒ **类型名确实被改过**，这条差异是真实的，不是判法噪声。
+
+### 113.6 遗留：`play_screen_control` 的 4 条没落，卡在哪
+
+| vaddr | 真名（`boundary_audit`） | 体量 | 已读到的 | 卡在哪（缺什么） |
+|---|---|---|---|---|
+| `0x3db3e0` | `GraphwarPlayScreenControl::add_player_victory_icon` | `0x1090` = 4240 B、**8 个 panic 锚**（源行 233..256） | 体内 3 组 `0x447e20`/`0x3acb00` 循环 + `0x461100`，前段有 alloc+memcpy | 8 个锚跨源行 233–256 ⇒ 原版源码只有 ~24 行，但**循环体的三层嵌套**（每层一个 `Gd` 句柄 + 一次 `upcast_ref`）没读通；把 `0x447d10`/`0x447e20`/`0x3acb00` 三跳的身份定下来才能写 |
+| `0x3dc470` | `GraphwarPlayScreenControl::update_names_button_texture` | `0x1c0` = 448 B、1 个锚（源行 625） | `HashMap<u8,_>`（表在 `self.0+0x108..0x128`、元素 **0x18** 字节、键是 `self+0x89` 那个字节）；命中后 `0x41ce80` 克隆句柄 → `upcast_ref` → `0x88d750` 判一次 → `call [rax+0x418]`（**gdext 虚调用**） | 最后那一跳是**引擎虚方法**（`rax = [0x9c18f0]` 那个全局 + `+0x14f0` 的字节守卫），成员名与参数都没有静态证据；**缺 frida 侧读一次虚表** |
+| `0x3dc630` | `GraphwarPlayScreenControl::update_view_function_button_texture` | `0x1c0` | 与 `0x3dc470` 同形，键/表偏移不同 | 同上 |
+| `0x522070` | —（`v2` 无名） | `0x480` = 1152 B、5 个锚 | 取 5 个动作节点（`TimerLabel`/`ViewFunctionButton`/`ShowNames`/`PlayPauseButton`/`YButton`，串池 `0x1c651d…`）+ `player_info_event`；5 处 `unwrap`（槽 `0x9ba870`） | **返回什么**没定（收尾只有 3 次 `0x526d80` + 2 次 `0x520fe0` 的 drop），无名可指 ⇒ 写出来也只能标"推断"，按 §0 第 3 条不写 |
+
+⚠️ 这 4 条**没有**落到源码层，`fixtures/function_coverage.tsv` 里仍是 **F3**（模块 F3 缺口 6 → 4）。
+台账 `fixtures/game_client_anchors.tsv` 表尾把它们单列，写明"未知（未落）"。
+
+### 113.7 门槛（本机实测，命令见 §113.8）
+
+| 项 | 读数 | 判定 |
+|---|---|---|
+| `cargo test --offline` | **1874 passed / 0 failed / 1 ignored**（74 个 test 二进制） | ✅（起点 1853 + 本轮新增 **21 条**单测） |
+| `cargo test --offline --features gdext-bindings` | **2004 / 0 / 1**（74 个二进制） | ✅（起点 1983 + 21） |
+| `coverage_matrix.py --check` | `OK`（可归属 527 / 逐位 89 / 观测 435 / 推断 3；`src_fns` 3589→3691） | ✅（改 `src/` 后已重跑生成物） |
+| `check_doc_refs.py` | rc=**0**（无死链） | ✅ |
+| 三轴 `fire` | **647**（口径：`replay_attrib --drive fire --policy default`，403 份冻结快照） | ✅ 一位未退 |
+| 三轴 `batch` | **647**（`replay_attrib --drive batch --policy default`） | ✅ |
+| 三轴 `batch_conv` | **637**（`batch_conv --policy strict`） | ✅ |
+| `boundary_audit.py --check` | `OK`：527 行 **match 441 / mismatch 0 / multi 86** | ✅ |
+
+### 113.8 复跑命令
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target   # 必须单独一行
+
+# ① 判档（会重写 fixtures/function_coverage.tsv）
+python3 tools/function_coverage.py            # 统计：--stats    单模块：--module graphwar_game_client.rs
+python3 tools/function_coverage.py --stats    # 期望 F1 270 / F2 105 / F3 152
+
+# ② 台账（本文件那个表的来源）
+PY=.reference/venv/bin/python
+$PY tools/addr_probe.py fde 0x516510          # FDE 范围/字节
+$PY tools/addr_probe.py dis 0x516510          # 逐指令（tag 立即数/调用目标/偏移）
+grep -P "^0x516510\t" fixtures/boundary_audit.tsv   # 真名 / name_src / Location 行
+
+# ③ 单测
+cargo test --offline --lib graphwar_game_client      # 34 条（含本轮 18 条）
+cargo test --offline --lib play_screen_control      # 33 条（含本轮 3 条）
+
+# ④ 门槛
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream $PY tools/coverage_matrix.py          # 重跑生成物
+COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream $PY tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py
+$PY tools/boundary_audit.py --check
+SNAP=$PWD/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```
+
+### 113.9 我方差异（诚实清单，`AGENTS.md` §0 第 3/6 条）
+
+1. **接缝是自造的**：21 条里有 17 条的函数体依赖 5 个**我方** trait（`EventQueue` /
+   `ModuleGetter<T>` / `LockChangeEnv` / `ChatEnv` / `TurnPlayerEnv` / `WaitForPlayersHost` /
+   `BackendStartSteps` / `WidgetSink`）。原版没有这些 trait —— 它们是"把函数体真正依赖的那几件事
+   抽出来"的接线层，作用是让语义能被假宿主单测。**判 F1 用的是地址/真名指认，不是这些 trait 的存在。**
+2. **`toggle_pause` 的差值夹 0**：原版 `0x3d6100` 那一跳（`0x90cdd0`）在 `now < frozen` 时有
+   **下溢 panic 路径**（`0x94b340` 收尾前的分支），本层把差值 `saturating_sub` 成 0。可测后果：
+   墙钟倒流时本层不 panic。
+3. **`wait_for_players` 的 1 ms 是推断**：`0x51718d mov $0xf4240,%esi` + `0x517192 call r15`
+   （`r15 = [GOT 0x9bbcf8] = 0x906f70`）—— 立即数 `1_000_000` 与 `%edi = 0` 与
+   `std::thread::sleep(Duration{secs, nanos})` 的实参形态吻合，但 `0x906f70` 的符号**没有**静态证据。
+4. **`0x515590`/`0x5159a0` 有 5 跳身份未定**：`0x44f2b0`（前置守卫）、`0x3d5260`（重置处理器）、
+   `0x469c70`（recorder 的 add）、`0x5215a0` / `0x74b510` / `0x906630`（drop 与 std 侧）。
+   已定的是 `0x517690`/`0x518320`/`0x514d80`。编排**顺序**是观测的，**语义**只有这三跳是确定的。
+5. **两个字段含义是推断**：`GameStateManager+0x136`（当成"房间已锁"）、
+   `ClientConnectionHandler+0x18`/`+0x1c`（当成"已连接"/"本地 entity id"）。
+   `+0x1c` 有**两处独立用法**互证（`wait_for_players` 用它查 player 表；`0x5172d0` 把它当
+   `ChatMessageRequest.entity_id`），所以它的"是 id"比 `+0x18` 的"是连接态"更硬。
+6. **`0x9ba978` 的成员名仍是未知**（`enable_replay_buttons` 那一跳）：只确认"收一个 bool、
+   作用于刚取到的节点"。这条从 T30 就标着，本轮没有新增证据。
+7. **`fixtures/function_coverage.tsv` 的 diff 里 35 行不是本任务的**（见 §113.1）：
+   34 条 `F2→F1` + `0x4bd430` 是 T57/T58/T59 已落地但生成物没重算的，本轮按纪律一并带进来。
 ## 114. T63：`_scaffold` 剩下 **793** 个生产函数的**逐函数归属台账**（A 707 / B 56 / C 17 / D 13）+ 把最后 2 个「装着原版模块方法体」的 `*_class.rs` 搬完（**57 个函数 / 793 → 736**）（2026-11-27，任务 T63 / `task-58`）
 
 > 起点：T49（§97）搬了 4 处 / 41 个函数，T57（§104）搬了 11 处 / 402 个函数 ⇒ `_scaffold` 生产函数
@@ -20259,8 +20475,6 @@ python3 tools/check_doc_refs.py
 | **N-5** | `docs/15:296` | 「见 **§8** 复现脚本」是**悬空引用**：`15-target-life.md` 只有 §1–§5，没有 §8 | 已在更正块里记下并就地给出复跑命令 |
 | **N-6** | T65 台账 `09-08` / `13-07` 两行 | 判 `无物证` **过严**：两条都给了指令 + 地址（`lsl x23,x21,#3` / `mov $0x8,%r14d`；`0x479af0`–`0x479af4`），符合 `观测`（能指到反汇编）而不是"没证据"；缺的只是"当时那次 dump 的原始输出" | 两处补**复跑命令**、档位不降（若日后要更严，应新增一档「有指针但无存档输出」） |
 | **N-7** | T65 §112.5 #6 列的 `docs/14:1050` | 该行的 **401 份**恰好就是**现值**（回放 401 份），**不是**过期读数 ⇒ 抽样误判（那条只需在"历史 385/397"处改，401 处不用改） | 未改，记在此以备核对 |
-| **N-9** | `docs/13-ai.md:127-133`（§4 适应度） | **T65 抽了 docs/13 却判「0 真错」，但这条是真错**：原式 `score = hits*2e6 - 1e6 - V²/100 - …` 且「`hits` 不分敌我、友军惩罚项恒为 0 是死代码」 | **已改**：式改为 `(kills - friendly)*2e6 …`，原句划线保留 + 更正框。依据：`0x51ae21`–`0x51ae69`（同队 `0x51ae51 dec`／异队 `0x51ae62 inc`）、`src/_scaffold/ai_explain.rs:238 hits = kills - friendly`、`docs/147-ai-behaviour.md:20`、`archive/AI.md:3` 横幅、本文件 §107 (a)（T60 已判手册同类错） |
-| **N-10** | `docs/archive/148-guide-manual.md:46,224`（t70 线索） | 档位列写「逐位（**AI 适应度无友军项**）」；`:224` 引 `docs/AI.md` §4「友军惩罚项是死代码」当现行 —— **而被引文件自己的文首横幅就写着"已被证伪"** | **加更正框（正文不动）**，依据同 N-9。另：同一条错还散在 `archive/AI.md:87`（有横幅覆盖）、`archive/ai/74:62`、`77:30`（历史轮记录）—— **未改**，理由写进框里 |
 | **N-8** | T65 §112.4 A-3 的数字 | T65 写「Team2 2170 条里 **2** 条为负（`1782677092`）」。**复现不出 2153/2170**（我测得 5324 条 `PosInfo`：Team1 2681 / Team2 2643；每实体首个位置 2274 条），且反例是 **6 条 / 3 份回放**（多出 `1782674270`、`1782812355`） | 更正框按**我的口径**写（含脚本与逐条坐标），T65 的 2153/2170 标注"口径未写明、复现不出" |
 | **N-9** | `docs/13-ai.md:127-133`（§4 适应度） | **T65 抽了 docs/13 却判「0 真错」，但这条是真错**：原式 `score = hits*2e6 - 1e6 - V²/100 - …` 且「`hits` 不分敌我、友军惩罚项恒为 0 是死代码」 | **已改**：式改为 `(kills - friendly)*2e6 …`，原句划线保留 + 更正框。依据：`0x51ae21`–`0x51ae69`（同队 `0x51ae51 dec`／异队 `0x51ae62 inc`）、`src/_scaffold/ai_explain.rs:238 hits = kills - friendly`、`docs/147-ai-behaviour.md:20`、`archive/AI.md:3` 横幅、本文件 §107 (a)（T60 已判手册同类错） |
 | **N-10** | `docs/archive/148-guide-manual.md:46,224`（t70 线索） | 档位列写「逐位（**AI 适应度无友军项**）」；`:224` 引 `docs/AI.md` §4「友军惩罚项是死代码」当现行 —— **而被引文件自己的文首横幅就写着"已被证伪"** | **加更正框（正文不动）**，依据同 N-9。另：同一条错还散在 `archive/AI.md:87`（有横幅覆盖）、`archive/ai/74:62`、`77:30`（历史轮记录）—— **未改**，理由写进框里 |
@@ -20522,235 +20736,14 @@ PY
 >    后果：master 的 §117.6 第 2 条（`archive/148` 友军项）与第 9 条（401/403）**仍写着"待改"，而这两条当天已分别由 t69（`fe40094`）与 lead（`AGENTS.md:121`）解决** ⇒ 这正是本节 §117.3 批评过的"过时会误导"形态。补法二选一：把 `a8c15a0` 合进来，或在 §117.6 这两行就地加"已修复（谁/哪轮）"。
 > 2. **master 上 §116 与 §118 是同一份 T69 报告的两个版本**（§116 记"新发现 8 条"、§118 记"新发现 10 条"，节号/条数都不同）。这不是本节的内容，但**同一件事在两个标题下有两个数**会让下一个读者判不清该信哪个 ⇒ 建议保留后出的那一版并在另一版加一行"已被 §118 取代"，或合并成一节。
 
-## 118. T69 落地 §112 的审计判决：**18 条逐条改正**（12 条真错 + 6 条引文级）+ **新发现 10 条**（文档错 7 / T65 判决本身错 3）；语料口径钉清「403 = 目录条目 / 401 = 回放」（2026-11-27，任务 `task-63` / 分支 `agent/docs-fix2`）
-台账（先于本节单独提交）：[`fixtures/game_client_anchors.tsv`](../fixtures/game_client_anchors.tsv)（21 条已落 + 4 条未落）。
-本节所有数字都是本机可复跑的，命令在 §118.8。
-
-### 118.1 起点读数与任务书**不一致**（任务书的前提被证伪）
-
-任务书写的是"函数级复原率 214/527（F1 214 / F2 139 / F3 174）"。本分支起点**实测是 249/527**：
-
-```text
-$ python3 tools/function_coverage.py --stats        # 本节落码前的输出
-  F1 有实现+有物证    249  ( 47.2%)
-  F2 有实现+无物证    105  ( 19.9%)
-  F3 只有文件/骨架    173  ( 32.8%)
-```
-
-原因不是判据变了，而是**生成物过期**：`fixtures/function_coverage.tsv` 最后一次重算是 T55 的
-`69dddae`，之后 T57（`_scaffold` 语义搬家 **402 个函数**，`docs/06` §104）、T58、T59 已把一批
-`scaffold-only` 的 F2 变成 F1，但**没有回写这张表**。⇒ 本轮按纪律重跑生成物，一并带进来
-**34 条 F2→F1 + 1 条 F3→F1（`0x4bd430`，与本任务无关）**；**本任务自己的贡献 = 21 条 F3→F1**。
-读者若要复核"我这个任务改了多少"，请按 **21** 算，不要按 249→270 之外的差额算。
-
-| 口径（分母 527） | 起点（本分支实测） | 终点（本节提交） | Δ |
-|---|---|---|---|
-| F1 有实现 + 有物证 | **249**（47.2%） | **270**（51.2%） | **+21** |
-| F2 有实现 + 无物证 | 105 | 105 | 0 |
-| F3 只有文件/骨架 | **173** | **152** | **−21** |
-| M2 = F1+F2（有对应代码的上限） | 354（67.2%） | 375（71.2%） | +21 |
-
-单模块（`tools/function_coverage.py --module <file>`）：
-
-| 模块 | 起点 F1/F2/F3 | 终点 F1/F2/F3 | 说明 |
-|---|---|---|---|
-| `graphwar_game_client.rs`（36 行） | 6 / 11 / **19** | **25 / 11 / 0** | 19 条 F3 **全部落地**；剩 11 条 F2 里 4 条是 `setup_control` 的 hyb、2 条是 `process`/`new` 的跨模块同名、2 条是 `_scaffold`-only、3 条是 `0x3d7380`/`0x517690`/`0x518400` |
-| `graphwar_play_screen_control.rs`（10 行） | 1 / 3 / **6** | **3 / 3 / 4** | 6 条里落 2 条（`enable_replay_buttons` / `disable_replay_buttons`），剩 4 条见 §118.6 |
-
-### 118.2 落成的 21 条（vaddr｜真名｜FDE（字节）｜语义｜档位）
-
-真名与 `Location` 一律取自 `fixtures/boundary_audit.tsv`（`name_src=v2唯一锚` 是符号表真名，
-`hyb:*` 是结构指纹预测的候选名，**不当结论**）；FDE 与字节数取自 `tools/addr_probe.py fde`。
-
-**A. `graphwar_game_client.rs` 的 19 条**
-
-| vaddr | 真名 | FDE（字节） | 语义（一句话） | 档位 |
-|---|---|---|---|---|
-| `0x516450` | `GraphwarGameClient::get_module`（`hyb:推断`） | `0x516450..0x5164ab`（0x5b） | `borrow` 模块容器 → `get::<GraphwarTickHandler>()` → `unwrap` → 返回句柄 | 观测 |
-| `0x5164b0` | 同上（`hyb:推断`） | `0x5164b0..0x51650b`（0x5b） | 与上条逐条同形，`get::<GraphwarGameRecorder>()` | 观测 |
-| `0x516510` | `GraphwarGameClient::fire_function`（`v2唯一锚`） | `0x516510..0x51696e`（0x45e） | 先把函数文本转给 `0x516ad0`，再对每个「当前回合且**非**电脑玩家」push `FunctionFireRequest`(32)`{player}` | 观测 |
-| `0x516ad0` | `GraphwarGameClient::update_function`（`v2唯一锚`） | `0x516ad0..0x516fd0`（0x500） | 对每个「当前回合且非电脑玩家」push `FunctionUpdateRequest`(34)`{String, player}` | 观测 |
-| `0x516fd0` | `GraphwarGameClient::wait_for_players`（`v2唯一锚`） | `0x516fd0..0x5172c5`（0x2f5） | **阻塞轮询**：没等到本地 player 就 `process` 一帧 + `sleep(1 ms)`，直到查到 | 观测 |
-| `0x5172d0` | `GraphwarGameClient::send_chat_message`（`v2唯一锚`） | `0x5172d0..0x51748d`（0x1bd） | **没连接 ⇒ 一条都不发**；已连接 ⇒ push `ChatMessageRequest`(70)`{entity_id, message}` | 观测 |
-| `0x517490` | `GraphwarGameClient::request_lock_change`（`v2唯一锚`） | `0x517490..0x5175ac`（0x11c） | 读 `GameStateManager+0x136` 那个 bool，**取反**后 push `LockRequest`(68)`{lock}` | 观测（字段含义推断） |
-| `0x5175b0` | `GraphwarGameClient::request_game_name_change`（`hyb:推断`） | `0x5175b0..0x517684`（0xd4） | 把 `&str` 复制成 `String`，push `GameNameRequest`(22)`{game_name}` | 观测 |
-| `0x515590` | `GraphwarBackend::start_client_to_local_server`（`hyb:高置信`） | `0x515590..0x515996`（0x406） | 8 步编排：前置守卫 → 装配事件 → 重置处理器 → 建 recorder → connect → 装 `self+0x1e0` → resubscribe → 发 `GameNameRequest` | 观测（1 步语义推断） |
-| `0x5159a0` | `GraphwarBackend::start_client_to_remote_server`（`hyb:高置信`） | `0x5159a0..0x515b24`（0x184） | 与上条**共尾**，少两道守卫与那条 `GameNameRequest` | 观测 |
-| `0x4d8a00` | —（`v2` 无名） | `0x4d8a00..0x4d8af4`（0xf4） | `remove_soldier_request_event` **实例化 B**：`{tag\|17, i32}` push | 观测 |
-| `0x4d8d30` | — | `0x4d8d30..0x4d8e24`（0xf4） | `change_team_request_event` 实例化 B：`{tag\|11, i32}` | 观测 |
-| `0x4d8ff0` | — | `0x4d8ff0..0x4d90e0`（0xf0） | `turn_mode_change_request_event` 实例化 B：`{tag\|20, i32}` | 观测 |
-| `0x4d9270` | — | `0x4d9270..0x4d9364`（0xf4） | `add_soldier_request_event` 实例化 B：`{tag\|16, i32}` | 观测 |
-| `0x4d9370` | — | `0x4d9370..0x4d9464`（0xf4） | `remove_player_request_event` 实例化 B：`{tag\|12, i32}` | 观测 |
-| `0x4d9500` | — | `0x4d9500..0x4d95f0`（0xf0） | `time_mode_change_request_event` 实例化 B：`{tag\|21, i32}` | 观测 |
-| `0x4d95f0` | — | `0x4d95f0..0x4d96e0`（0xf0） | `axis_mode_change_request_event` 实例化 B：`{tag\|18, i32}` | 观测 |
-| `0x3d6080` | `GraphwarReplayPlayer::toggle_pause`（`v2唯一锚`） | `0x3d6080..0x3d619e`（0x11e） | 切 TickHandler 的 `now` 覆盖值：没冻 ⇒ 写成 now；已冻 ⇒ `base += (now−frozen)` 再写回 1e9 哨兵 | 观测 |
-| `0x3d7630` | `GraphwarReplayPlayer::is_paused`（`v2唯一锚`） | `0x3d7630..0x3d76ef`（0xbf） | 返回 `TickHandler+0x28 != 1e9`（= 覆盖值已设） | 观测 |
-
-**B. `graphwar_play_screen_control.rs` 的 2 条**
-
-| vaddr | 真名 | FDE（字节） | 语义 | 档位 |
-|---|---|---|---|---|
-| `0x3d9b50` | `GraphwarPlayScreenControl::enable_replay_buttons`（`v2唯一锚`） | `0x3d9b50..0x3d9e3d`（0x2ed） | 5 个节点置 `(0,0,0,1,1)`（对局控件关 / 回放控件开）⇒ 回放视图 | 观测 |
-| `0x3d9e40` | `GraphwarPlayScreenControl::disable_replay_buttons`（`v2唯一锚`） | `0x3d9e40..0x3da12a`（0x2ea） | 同一批节点置 `(1,1,1,0,0)`（与上条逐项互补） | 观测 |
-
-两条的 `(节点名, 布尔)` 与每一跳地址在 `src/graphwar_play_screen_control.rs` §2 就已有（T30 起），
-本轮补的只是**函数体**：每块 4 跳 `0x4068f0`(clone) → `0x3ab190/0x3ab290`(取节点) →
-`0x4066c0`(`upcast_ref`, len 0xa) → `*0x9ba978`(收一个 bool)。
-
-### 118.3 事件载荷：两条**独立来源**相交（这是本节最硬的一层证据）
-
-本轮每条构造事件的函数，tag 都是函数体里的 `movabs $0x80000000000000NN` / `add $0xNN` **立即数**；
-载荷形状是 `mov`/`movups` 的落位。它们与 `src/_scaffold/protocol.rs` 的 `WIRE_SPEC`
-（**线上真字节**的字段表，`docs/07` §3.3；其中 4 类还拿到过 T53 官服真帧）**逐条对上**：
-
-| 事件 | tag | 二进制里的立即数（指令地址） | 本轮读出的载荷 | `WIRE_SPEC` 字段 | 结论 |
-|---|---|---|---|---|---|
-| `GameNameRequest` | 22 | `0x51763e movabs 0x…16`、`0x5157d3` | `String`（alloc+memcpy 出来的 24 B） | `game_name: Str` | 一致 |
-| `FunctionFireRequest` | 32 | `0x5167a5 add r12,0x21` | 一个 i32 `player` | `player_id: I64` | 一致 |
-| `FunctionUpdateRequest` | 34 | `0x516df6 add r13,0x23` | `String` + i32 `player` | `player_id` + `function` | 一致 |
-| `LockRequest` | 68 | `0x51750b add r15,0x45` | 一个 **bool**（`xor al,1` 之后） | `lock: Bool` | 一致（含取反） |
-| `ChatMessageRequest` | 70 | `0x517371 add r12,0x47` | `String` + i64 `entity_id`（来自 conn_handler `+0x1c`） | `entity_id: I64` + `message` | 一致 |
-| 8×2 请求构造器 | 11/12/16/17/18/20/21 | 21 条各自的 `movabs`（见台账） | `{tag, i32}` | 各自的单字段 | 一致 |
-
-⇒ 这 6 类事件的"发什么"现在有**指令 + 线上字段表**两路相交，不再只是"照着 WIRE_SPEC 编"。
-
-### 118.4 顺带解决 / 更正的旧结论
-
-1. **`graphwar_tick_handler.rs` 的一条 `未知` 有答案了。** 该文件的模块文档写着
-   "`M+0x20`/`M+0x28`（`now` 的覆盖值）…**没有**观测到原版哪个函数把它设成真时间"。
-   那个写入者就是 `0x3d6080` 的 `0x3d611b mov [rbx+0x38],rax` / `0x3d611f mov [rbx+0x40],edx`
-   （`rax/edx` = `call *0x9ba8f8` 取到的时钟）。**`toggle_pause` 就是那个写入者**，
-   解冻臂则把"暂停了多久"加回 base（`0x3d6100 call 0x90cdd0` → `0x3d6110 call 0x90c180`）。
-2. **`docs/16-client.md` §17 的"状态查询 4 条"这条分类进一步作废。** 那 4 条里
-   `0x516450`/`0x5164b0` 本轮读清：它们是 `get_module::<T>` 的**两个单态化**
-   （`0x46aa50` = `GraphwarTickHandler` 的 getter、`0x46aea0` = `GraphwarGameRecorder` 的 getter，
-   `docs/02` §22.3 的 25 模块表），不是"查一次状态"。**`ORIG_FUNCS` 的 `class` 仍是 `StateQuery`**
-   ——`tests/graphwar_game_client.rs` 把"4 条"写死了，本任务不许改 `tests/`，所以只在
-   `src/graphwar_game_client.rs` §12.2 的注释里就地标出这条分类已过时（与 §8 同样处理）。
-3. **`0x516510` 的"语义未解"结案**：它是 `fire` 的落地 —— 先转 `update_function`（`0x51652e call *0x9ba888`），
-   再逐玩家发 `FunctionFireRequest`；判别值走的是 `add r12,0x21`（不是 `movabs`），
-   这就是上一轮"未定位"的原因。
-4. **`0x5172d0` 的"内层 `0x46b180` 未解"结案**：`0x46b180` = `get_module::<GraphwarClientConnectionHandler>`
-   （`docs/02` §22.3 表），所以 `send_chat_message` 是"先查连接模块再发"，
-   而**不是**"直接往队列里塞"——`0x517337 cmp byte [%r14+0x18],0` 那道**连接守卫**是本轮新发现：
-   **没连接时一条事件都不发**（`0x51733c je` 直接走收尾）。
-5. **`wait_for_players` 是阻塞式**（`process` 一帧 + `sleep(1_000_000 ns)` 轮询），
-   不是异步等待；这解释了 `docs/16-client.md` §48 里"帧数与 tick 数对不上"的一类场景。
-6. **`0x3d7380`（`GraphwarReplayPlayer::process`）与 `0x3dcbb0` 仍是 F2**：它们的同名实现在
-   `src/graphwar_game_client.rs:743`（`process` 的定步循环），
-   **是跨模块自由函数同名**⇒ 判据只能给 F2（不是本轮漏做，是 `function_coverage_plan.txt`
-   预注册的 R5c 判法如此）。
-
-### 118.5 为什么这 21 条算 F1，而不是"又一批 register-only"
-
-`tools/function_coverage.py` 的判据是**预注册**的（`fixtures/function_coverage_plan.txt`）：
-F1 要求 ①能找到**实现函数**、②能**指认**到原版函数（真名 `P1` 或地址引用 `P2`）、③模块档位是
-`逐位`/`观测`。本轮 21 条逐条满足：
-
-* **指认**：**9 条靠真名**（`pin=name` 7 条：`0x516510`/`0x516ad0`/`0x516fd0`/`0x5172d0`/`0x517490`/
-  `0x3d9b50`/`0x3d9e40`，同名且**同 `impl` 类型**；`pin=name-soft` 2 条：`0x3d6080`/`0x3d7630`，类型名被改过）；
-  **12 条靠地址** `P2`（函数 doc 里第一个可复核的 bit 就是 vaddr，机制与 T30 起一直用的那套一致）；
-* **实现**：每条都是**独立 `fn`**，函数体第 1 行写 vaddr，关键指令地址写在行内注释里；
-* **档位**：`graphwar_game_client.rs` / `graphwar_play_screen_control.rs` 在
-  `docs/coverage-matrix.tsv` 里都是 `观测`，够 F1 的门槛。
-
-⚠️ 两条 `ReplayPlayer` 方法拿到的是 `pin=name-soft`（F1，但 `type_check=renamed`）：
-原版真名是 `GraphwarReplayPlayer::toggle_pause`，我方类型叫 `ReplayPlayer`
-（`src/graphwar_replay_player.rs:660`）⇒ **类型名确实被改过**，这条差异是真实的，不是判法噪声。
-
-### 118.6 遗留：`play_screen_control` 的 4 条没落，卡在哪
-
-| vaddr | 真名（`boundary_audit`） | 体量 | 已读到的 | 卡在哪（缺什么） |
-|---|---|---|---|---|
-| `0x3db3e0` | `GraphwarPlayScreenControl::add_player_victory_icon` | `0x1090` = 4240 B、**8 个 panic 锚**（源行 233..256） | 体内 3 组 `0x447e20`/`0x3acb00` 循环 + `0x461100`，前段有 alloc+memcpy | 8 个锚跨源行 233–256 ⇒ 原版源码只有 ~24 行，但**循环体的三层嵌套**（每层一个 `Gd` 句柄 + 一次 `upcast_ref`）没读通；把 `0x447d10`/`0x447e20`/`0x3acb00` 三跳的身份定下来才能写 |
-| `0x3dc470` | `GraphwarPlayScreenControl::update_names_button_texture` | `0x1c0` = 448 B、1 个锚（源行 625） | `HashMap<u8,_>`（表在 `self.0+0x108..0x128`、元素 **0x18** 字节、键是 `self+0x89` 那个字节）；命中后 `0x41ce80` 克隆句柄 → `upcast_ref` → `0x88d750` 判一次 → `call [rax+0x418]`（**gdext 虚调用**） | 最后那一跳是**引擎虚方法**（`rax = [0x9c18f0]` 那个全局 + `+0x14f0` 的字节守卫），成员名与参数都没有静态证据；**缺 frida 侧读一次虚表** |
-| `0x3dc630` | `GraphwarPlayScreenControl::update_view_function_button_texture` | `0x1c0` | 与 `0x3dc470` 同形，键/表偏移不同 | 同上 |
-| `0x522070` | —（`v2` 无名） | `0x480` = 1152 B、5 个锚 | 取 5 个动作节点（`TimerLabel`/`ViewFunctionButton`/`ShowNames`/`PlayPauseButton`/`YButton`，串池 `0x1c651d…`）+ `player_info_event`；5 处 `unwrap`（槽 `0x9ba870`） | **返回什么**没定（收尾只有 3 次 `0x526d80` + 2 次 `0x520fe0` 的 drop），无名可指 ⇒ 写出来也只能标"推断"，按 §0 第 3 条不写 |
-
-⚠️ 这 4 条**没有**落到源码层，`fixtures/function_coverage.tsv` 里仍是 **F3**（模块 F3 缺口 6 → 4）。
-台账 `fixtures/game_client_anchors.tsv` 表尾把它们单列，写明"未知（未落）"。
-
-### 118.7 门槛（本机实测，命令见 §118.8）
-
-| 项 | 读数 | 判定 |
-|---|---|---|
-| `cargo test --offline` | **1874 passed / 0 failed / 1 ignored**（74 个 test 二进制） | ✅（起点 1853 + 本轮新增 **21 条**单测） |
-| `cargo test --offline --features gdext-bindings` | **2004 / 0 / 1**（74 个二进制） | ✅（起点 1983 + 21） |
-| `coverage_matrix.py --check` | `OK`（可归属 527 / 逐位 89 / 观测 435 / 推断 3；`src_fns` 3589→3691） | ✅（改 `src/` 后已重跑生成物） |
-| `check_doc_refs.py` | rc=**0**（无死链） | ✅ |
-| 三轴 `fire` | **647**（口径：`replay_attrib --drive fire --policy default`，403 份冻结快照） | ✅ 一位未退 |
-| 三轴 `batch` | **647**（`replay_attrib --drive batch --policy default`） | ✅ |
-| 三轴 `batch_conv` | **637**（`batch_conv --policy strict`） | ✅ |
-| `boundary_audit.py --check` | `OK`：527 行 **match 441 / mismatch 0 / multi 86** | ✅ |
-
-### 118.8 复跑命令
-
-```bash
-export CARGO_HOME=$PWD/.reference/cargo-home
-export CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target   # 必须单独一行
-
-# ① 判档（会重写 fixtures/function_coverage.tsv）
-python3 tools/function_coverage.py            # 统计：--stats    单模块：--module graphwar_game_client.rs
-python3 tools/function_coverage.py --stats    # 期望 F1 270 / F2 105 / F3 152
-
-# ② 台账（本文件那个表的来源）
-PY=.reference/venv/bin/python
-$PY tools/addr_probe.py fde 0x516510          # FDE 范围/字节
-$PY tools/addr_probe.py dis 0x516510          # 逐指令（tag 立即数/调用目标/偏移）
-grep -P "^0x516510\t" fixtures/boundary_audit.tsv   # 真名 / name_src / Location 行
-
-# ③ 单测
-cargo test --offline --lib graphwar_game_client      # 34 条（含本轮 18 条）
-cargo test --offline --lib play_screen_control      # 33 条（含本轮 3 条）
-
-# ④ 门槛
-cargo test --offline
-cargo test --offline --features gdext-bindings
-COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream $PY tools/coverage_matrix.py          # 重跑生成物
-COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream $PY tools/coverage_matrix.py --check
-python3 tools/check_doc_refs.py
-$PY tools/boundary_audit.py --check
-SNAP=$PWD/.reference/replays/gw2-replays-snapshot/replays
-cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
-cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
-cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
-```
-
-### 118.9 我方差异（诚实清单，`AGENTS.md` §0 第 3/6 条）
-
-1. **接缝是自造的**：21 条里有 17 条的函数体依赖 5 个**我方** trait（`EventQueue` /
-   `ModuleGetter<T>` / `LockChangeEnv` / `ChatEnv` / `TurnPlayerEnv` / `WaitForPlayersHost` /
-   `BackendStartSteps` / `WidgetSink`）。原版没有这些 trait —— 它们是"把函数体真正依赖的那几件事
-   抽出来"的接线层，作用是让语义能被假宿主单测。**判 F1 用的是地址/真名指认，不是这些 trait 的存在。**
-2. **`toggle_pause` 的差值夹 0**：原版 `0x3d6100` 那一跳（`0x90cdd0`）在 `now < frozen` 时有
-   **下溢 panic 路径**（`0x94b340` 收尾前的分支），本层把差值 `saturating_sub` 成 0。可测后果：
-   墙钟倒流时本层不 panic。
-3. **`wait_for_players` 的 1 ms 是推断**：`0x51718d mov $0xf4240,%esi` + `0x517192 call r15`
-   （`r15 = [GOT 0x9bbcf8] = 0x906f70`）—— 立即数 `1_000_000` 与 `%edi = 0` 与
-   `std::thread::sleep(Duration{secs, nanos})` 的实参形态吻合，但 `0x906f70` 的符号**没有**静态证据。
-4. **`0x515590`/`0x5159a0` 有 5 跳身份未定**：`0x44f2b0`（前置守卫）、`0x3d5260`（重置处理器）、
-   `0x469c70`（recorder 的 add）、`0x5215a0` / `0x74b510` / `0x906630`（drop 与 std 侧）。
-   已定的是 `0x517690`/`0x518320`/`0x514d80`。编排**顺序**是观测的，**语义**只有这三跳是确定的。
-5. **两个字段含义是推断**：`GameStateManager+0x136`（当成"房间已锁"）、
-   `ClientConnectionHandler+0x18`/`+0x1c`（当成"已连接"/"本地 entity id"）。
-   `+0x1c` 有**两处独立用法**互证（`wait_for_players` 用它查 player 表；`0x5172d0` 把它当
-   `ChatMessageRequest.entity_id`），所以它的"是 id"比 `+0x18` 的"是连接态"更硬。
-6. **`0x9ba978` 的成员名仍是未知**（`enable_replay_buttons` 那一跳）：只确认"收一个 bool、
-   作用于刚取到的节点"。这条从 T30 就标着，本轮没有新增证据。
-7. **`fixtures/function_coverage.tsv` 的 diff 里 35 行不是本任务的**（见 §118.1）：
-   34 条 `F2→F1` + `0x4bd430` 是 T57/T58/T59 已落地但生成物没重算的，本轮按纪律一并带进来。
-### 114.10 本节写完之后发生的变化（外部轮次追记，2026-11-27 当天）
-
-> 这一小节存在的理由：§114.4 的 12 条真错里，**有一条在本节写完的同一小时内就被别人修掉了**。
-> 按 §114.9 的约定，台账行不删、只加状态；这里把"已修复 / 仍待派"记清楚，避免下一个读者拿旧结论去重复劳动。
-
-| # | 本节条目 | 现状 | 证据 |
-|---|---|---|---|
-| 1 | §114.6 第 9 条（401/403 口径） | **已在根文档层面统一**：`AGENTS.md:121` 现写「这 **401 份回放的冻结快照**（目录里 **403 个条目** = 401 份回放 + `MANIFEST.tsv` + `SHA256SUMS`；**别说"403 份回放"**）」；t69 亦把同一条写进其 §113 | `grep -n '401 份回放的冻结快照' AGENTS.md`（master 侧当前版本）；`git log origin/agent/docs-fix2` 的最新两个提交 |
-| 2 | §114.4 **A-12**（`docs/archive/148:46`「逐位（AI 适应度无友军项）」） | **已修复（t69，不在本节范围）**：`docs/archive/148` 正文一字不改，只加更正框；同批 t69 还独立抓到**同源错** `docs/13-ai.md` §4（T65 抽了 docs/13 却判"0 真错"）并一并改正 | t69 分支 `agent/docs-fix2` 的 `c923923`（在 `bc4edea` 之上）；本审计的指令级判据 `0x51ae51 dec eax` / `0x51ae62 inc eax` 与 t69 的独立复核一致（两条路径同一结论） |
-| 3 | §114.4 **A-4 / A-5**（`docs/162:3,4` 的 `14/2/6/0` + `226 passed`） | **仍待派**：`docs/162` 在 `docs/` 根下，**不在 t69 的可写范围**（t69 只许改 `docs/07`–`docs/20` + `docs/archive/**` + `docs/06`）⇒ 需要 lead 另派或下一轮顺手改 | 判据已备好：`client/tools/assemble_check.gd` 的 `TIER_TALLY = {19,2,1,0}` + 22 个逐槽 `WIRED_TIER`（`docs/161:3` 的头部读数与之一致） |
-| 4 | §114.4 其余 9 条（`docs/153`/`154` 的 633 与 88/439/0、`docs/159` 的 2,745、`docs/150` 的两处 call 地址、`docs/161:149`、`docs/archive/145:204`） | **仍待派**（本节只审计不改；台账里每行都带"建议改法"） | `fixtures/source_audit_docs3.tsv` 对应行 |
-| 5 | §114.5 的 13 处引文级真错 | **仍待派**；建议把 `tools/doc_cite_check_docs3.py` 接进合并前机器检查（对新增的「地址+指令」行跑一次） | 该脚本一条命令可复跑 |
-
-> 口径提醒（本审计与 t69 两次独立复算的交叉确认）：**"401 份回放"是回放数，"403"是目录条目数**；
-> 本批里 `docs/150`/`docs/158`/`docs/archive/155` 写 **401 是对的**，而 `docs/06` §112.4 B-6 与旧版 `AGENTS.md` 的"403 个文件"是按条目数算的。
+> **T69 合并修复记录（2026-11-27，分支 `agent/docs06-repair`）—— 上面第 2 条的前提有误，已修。**
+> `§118` **不是**"T69 报告的另一版本"，而是 **T62 那节（原 `§113`）的正文被手工合并搬到了文末**：
+> 小节号被改成 `118.x`、标题被误套成 T69 的标题（"新发现 10 条"只出现在**标题**里），
+> 正文与 `8c40a34` 的 `§113` **相似度 90%**、并引 `fixtures/game_client_anchors.tsv` 与
+> `game_client`/`play_screen_control` 的 21 条 —— 全是 T62 的内容。同一次手工合并还造成另外两处损坏：
+> **① master 的 `§113` 只剩标题行（正文 217 行丢失）；② `§116.3` 的 `N-9`/`N-10` 两行重复了两遍。**
+> **已修**：`§113` 正文按 `8c40a34` **逐行恢复**（脚本校验与修复前相同）、删除 `§118`、
+> `N-9`/`N-10` 去重并把 `N-1..N-10` 排回正确顺序。修完：小节 **1..117 连续**、`check_doc_refs.py` rc=0。
+> 上面第 1 条（`§117.10` 没进 master）**成立**，但那属于 T70 节的内容，**未动**，仍待 lead 处理。
+> 另：`§117.6` 第 2/9 条写"待改"的三处（`archive/148` 友军项、401/403 口径）**当天已修**
+> （t69 `fe40094` / lead `AGENTS.md`），按 `AGENTS.md` §0.6 建议 lead 或 t70 就地加"已修复（谁/哪轮）"。
