@@ -1,0 +1,62 @@
+# fixtures/controller_migration2_ledger.tsv —— 控制器迁回 Rust **第二批**逐段台账
+# （任务 T58 / `task-56`，2026-11-27；规格 = lead 任务书，依据 `docs/06` §90 的 C 档清单）
+#
+# 为什么要这份台账：`AGENTS.md` §0.4 —— 原版的界面控制器在 **Rust** 里，`client/src/**.gd` 是仿制品；
+# 仿制品最坏的地方不是"画得不像"，而是**把同一条规则在 GDScript 里又写了一遍**（同一规则两个真相源，
+# Rust 侧修好了 `.gd` 不会跟着变）。T35 审计（`docs/06` §90）从 `client/src/` 14 000 行生产代码里
+# 判出 C 档 **4 941 行 / 27 段**，并给了"最该先搬的 10 段"排序。第一批（T31/`docs/06` §81）只做了
+# 第 7 项（对局屏流程状态机），本批做第 **2 / 4 / 8 / 9** 项（audio / expr / frame / color 四段最独立）。
+#
+# 口径：
+#   * 行号 = **改前**（本分支 HEAD 的 `client/src/...`，四份文件 400 + 229 + 175 行 + `play_screen.gd` 配色段）；
+#     改动后行数以 `git diff --stat` 为准；
+#   * 地址一律 **ELF vaddr**（`AGENTS.md` 口径；Ghidra/REA = 本表 + 0x100000）；
+#   * `verdict` 三种：`move`（搬进 Rust）/ `keep`（留 .gd，写清理由）/ `partial`（搬一部分）；
+#   * `evidence` 四档 `逐位` / `观测` / `推断` / `未知`；外加两个非档位标记：
+#     `自造`（本项目自己的选择，**不是**复原结论）与 `引擎`（Godot 侧 API/节点属性/资源，原版也在引擎侧）。
+#
+# 判据（沿用 T31 规格 §3①）：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；
+# 纯视图（节点属性/颜色/字号/动画表现/资源加载）不搬 —— 搬了只是把引擎侧代码在 Rust 里再抄一遍。
+#
+# 统计（本表 36 行）：move 24 段 / partial 5 段 / keep 7 段。
+# 落成 4 个 scaffold 出口（`src/_scaffold/`，原版没有这些类，只做"取值/规则"出口）：
+#   `GwAudioControl`（audio_control_class.rs）、`GwMathExpr`（math_expr_class.rs）、
+#   `GwStreamBuffer`（stream_buffer_class.rs）、`GwColorManager`（color_manager_class.rs）。
+#
+# id	file	lines_pre	segment（这段在判断什么）	rust_side（文件:行 / 函数）	evidence	verdict	moved_to	missing_if_kept
+A01	gw_audio.gd	1-38	文件头"原版事实表 + 设计边界"（5 个 mp3、humm、音量、静音、槽位）	src/graphwar_audio_control.rs:11-113 模块文档 §1-§6	逐位	keep	—	这是**给人读的对照表**；搬进 Rust 只会变成第二份注释。表格里的数字在 A02/A03/A04 三行单独搬
+A02	gw_audio.gd	44-51	`SLOT_VOLUME_DB` 5 个槽的音量（-15/-15/-15/0/-5）	src/graphwar_audio_control.rs:167 `SoundSlot::volume_db`（+ :189 EFFECT_VOLUME_DB / :191 SOLDIER_VOLUME_DB / :193 UNPOP_VOLUME_DB）	逐位（arm64 `fmov s0,#-15.0` / `#-5.0` / `movi d0,#0`；x86 `movss 0x1bb818`/`0x1b9ba0`）	move	GwAudioControl.slot_volume_db(slot)	—
+A03	gw_audio.gd	53-55	generator 三常数 `GEN_MIX_RATE=16000.0` / `GEN_BUFFER_LENGTH=0.1` / `PCM_NORMALIZE=32767.0`	src/graphwar_audio_control.rs:196 HUM_MIX_RATE / :198 HUM_BUFFER_LENGTH / :200 PCM_FULL_SCALE / :202 HUM_FRAMES_PER_BUFFER	逐位（`0x4c016a`/`0x4c018f` 立即数；PCM 归一化 `0x4c08f6` = 32767.0f）	move	GwAudioControl.hum_mix_rate()/hum_buffer_length()/pcm_full_scale()	—
+A04	gw_audio.gd	57-137	`SOUNDS` 11 条：名字 → {文件, kind, 槽, 音量, origin, evidence}	`graphwar_audio_control.rs:115-125` 的 5 个 `SFX_*` 路径 + `:308 slot_for_effect_kind` + 模块文档 §3 的"槽 ↔ 资源 ↔ 事件"三列表	逐位（资源槽 `+0x80..+0xc0` ↔ 5 个 load()）；四条"原版未引用"的（tear/humm_2/humm_b/shepard_2）仍是 **推断/未知**	move	GwAudioControl.slots()/slot_path()/slot_volume_db() + `SOUNDS` 的 slot/volume 字段改问 Rust	**改前这张表的槽位是错的（自造）**：explosion→0xa0（真值 +0x80）、squash→0x80（真值 +0x90）、spark→0x90（真值 +0xa0）、pop→0xa0（真值 +0xb0）、unpop→0x80（真值 +0xc0）；且 `0xc0` 被写成 humm（真值是 unpop.mp3，humm 走 generator，不在 5 槽里 —— `graphwar_audio_control.rs` 模块文档 §3 末段已明写"`docs/111` §4.5 把 -5.0f 归给 humm 那一路是不成立的"）
+A05	gw_audio.gd	138-146	`_missing` / `_streams` / `_players` / `_humm_frames` / `_humm_cursor` 等句柄	—	引擎	keep	—	资源句柄与播放游标是引擎侧状态（原版也持有 `Option<Gd<AudioStreamPlayer>>`），不是规则
+A06	gw_audio.gd	148-175	`_load_all()`：按 SOUNDS 建资源（mp3 走 `load()`，generator 走自己的解析）	src/graphwar_audio_control.rs 模块文档 §3（5 次 `load()` `0x4bf550`）/ 本表 A04	逐位（load 次数与顺序）+引擎	partial	文件名/槽/音量从 Rust 取；`load()`/`FileAccess.file_exists` 留 .gd	—
+A07	gw_audio.gd	177-226	`_decode_wav_frames()`：RIFF/WAVE 块遍历 + `fmt `/`data` + 只收 PCM16 单声道 + `÷32767` 归一化	src/_scaffold/audio_wav.rs（新增；原版这步是 **hound** `0x50a080` + 归一化 `0x4c08f6`）	观测（RIFF 头形状 `docs/111` §1.3；归一化逐位）	move	GwAudioControl.decode_wav(bytes) → {ok, error, rate, channels, frames}	**改前这段是 GDScript 重写的 WAV 解析器**（50 行）——原版用第三方 `hound`，我们无依赖，所以落在 scaffold 里做**等价物**（并显式拒绝非 PCM16/多声道，不猜）
+A08	gw_audio.gd	228-248	`loaded()` / `missing()` / `loaded_names()` / `slot_of()`	`graphwar_audio_control.rs` 的 `SoundSlot`（槽位语义）	观测	keep	—	视图出口（自检要读"缺哪些资产"）；`slot_of` 改问 Rust（A04）
+A09	gw_audio.gd	250-283	`play()` / `_ensure_player()`：取/建 player、`set_stream`、`set_volume_db`、`play()`	`graphwar_audio_control.rs` §5（原版 `process` 里做 `play()`，本轮标推断）	观测+引擎	keep	—	**引擎播放**本身（`AudioStreamPlayer`）不存在于 Rust 侧可用的形态；音量/槽位值从 Rust 取
+A10	gw_audio.gd	285-299	`stop_all()` / `is_playing()`	—	引擎	keep	—	同上
+A11	gw_audio.gd	301-355	`start_humm()` / `stop_humm()` / `_humm_active()` / `_process` / `_push_generator_frames()`（generator + `push_buffer` 循环）	`graphwar_audio_control.rs` §5（`AudioStreamGenerator` 16000/0.1 + `push_buffer`；一帧样本预算 1600）	观测+引擎	partial	常数从 Rust 取（A03）；`get_frames_available`/`push_buffer` 循环留 .gd	循环体是**引擎 API 调用序列**，搬进 Rust 需要把 5 MB PCM 每帧过 FFI ⇒ 只搬常数与预算
+A12	gw_audio.gd	357-400	`master_bus()` / `bus_muted()` / `set_muted()` / `is_muted()` / `toggle_mute()` / `adopt_bus()`	`graphwar_audio_control.rs:379 effective_mute`（`arg | self[0xd1]`）、:384 `set_muted`、:390 `set_hidden_muted`、:249/:251 双标志偏移	逐位（`0x4c13a4`/`0x4c13c7` = `set_bus_mute(get_bus_index("Master"), …)`；两个标志字节 `+0xd0`/`+0xd1`）	partial	"有效静音 = 用户 ∥ 隐藏"这条**规则**搬 Rust（`GwAudioControl.effective_mute`）；`AudioServer` 调用留 .gd	—
+E01	expr.gd	1-16	文件头："本求值器只给界面预览、不是内核"+ 与内核的差别清单	`src/math_function.rs:1-14` 模块文档（`@0x4ed670` 解析 / `@0x4eb9d0` 求值）	逐位	keep	—	改写为"规则在 Rust、本文件只是薄壳"的说明（不再是"两套实现"）
+E02	expr.gd	18-22	`FUNCS` 内置函数表（sin/cos/tan/sqrt/abs/ln/log/exp）	src/lib.rs:20-42 `Function` 枚举（Sqrt/Log/Ln/Exp/Abs/Sin/Cos/Tan）+ `math_function.rs:76 lex`	逐位	move	GwMathExpr（parse 由 Rust 做，不再有独立函数表）	—
+E03	expr.gd	40-63	隐式乘法补 `*`（`)x`/`2x`/`x sin(x)`/`)(`）	src/math_function.rs:459 `parse`（内核行为：隐式乘法是**语法怪癖**，`docs/03`）	逐位	move	GwMathExpr.parse	**这段是我方按 docs/03 手抄的规则**，真值在 Rust 的递归下降里
+E04	expr.gd	65-108	`_tokenize()`：数字/`+-*/^`/标识符/`π`/空白；**未匹配字符报错**	src/math_function.rs:76 `lex`（ASCII 折叠 + `pi`/`π`→`n` + 正则切词，**未匹配字符被跳过**）	逐位	move	GwMathExpr.parse	**我方错**：真词法器**跳过**未匹配字符（`Π`/`$` 不报错），我方报"不认识的字符" ⇒ 搬走即修正
+E05	expr.gd	110-116	`_prec()` 优先级表（u=3 / ^=4 / */=2 / +-=1）	src/math_function.rs:459 `parse`（`Parser::expr/term/factor` 的递归下降；`^` 左结合、一元负号比 `^` 松）	逐位	move	GwMathExpr.parse	**我方错**：优先级表把 `^` 放在一元负号之上、并当右结合处理，与真值（左结合、负号更松）不同
+E06	expr.gd	118-174	`_shunting_yard()`：中缀 → RPN	src/math_function.rs:459 `parse` + :451 `flatten`（中缀 AST → **前缀** token 序列）	逐位	move	GwMathExpr.parse	—
+E07	expr.gd	178-208	`eval(x)`：RPN 栈式求值（栈不足/非单值 ⇒ NAN）	src/math_function.rs:523 `eval`（`0x4eb9d0`；**序列不足时返回 0**，不返回 NaN）	逐位	move	GwMathExpr.eval_at	**我方错**：真值在 token 不足时返回 `0.0`（"缺操作数也照样出图"的来源），我方返回 NAN ⇒ 搬走即修正
+E08	expr.gd	210-220	`_apply_func()`：8 个函数 + `sqrt` 负数→NAN + `ln/log` 非正→NAN	src/math_function.rs:482 `m_sqrt`（`0x4ebb26` `sqrtsd`）、:513 `m_log10`、:518 `m_ln`、`exp/abs/sin/cos/tan` 直接 libm	逐位	move	GwMathExpr.eval_at	**我方错三处**：`sqrt(-1)` 真值是**负 NaN** `fff8000000000000`（`sqrtsd` 不给 NAN 常量）、`log(0)` 真值是 **-inf**、`log(-1)` 才是 NaN；我方一律返回正 NaN
+E09	expr.gd	222-229	`_apply_op()`：`+ - * / ^`，除法 `b==0 ⇒ NAN`	src/math_function.rs:497 `m_div`（`0x4ebb4e` `divsd`）、:502 `m_pow`	逐位	move	GwMathExpr.eval_at	**我方错**：真值 `1/0 = +inf`、`1/-0 = -inf`、`0/0 = 负 NaN`；我方把除零一律做成正 NaN
+E10	expr.gd	24-31	`_rpn` / `_error` 两个字段 + `get_error()` / `is_ok()`	`src/math_function.rs:459 parse` 的无错返回（词法器不报错）	逐位	keep	—	薄壳状态（句柄 + 错误串）；Rust 侧 `parse` 不返回错误串，`error` 只保留"空表达式"一条
+F01	frame.gd	1-14	文件头：传输层 `u16` 大端长度 + JSON 负载、消息形状（单键对象）	src/graphwar_stream_buffer.rs:1-100 模块文档 §1-§4	逐位	keep	—	给人读的对照表
+F02	frame.gd	16-18	`MAX_PAYLOAD := 65535`	src/graphwar_stream_buffer.rs:119 `MAX_FRAME_PAYLOAD`	逐位（arm64 `0x45c8d0` / x86 `0x3d8ab0 cmp $0xffff`）	move	GwStreamBuffer.max_payload()	—
+F03	—（**改前没有**）	—	读侧单帧上限 **`0x1000` = 4096**，超了报 `Message too large`	src/graphwar_stream_buffer.rs:114 `MAX_MESSAGE_LEN`	逐位（arm64 `0x45c590 cmp w24,#1,lsl #12`；x86 `0x3d8713`）	move	GwStreamBuffer.max_read_len() + decode_one	**这是改前的漏**：`.gd` 只有写侧 65535 闸、没有读侧 4096 闸 ⇒ 与真值不一致（本轮补上）
+F04	frame.gd	20-33	`encode(payload)`：`[hi,lo] + UTF-8 负载`，超长返回空	src/graphwar_stream_buffer.rs:335 `encode_len` + :317 `write_event`（两段写，前缀 `(len as u16).to_be_bytes()`）	逐位	move	GwStreamBuffer.encode_frame(payload)	—
+F05	frame.gd	35-40	`encode_many(payloads)`（多条消息拼成一段流）	src/graphwar_stream_buffer.rs:317 `write_event`（同一条写路径）	逐位	move	GwStreamBuffer.encode_frames(payloads)	—
+F06	frame.gd	42-48	`message(kind, body_json)` → `{"Kind":<body>}` 原文拼装	`src/_scaffold/protocol.rs` 的装配约定（原版由 serde derive 生成，**scaffold 是它的等价物**）	观测（`docs/96` §4 外部标签）；装配属 **B 类**	keep	—	搬它不改变档位（原版的装配在 serde，不在 `graphwar_*` 模块里），且 `.gd` 侧要拼字符串给 `GwWireSamples`
+F07	frame.gd	50-62	`json_string(s)`：JSON 字符串转义	src/_scaffold/protocol.rs（同上）	同上（B 类）	keep	—	同 F06
+F08	frame.gd	64-88	`decode_buffer(buf)`：循环切帧 + 半帧留着 + 非法 UTF-8 报标志	src/graphwar_stream_buffer.rs:274 `read_event`（`0x45c51c`：peek 0 ⇒ `Connection Lost`；不足 ⇒ **不是错误**（`Ok(None)`）；整帧到齐才 `read_exact(len+2)`）	逐位	move	GwStreamBuffer.decode_one(buf, offset) → {status, frame, consumed, message}	**改前语义偏差**：`.gd` 把"bad_utf8"当标志返回由连接层断开，真值是 `Frame::decode` 返回 `None` ⇒ 走"对端关了"那条路；本轮按真值收成 `status == "failed"`
+F09	frame.gd	90-111	`parse_message(text)`：外层**恰好一个键**的对象、值也是对象	src/_scaffold/protocol.rs:66 `parse_message`（同一件事的 Rust 等价物）	观测（serde 外部标签 `docs/96` §4）	keep	—	Godot `JSON.parse_string` 是**引擎侧**解析；`.gd` 拿到的本来就是 `Dictionary`，再搬回 Rust 解析一遍等于多一层（且新引入一处 JSON 解析器）
+F10	frame.gd	113-175	`has/as_str/as_int/as_float/as_bool/as_dict` + `body_*`：从 `Dictionary` 取字段	—	引擎（Variant 类型转换）	keep	—	视图/接缝：入参是 Godot `Dictionary`，取值是 Variant → 类型的转换规则（原版 serde 反序列化已定的类型在这里已是 `Dictionary`）
+C01	play_screen.gd	122-131	`TEAM_COLORS`：两张 6 色队池	src/graphwar_color_manager.rs:302 `TEAM1_COLORS` / :312 `TEAM2_COLORS`（`TEAM_POOL_LEN` :221 = 6）	逐位（arm64 `strh`/`strb` 六次 push 复算，模块文档 §2）	move	GwColorManager.team_colors()	—
+C02	play_screen.gd	133-146	`assign_colors()`：本队池里"随机起点 + 线性探测取第一个没人用的"	`graphwar_color_manager.rs:451 add_team_color` → :465 `pick_from_pool`（`udiv`+`msub` 取 `rand % n`，然后 `(idx+1) % n` 线性探测；占用表是**全局**的，不分队）	逐位（`0x464d10` 全函数，模块文档 §3）	move	GwColorManager.pick(team, rand_u64, rand_u8x3, used)	**改前把"占用表全局"写成了 `used` 数组也对**，但起点用 Godot `RandomNumberGenerator` 且**没有兜底**；真值的 RNG 是 `rand::random`（`stream` 不可复现）⇒ 随机**流**由 .gd 给（我方确定性选择），**算法**搬到 Rust
+C03	play_screen.gd	（无）	6 个颜色全被占时的兜底：三个独立 `random::<u8>() % 180`	src/graphwar_color_manager.rs:483 `random_color`（:223 `RANDOM_COLOR_MODULO = 180`，`cmp/csel` 形状）	逐位	move	GwColorManager.pick（内部走 `random_color`）	**改前完全没有这条兜底**（`used` 满 6 个时 `assign_colors` 会拿到池里第一个色 ⇒ 与真值不同）
+C04	play_screen.gd	748 / 2859 / 2873 / 2925	四个调用点 + 把颜色贴到节点上（`_soldiers[i].color` / 回放缺省色）	—	引擎（视图）	keep	—	"把算出来的颜色画到节点上"是视图；调用点改问 `GwColorManager` —— **本批推迟**（`play_screen.gd` 正被 t54 改回放布局，见任务书禁区）
