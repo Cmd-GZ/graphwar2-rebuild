@@ -1081,10 +1081,15 @@ func _set_curve(points: PackedVector2Array, color: Color, player_id: int) -> voi
 	for i in _curve_total:
 		flat[i * 2] = points[i].x
 		flat[i * 2 + 1] = points[i].y
-	_plane.call("set_function_points", player_id, flat, 0, _packed_color(color))
-	# 起飞 tick（原版 `GraphwarFunctionManager` 的 value+0x74）取 0 —— **我方选择**：
-	# 那个模块还没有 `src/` 文件。`is_active_function` 要求 `active_tick < tick`（严格），
-	# 所以正常对局从第 1 个 tick 开始长。
+	# 起飞 tick = **原版 `FunctionState` 的 `value+0x74`**（联机时来自
+	# `FunctionActive{active_tick}`，本样本 615；见 `_curve_active_tick()`）。
+	# 它决定这条弹道**开不开始画**：`GraphwarPlane::draw` 的在场谓词是
+	# `active_tick < tick`（严格，`0x3be5f6` 的 `jbe`）。
+	#
+	# 改前：这里恒传 **0**（注释写着"我方选择"）⇒ 只要本地 tick ≥ 1 就开始长，
+	# 而原版要等服务端那条 `FunctionActive` 的 615 被本地 tick 追上。
+	var active_tick := _curve_active_tick(player_id)
+	_plane.call("set_function_points", player_id, flat, active_tick, _packed_color(color))
 	#
 	# **回放不走墙钟**：曲线的揭示量是 `回放 tick − active_tick`（原版 `GraphwarPlane::draw`
 	# 把 `GraphwarTickHandler::get_fractional_tick` 喂给喂点循环，而 `is_active_function`
@@ -1093,6 +1098,21 @@ func _set_curve(points: PackedVector2Array, color: Color, player_id: int) -> voi
 	_curve_tick = (_replay_curve_tick() if _replay_mode else 1.0)
 	_plane.call("set_fractional_tick", _curve_tick)
 	_feed_curve()
+
+## 这条弹道的**起飞 tick**（原版 `GraphwarFunctionManager` 的 `FunctionState.value+0x74`）。
+##
+## 三条路径口径不同，各自有出处：
+## * **联机**：服务端 `FunctionActive{active_tick}` 是唯一真值（本样本 = **615**，
+##   `fixtures/frame_match_events.txt` [phase2]）。没收到那条事件前记 0 —— 原版
+##   `FunctionState` 的默认值也是 0，且那时本地 tick 已经远超窗口，照样不画。
+## * **回放**：留 **0**。回放喂给平面的 `fractional_tick` 本身就是"已揭示多少 tick"
+##   （`_replay_curve_tick()` = 回放 tick − 事件里的 active_tick），再减一次就负了。
+## * **本地局**：留 0（时钟从 1.0 起，等价于第 1 个 tick 开始长）。
+func _curve_active_tick(player_id: int) -> int:
+	if _online_mode:
+		var ticks: Dictionary = _online_room().get("active_ticks", {})
+		return int(ticks.get(player_id, 0))
+	return 0
 
 ## 回放模式下"这一条弹道已经揭到第几个 tick" = `回放 tick − active_tick`（夹到 0..揭完）。
 ##
@@ -3178,6 +3198,17 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 				Vector2(GwNetFrame.body_float(body, "start_x"),
 					GwNetFrame.body_float(body, "start_y")),
 				GwNetFrame.body_float(body, "end_x"))
+		"FunctionActive":
+			# **起飞 tick 的服务端真值**（原版 `set_function_active_tick`，`0x456b80`）：
+			# 写进 `FunctionState.value+0x74`，之后 `GraphwarPlane::draw` 的在场谓词
+			# `active_tick < tick`（`0x3be5f6`）与揭示量 `30·(fractional_tick − active_tick)`
+			# （`0x4b67a0`）都用它。**这条迟到也没关系**：原版就是两个独立的 setter，
+			# 顺序无关（`FunctionPoints` 先到、`FunctionActive` 后到是常态）。
+			var aoid := GwNetFrame.body_int(body, "owner_id", -1)
+			var atick := GwNetFrame.body_int(body, "active_tick", 0)
+			if aoid >= 0 and _plane != null:
+				_plane.call("set_function_active_tick", aoid, atick)
+				_feed_curve()
 		"AddObstacle", "ClearObstacles", "QueueDestroyObstacle", "DestroyObstacle":
 			_build_online_obstacles(_online_room())
 			_refresh_plane()
