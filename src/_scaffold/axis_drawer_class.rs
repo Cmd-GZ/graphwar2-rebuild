@@ -240,7 +240,16 @@ pub(crate) fn clamp_mode(value: i64) -> u8 {
 
 /// 某个判别值下 `draw_line` 的**实际条数**：跑 [`axis_drawer::axis_primitives`] 数
 /// `Primitive::Line`。这是"复原逻辑真的被执行了"的那个观测点。
-fn line_primitive_count(raw_mode: u8) -> usize {
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// 原版没有"数线"这种函数 —— 它只是真的去 `draw_line`；这是我方为了"证明复原逻辑
+/// 被执行了"加的观测钩子（两个入口层各注册一个同名方法）。T72 之前
+/// `_scaffold/gdext_mod.rs` 里另有一份同规则实现（连 `BOARD_SIZE` 常量都各抄一份），
+/// 现在只留这一份；`gdext_mod` 改 `use`，并删掉自己那份 `BOARD_SIZE`
+/// （`50.0 × 30.0` = [`crate::graphwar_plane::BOARD_RECT`] 的宽高，
+/// 与本文件 [`BOARD_SIZE`] 同源）。
+pub(crate) fn line_primitive_count(raw_mode: u8) -> usize {
     let mode = AxisMode::from_raw(raw_mode);
     axis_drawer::axis_primitives(mode, BOARD_SIZE)
         .iter()

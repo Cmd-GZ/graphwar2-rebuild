@@ -37,6 +37,8 @@ use crate::axis_drawer::{self, AxisMode, Primitive};
 // T72 归一：本文件原来有一份与 `api.rs` 逐字符相同的 `triples`（台账 C 档）。
 // 入参形状检查只该有一处 ⇒ 直接用 `api::triples`。
 use super::api::{self, hit_result_pairs, obstacle_pairs, result_pairs, triples, ApiValue};
+// T72 归一：`line_primitive_count` 的规则本体在 `axis_drawer_class`（与本文件原来那份同规则）。
+use super::axis_drawer_class::line_primitive_count;
 
 // ---------------------------------------------------------------------------
 // 1. 类型搬运（Rust 域 → Godot 域）
@@ -249,7 +251,9 @@ pub struct AxisDrawer {
 
 /// 棋盘尺寸（`BOARD_RECT.size`）：只影响 `axis_primitives` 里的像素换算，
 /// **不影响线的条数**，所以没有 `Control::get_size` 也能数线。
-const BOARD_SIZE: axis_drawer::Vec2 = axis_drawer::Vec2::new(50.0, 30.0);
+// T72 归一：`BOARD_SIZE` 不再在这里定义 —— 它随 `line_primitive_count` 一起收进
+// `_scaffold/axis_drawer_class.rs`（`graphwar_plane::BOARD_RECT` 的宽高 50 × 30），
+// 两个入口层共用那一份。
 
 /// 把任意 `i32` 收成判别值 `u8`：负数当 0，大于 255 当 255。
 ///
@@ -263,12 +267,7 @@ fn clamp_mode(value: i32) -> u8 {
 }
 
 /// 某判别值下 `draw_line` 的条数（跑 `axis_primitives` 数 `Line`）。
-fn line_primitive_count(raw_mode: u8) -> usize {
-    axis_drawer::axis_primitives(AxisMode::from_raw(raw_mode), BOARD_SIZE)
-        .iter()
-        .filter(|p| matches!(p, Primitive::Line { .. }))
-        .count()
-}
+
 
 /// `axis_drawer::Vec2` → Godot `Vector2`。
 fn vec2_of(v: axis_drawer::Vec2) -> Vector2 {
