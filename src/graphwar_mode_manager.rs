@@ -72,7 +72,21 @@ pub enum FunctionMode {
 }
 
 /// `time_mode`（`docs/07` §5.2，`逐位`）。6 个变体，**按秒数升序**，最后一个是无限。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// # 唯一定义（T78 收敛，`docs/06` §120）
+///
+/// 本轮之前这个枚举有**两份定义**：这里 + `graphwar_setup_control.rs` 里一份
+/// （那份**没有** `#[repr(u8)]`，且多 `PartialOrd/Ord/Hash`）。原版只有一个
+/// `enum TimeMode`（单态 `0x3cbce0`、跳表 `0x1c6350`），所以本轮把
+/// `graphwar_setup_control` 那份**定义删掉**、改成 `pub use` 指到这里，
+/// 两份的 derive 集合取**并集**（`PartialOrd/Ord/Hash` 从被删的那份接过来）。
+///
+/// 界面/循环那一侧的固有项（`ALL`/`from_u8`/`as_u8`/`name`/`icon_path`/
+/// `duration_secs`/`initial_timer_secs`/`timer_label`/`next`/`prev`/`from_level_byte`）
+/// 仍写在 `graphwar_setup_control.rs` 的 `impl TimeMode` 里 —— 同一个 crate 内给
+/// 别处定义的类型写 inherent impl 是合法的，而且那些项的证据（图标表 `0x4c9190`、
+/// 名字表 `.data.rel.ro`）属于界面侧。**`ALL` 只在界面侧存在一处**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
 pub enum TimeMode {
     #[default]
@@ -86,6 +100,9 @@ pub enum TimeMode {
 
 impl TimeMode {
     /// 每回合的秒数；`TimerInf` 没有时限（原版 `turn_inf.svg`，无倒计时）。
+    ///
+    /// 这是**数据层真值**；界面侧的 [`graphwar_setup_control::TimeMode::duration_secs`]
+    /// 转调本函数（T78 收敛前它是第二份手写 `match`，见 `docs/06` §120）。
     pub const fn seconds(self) -> Option<u32> {
         match self {
             TimeMode::Timer30s => Some(30),
@@ -98,6 +115,10 @@ impl TimeMode {
     }
 
     /// 界面上那张图标的资源名（`docs/16-client.md` §28 的 `.rodata` 实测值）。
+    ///
+    /// 界面侧 [`graphwar_setup_control::TimeMode::icon_path`] 转调本函数；那张
+    /// `.rodata` 表 `TIME_MODE_ICONS` 仍留在 `graphwar_setup_control`，并由单测
+    /// `time_mode_icon_table_matches_the_canonical_impl` **逐项交叉校验**（T78）。
     pub const fn icon(self) -> &'static str {
         match self {
             TimeMode::Timer30s => "res://turn_30s.svg",
@@ -111,10 +132,14 @@ impl TimeMode {
 
     /// 协议里用的名字（serde 外部表示的变体名）。
     ///
+    /// 界面侧 [`graphwar_setup_control::TimeMode::name`] 转调本函数；名字表
+    /// `MODE_NAME_TABLE` 仍留在 `graphwar_setup_control`，由单测
+    /// `time_mode_name_table_matches_the_canonical_impl` 逐项交叉校验（T78）。
+    ///
     /// **逐位**：单态 `0x3cbce0` 的 `Serialize` 体里是跳表 `0x1c6350`（6 项），每个 case
     /// 一条 `lea r?,[rip+变体名]` + `mov r32,LEN`（LEN 自校验）⇒ 线上写的就是变体名字面量。
     /// 见 `fixtures/struct_audit_plan2.txt` §1 E6 与 `docs/06` §109.4。
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             TimeMode::Timer30s => "Timer30s",
             TimeMode::Timer1m => "Timer1m",

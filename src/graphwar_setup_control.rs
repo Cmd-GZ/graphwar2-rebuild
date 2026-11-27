@@ -245,25 +245,21 @@ pub const TURN_MODE_NAMES: [&str; 2] = ["SequentialTurns", "SimultaneousTurns"];
 
 /// 回合时限档（`TurnTimeButton`，以及 `JoinLevelPopUp` 里同位置的 `TimeModeButton`）。
 ///
+/// # 收敛：本模块**不再定义** `TimeMode`（T78，`docs/06` §120）
+///
+/// 本轮之前这里有**第二份** `TimeMode` 定义（6 变体、**无 `#[repr(u8)]`**、多
+/// `PartialOrd/Ord/Hash`），与规范位置 `crate::graphwar_mode_manager::TimeMode`
+/// 重复。原版只有一个 `enum TimeMode`（单态 `0x3cbce0`、跳表 `0x1c6350`、
+/// `Serialize` 表现 `0x518a10`）⇒ 这里改成**再导出**，定义只剩
+/// `src/graphwar_mode_manager.rs` 一处。两处 derive 取并集（`PartialOrd/Ord/Hash`
+/// 从被删的那份接过来），`#[repr(u8)]` 由规范位置提供（被删的那份**缺**它，
+/// 收敛顺带补上 —— 线上判别值是 1 字节，`repr` 显式化后不再是隐式约定）。
+///
 /// 判别值来源：图标 id（**逐位**）+ 名字表下标（**逐位**）。
 /// ⚠️ "图标 id == 判别值"这一步是**推断**，两条同向证据：
 /// `AxisMode` 的 4 个 id 与运行时 `AxisModeInfo` 的名字序列 4/4 一致；
 /// 21 关的 `LevelModes::time_byte` 恒为 5，而运行时 `TimeModeInfo` 21/21 是 `TimerInf`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum TimeMode {
-    /// 30 秒（`res://turn_30s.svg`）。
-    Timer30s = 0,
-    /// 1 分钟（`res://turn_1m.svg`）。
-    Timer1m = 1,
-    /// 2 分钟（`res://turn_2m.svg`）。
-    Timer2m = 2,
-    /// 3 分钟（`res://turn_3m.svg`）。
-    Timer3m = 3,
-    /// 5 分钟（`res://turn_5m.svg`）。
-    Timer5m = 4,
-    /// 无限（`res://turn_inf.svg`）。线上 `end_of_turn_tick` 发 `0`。
-    TimerInf = 5,
-}
+pub use crate::graphwar_mode_manager::TimeMode;
 
 /// 六档，按判别值升序（= 点击循环的顺序）。
 pub const ALL_TIME_MODES: [TimeMode; 6] = [
@@ -297,13 +293,21 @@ impl TimeMode {
     }
 
     /// 线上名字 / 名字表项（`"Timer30s"`…`"TimerInf"`）。档位：**逐位**（[`MODE_NAME_TABLE`]）。
+    ///
+    /// T78 收敛：真值是规范位置的 [`TimeMode::as_str`]（同一批 `match` 立即数），
+    /// 本函数转调它；[`MODE_NAME_TABLE`] 这张 `.data.rel.ro` 表仍留在这里，
+    /// 并由单测 [`time_mode_name_table_matches_the_canonical_impl`] **逐项**校验两边相等
+    /// （表 → 真值 → 调用方，三步都有 pin）。
     pub const fn name(self) -> &'static str {
-        MODE_NAME_TABLE[6 + self as usize]
+        self.as_str()
     }
 
     /// 按钮图标路径。档位：**逐位**（[`TIME_MODE_ICONS`]）。
+    ///
+    /// T78 收敛：真值是规范位置的 [`TimeMode::icon`]，本函数转调它；表仍留在这里、
+    /// 由单测 [`time_mode_icon_table_matches_the_canonical_impl`] 逐项校验。
     pub const fn icon_path(self) -> &'static str {
-        TIME_MODE_ICONS[self as usize]
+        self.icon()
     }
 
     /// 一回合的时长（秒）；`TimerInf` 没有截止时刻 ⇒ `None`。
@@ -312,14 +316,9 @@ impl TimeMode {
     /// `Timer30s/1m/2m/3m/5m` = 1800/3600/7200/10800/18000 tick；
     /// `TimerInf` 线上把 `end_of_turn_tick` 发 `0`）。
     pub const fn duration_secs(self) -> Option<u32> {
-        Some(match self {
-            TimeMode::Timer30s => 30,
-            TimeMode::Timer1m => 60,
-            TimeMode::Timer2m => 120,
-            TimeMode::Timer3m => 180,
-            TimeMode::Timer5m => 300,
-            TimeMode::TimerInf => return None,
-        })
+        // T78 收敛：这里是**第二份**手写 `match`，已删；真值 = 规范位置的
+        // `TimeMode::seconds`（`docs/06` §120）。
+        self.seconds()
     }
 
     /// 回合开始时计时器**显示**的秒数 = 时长 − 1。
@@ -1498,6 +1497,131 @@ pub trait LockChangeClient {
 // 10.4 单测：期望值全部来自反汇编（.rodata 字面量 / FDE / 分支），不来自本实现
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// T78 收敛的 pin 测试（`docs/06` §120）
+//
+// 为什么需要这一组：本轮把 `graphwar_setup_control::TimeMode` 的**第二份定义删掉**了
+// （改成 `pub use crate::graphwar_mode_manager::TimeMode;`），并把 4 对手写实现
+// （`name`/`icon_path`/`duration_secs` + 规范侧的 `as_str`/`icon`/`seconds`）收敛成
+// 「一处真值 + 转发」。原来的 `.data.rel.ro` 名字表 / `.rodata` 图标表**必须**仍然
+// 与真值逐项相等 —— 那两张表是本模块的证据，不能因为收敛就变成没人校验的装饰。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod time_mode_convergence_tests {
+    use super::*;
+    use crate::graphwar_mode_manager::TimeMode as CanonicalTimeMode;
+
+    /// **唯一定义**：本模块的 `TimeMode` 就是规范位置那一个类型（不是另一份）。
+    /// 这条用类型同一性钉住 —— 若有人再复制一份定义，本断言会编译失败（不是运行失败）。
+    #[test]
+    fn time_mode_is_the_canonical_type() {
+        fn same_type<T>(_: T, _: T) {}
+        same_type(TimeMode::Timer1m, CanonicalTimeMode::Timer1m);
+        // 判别值逐项（E6 读数，`逐位`）：Timer30s=0 … TimerInf=5。
+        assert_eq!(TimeMode::Timer30s as u8, 0);
+        assert_eq!(TimeMode::Timer1m as u8, 1);
+        assert_eq!(TimeMode::Timer2m as u8, 2);
+        assert_eq!(TimeMode::Timer3m as u8, 3);
+        assert_eq!(TimeMode::Timer5m as u8, 4);
+        assert_eq!(TimeMode::TimerInf as u8, 5);
+    }
+
+    /// `#[repr(u8)]` 由规范位置提供（**被删的那份没有它**，收敛顺带补上）：
+    /// 线上判别值是 1 字节，`repr` 显式化后尺寸必须是 1。
+    #[test]
+    fn time_mode_is_one_byte_wide() {
+        assert_eq!(core::mem::size_of::<TimeMode>(), 1);
+        // enum 的 align 也就是 1（`repr(u8)`）。
+        assert_eq!(core::mem::align_of::<TimeMode>(), 1);
+    }
+
+    /// `ALL` 的元素与顺序 = 判别值升序（= 点击循环顺序，`docs/16` §2.1.5 的推断）。
+    #[test]
+    fn time_mode_all_is_the_discriminant_order() {
+        assert_eq!(TimeMode::ALL.len(), 6);
+        for (i, mode) in TimeMode::ALL.iter().enumerate() {
+            assert_eq!(*mode as u8, i as u8, "ALL[{i}] 的判别值必须是 {i}");
+            assert_eq!(TimeMode::from_u8(i as u8), Some(*mode));
+            assert_eq!(mode.as_u8(), i as u8);
+        }
+        // 越界判别值：原版 `match` 没有别的分支 ⇒ `None`。
+        assert_eq!(TimeMode::from_u8(6), None);
+        assert_eq!(TimeMode::from_u8(255), None);
+        // `ALL` 与 `ALL_TIME_MODES` 是同一张表（收敛后只留一处数据）。
+        assert_eq!(TimeMode::ALL, ALL_TIME_MODES);
+    }
+
+    /// 名字表（`.data.rel.ro`，`0x9627a0` 起）↔ 规范位置 `as_str()` 逐项相等。
+    /// 这条把「表是证据」和「match 是真值」两边钉在一起：谁改了都能被发现。
+    #[test]
+    fn time_mode_name_table_matches_the_canonical_impl() {
+        assert_eq!(MODE_NAME_TABLE.len(), 12);
+        for (i, mode) in TimeMode::ALL.iter().enumerate() {
+            assert_eq!(mode.name(), mode.as_str(), "name() 必须转发到 as_str()");
+            assert_eq!(
+                MODE_NAME_TABLE[6 + i],
+                mode.as_str(),
+                "名字表第 {} 项与 as_str() 不等",
+                6 + i
+            );
+            // 反方向：线上名字 → 变体（serde 的 visit_str 口径，未知名字 ⇒ None）。
+            assert_eq!(TimeMode::from_str(mode.as_str()), Some(*mode));
+        }
+        assert_eq!(TimeMode::from_str("Timer1m"), Some(TimeMode::Timer1m));
+        assert_eq!(TimeMode::from_str("Timers1m"), None, "旧错字必须仍被拒");
+        assert_eq!(TimeMode::from_str("timer1m"), None, "大小写敏感");
+    }
+
+    /// 图标表（`0x4c9190`，**逐位**）↔ 规范位置 `icon()` 逐项相等。
+    #[test]
+    fn time_mode_icon_table_matches_the_canonical_impl() {
+        assert_eq!(TIME_MODE_ICONS.len(), 6);
+        for (i, mode) in TimeMode::ALL.iter().enumerate() {
+            assert_eq!(mode.icon_path(), mode.icon(), "icon_path() 必须转发到 icon()");
+            assert_eq!(TIME_MODE_ICONS[i], mode.icon_path());
+        }
+        assert_eq!(TimeMode::TimerInf.icon_path(), "res://turn_inf.svg");
+    }
+
+    /// 时长 ↔ `seconds()`；标签 = 时长 − 1（`docs/16` §2.1.10 真帧：3 分钟档 `02:59`）。
+    #[test]
+    fn time_mode_duration_forwards_to_the_canonical_impl() {
+        for mode in TimeMode::ALL {
+            assert_eq!(mode.duration_secs(), mode.seconds());
+        }
+        assert_eq!(TimeMode::Timer30s.duration_secs(), Some(30));
+        assert_eq!(TimeMode::Timer1m.duration_secs(), Some(60));
+        assert_eq!(TimeMode::Timer5m.duration_secs(), Some(300));
+        assert_eq!(TimeMode::TimerInf.duration_secs(), None);
+        assert_eq!(TimeMode::Timer3m.initial_timer_secs(), Some(179));
+        assert_eq!(TimeMode::Timer3m.timer_label().as_deref(), Some("02:59"));
+        assert_eq!(TimeMode::TimerInf.timer_label(), None);
+        // 关卡模式字节 → 档（21 关恒为 5 ⇒ TimerInf）。
+        assert_eq!(TimeMode::from_level_byte(5), Some(TimeMode::TimerInf));
+        assert_eq!(TimeMode::from_level_byte(9), None);
+    }
+
+    /// 循环：`next()`/`prev()` 互逆且走判别值序（收敛前后**逐元素相同**）。
+    #[test]
+    fn time_mode_cycle_is_unchanged_by_the_convergence() {
+        for (i, mode) in TimeMode::ALL.iter().enumerate() {
+            let next = TimeMode::ALL[(i + 1) % 6];
+            let prev = TimeMode::ALL[(i + 5) % 6];
+            assert_eq!(mode.next(), next);
+            assert_eq!(mode.prev(), prev);
+            assert_eq!(mode.next().prev(), *mode);
+        }
+        assert_eq!(TimeMode::TimerInf.next(), TimeMode::Timer30s);
+        assert_eq!(TimeMode::Timer30s.prev(), TimeMode::TimerInf);
+    }
+
+    /// 默认值来自规范位置（`#[default] Timer30s`）；房间初值仍是 `Timer1m`（观测）。
+    #[test]
+    fn time_mode_default_and_room_default_are_distinct_and_pinned() {
+        assert_eq!(TimeMode::default(), TimeMode::Timer30s);
+        assert_eq!(ROOM_DEFAULT_OPTIONS.time, TimeMode::Timer1m);
+    }
+}
 #[cfg(feature = "gdext-bindings")]
 mod node_class {
 // ---------------------------------------------------------------------------
