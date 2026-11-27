@@ -391,6 +391,30 @@ pub fn top_level_object<'a>(body: &'a str, key: &str) -> Option<&'a str> {
     object_body(top_level_value(body, key)?)
 }
 
+/// 变体名闸（T75）：线上事件的键名**就是** serde 外部标签的变体名，`Deserialize` 时
+/// serde 先按名字选变体 —— 名字不认识就是 "unknown variant" **解析失败**。
+///
+/// ⇒ 每个强类型 `parse` 的第一句都必须是它。改前没有这一句：`PosInfo::parse` 之类
+/// 拿到**别的**事件的报文也可能"解析成功"（只要字段恰好齐），这是比子串式更外一层
+/// 的宽容 —— 名字这一维根本没校验。
+fn kind_is(m: &RawMessage, name: &str) -> bool {
+    m.kind == name
+}
+
+/// 严格版 [`extra_fields`]：体不符合 JSON 对象文法 ⇒ `None`（typed 入口用它，
+/// 这样"畸形体"不会因为 `split_fields` 静默截断而变成"少几个 extra 字段"）。
+///
+/// `known` 里的键不进 `extra`；其余按**出现顺序**原样保留（键 + 值原文），供 [`emit_object`] 回发。
+fn strict_extra_fields(body: &str, known: &[&str]) -> Option<Vec<(String, String)>> {
+    Some(
+        scan_pairs(body)?
+            .into_iter()
+            .filter(|(k, _)| !known.contains(k))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )
+}
+
 /// 值原文必须是**一个完整的字符串字面量**，返回内部原文（不解转义）。
 fn as_string_literal(raw: &str) -> Option<&str> {
     let (inner, end) = scan_string_at(raw, 0)?;
@@ -906,6 +930,73 @@ mod tests {
             .expect("外壳合法");
         assert_eq!(get_color(&m, "color"), Some((149, 5, 62)), "真帧取值照旧解得开");
     }
+
+    /// **反面对照（T75）**：变体名是 serde 外部标签的"选路键" —— 名字不同就是**别的**类型，
+    /// 字段恰好齐也不许当成自己。
+    ///
+    /// 改前 17 个手写 + 19 个宏生成实例的 `parse` 里**没有一处**比较 `m.kind`：
+    /// `PosInfo::parse` 拿到 `{"TurnInfo":{…PosInfo 的字段…}}` 也会"解析成功"。
+    #[test]
+    fn typed_parse_requires_its_own_variant_name() {
+        // ① 字段齐全但变体名是 TurnInfo ⇒ 不是 PosInfo
+        let m = RawMessage {
+            kind: "TurnInfo".into(),
+            body: r#""entity_id":231,"pos_x":-21.5,"pos_y":5.9,"radius":0.5"#.into(),
+            text: String::new(),
+        };
+        assert!(PosInfo::parse(&m).is_none(), "变体名 TurnInfo 不该被当成 PosInfo");
+        // ② 两个事件**字段形状完全相同**（entity_id + name），名字也必须能区分它们
+        let m = RawMessage {
+            kind: "NameInfo".into(),
+            body: r#""entity_id":229,"name":"user""#.into(),
+            text: String::new(),
+        };
+        assert!(NameRequest::parse(&m).is_none(), "NameInfo 的体不该被当成 NameRequest");
+        // ③ 正对照：同一段体，名字对上就必须解得开
+        let m = RawMessage {
+            kind: "PosInfo".into(),
+            body: r#""entity_id":231,"pos_x":-21.5,"pos_y":5.9,"radius":0.5"#.into(),
+            text: String::new(),
+        };
+        assert_eq!(
+            PosInfo::parse(&m),
+            Some(PosInfo { entity_id: 231, pos_x: -21.5, pos_y: 5.9, radius: 0.5 })
+        );
+    }
+
+    /// **反面对照（T75）**：必填的 `String` 字段缺失必须拒绝。
+    ///
+    /// 改前 `FunctionInfo::parse` / `FunctionUpdateRequest::parse` 用 `unwrap_or_default()`
+    /// ⇒ 缺 `function` 时静默变成空串（"静默丢字段"），而 serde 的 `Str` 是必填。
+    /// ⚠️ 但 `function` 取**空串**是合法值（真帧 `{"function":"",…}` 出现过，见
+    /// `emit_function_info` 的往返测试）—— 这条测的是"缺字段"，不是"空串"。
+    #[test]
+    fn missing_required_string_field_is_rejected() {
+        let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"corrected_function":null}}"#)
+            .expect("外壳合法");
+        assert!(FunctionInfo::parse(&m).is_none(), "缺 function ⇒ None（改前静默变空串）");
+        let m = parse_message(r#"{"FunctionUpdateRequest":{"player_id":635}}"#)
+            .expect("外壳合法");
+        assert!(
+            FunctionUpdateRequest::parse(&m).is_none(),
+            "缺 function ⇒ None（改前静默变空串）"
+        );
+        // 正对照 1：空串是合法取值
+        let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}"#)
+            .expect("外壳合法");
+        assert_eq!(
+            FunctionInfo::parse(&m),
+            Some(FunctionInfo {
+                owner_id: 231,
+                function: String::new(),
+                corrected_function: None
+            })
+        );
+        // 正对照 2：`corrected_function` 是 `OptStr`，缺失仍是 None（serde 对 Option 字段缺失的行为）
+        let m = parse_message(r#"{"FunctionInfo":{"owner_id":231,"function":"x"}}"#)
+            .expect("外壳合法");
+        assert_eq!(FunctionInfo::parse(&m).map(|f| f.corrected_function), Some(None));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -965,6 +1056,9 @@ pub fn get_bool(msg: &RawMessage, key: &str) -> Option<bool> {
 
 impl AddObstacle {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "AddObstacle") {
+            return None;
+        }
         Some(AddObstacle {
             pos_x: get_f64(msg, "pos_x")?,
             pos_y: get_f64(msg, "pos_y")?,
@@ -975,6 +1069,9 @@ impl AddObstacle {
 
 impl PosInfo {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "PosInfo") {
+            return None;
+        }
         Some(PosInfo {
             entity_id: get_int(msg, "entity_id")?,
             pos_x: get_f64(msg, "pos_x")?,
@@ -986,14 +1083,24 @@ impl PosInfo {
 
 impl LifeInfo {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "LifeInfo") {
+            return None;
+        }
         Some(LifeInfo { entity_id: get_int(msg, "entity_id")?, alive: get_bool(msg, "alive")? })
     }
 }
 
 impl FunctionInfo {
     pub fn parse(msg: &RawMessage) -> Option<Self> {
+        if !kind_is(msg, "FunctionInfo") {
+            return None;
+        }
         let owner_id = get_int(msg, "owner_id")?;
-        let function = get_str(msg, "function").unwrap_or_default();
+        // `function` 是 serde 的 `Str`（必填）：缺字段 ⇒ `None`。改前 `unwrap_or_default()`
+        // 会把它静默变成空串 —— 那是"静默丢字段"（台账 fixtures/protocol_parse_audit.tsv）。
+        // `corrected_function` 是 `OptStr`：缺失与 `null` 都是 `None`（serde 对 Option 字段
+        // 缺失的行为就是 `None`），所以这里不用 `?`。
+        let function = get_str(msg, "function")?;
         let corrected_function = get_str(msg, "corrected_function");
         Some(FunctionInfo { owner_id, function, corrected_function })
     }
@@ -1045,16 +1152,25 @@ pub struct FunctionUpdateRequest {
 
 impl TurnInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "TurnInfo") {
+            return None;
+        }
         Some(TurnInfo { player_id: get_int(m, "player_id")?, soldier_id: get_int(m, "soldier_id")? })
     }
 }
 impl TurnCountInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "TurnCountInfo") {
+            return None;
+        }
         Some(TurnCountInfo { turn_count: get_int(m, "turn_count")? })
     }
 }
 impl EndOfTurnInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "EndOfTurnInfo") {
+            return None;
+        }
         Some(EndOfTurnInfo {
             end_of_turn_tick: get_int(m, "end_of_turn_tick")?,
             time_mode: get_str(m, "time_mode")?,
@@ -1063,19 +1179,29 @@ impl EndOfTurnInfo {
 }
 impl FunctionFireRequest {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "FunctionFireRequest") {
+            return None;
+        }
         Some(FunctionFireRequest { player_id: get_int(m, "player_id")? })
     }
 }
 impl FunctionFire {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "FunctionFire") {
+            return None;
+        }
         Some(FunctionFire { soldier_id: get_int(m, "soldier_id")? })
     }
 }
 impl FunctionUpdateRequest {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "FunctionUpdateRequest") {
+            return None;
+        }
         Some(FunctionUpdateRequest {
             player_id: get_int(m, "player_id")?,
-            function: get_str(m, "function").unwrap_or_default(),
+            // `function` 必填（serde `Str`）：缺字段 ⇒ `None`（改前静默变空串）。
+            function: get_str(m, "function")?,
         })
     }
 }
@@ -1112,11 +1238,17 @@ pub struct DestroyObstacle {
 
 impl LifeQueuedDeath {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "LifeQueuedDeath") {
+            return None;
+        }
         Some(LifeQueuedDeath { entity_id: get_int(m, "entity_id")?, tick: get_int(m, "tick")? })
     }
 }
 impl EffectInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "EffectInfo") {
+            return None;
+        }
         Some(EffectInfo {
             effect_id: get_int(m, "effect_id")?,
             pos_x: get_f64(m, "pos_x")?,
@@ -1128,6 +1260,9 @@ impl EffectInfo {
 }
 impl DestroyObstacle {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "DestroyObstacle") {
+            return None;
+        }
         Some(DestroyObstacle {
             pos_x: get_f64(m, "pos_x")?,
             pos_y: get_f64(m, "pos_y")?,
@@ -1703,7 +1838,7 @@ mod emit_turn_sequence_tests {
         let line = r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.087"}}"#;
         let m = parse_message(line).unwrap();
         let owner = get_int(&m, "owner_id").unwrap();
-        let function = get_str(&m, "function").unwrap_or_default();
+        let function = get_str(&m, "function").unwrap();
         let corrected = get_str(&m, "corrected_function");
         assert_eq!(emit_function_info(owner, &function, corrected.as_deref()), line);
     }
@@ -1940,7 +2075,10 @@ macro_rules! passthrough_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
-                Some(Self { extra: split_fields(&m.body) })
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
+                Some(Self { extra: strict_extra_fields(&m.body, &[])? })
             }
             pub fn to_msg(&self) -> String {
                 emit_object(stringify!($ty), &[], &self.extra)
@@ -1962,10 +2100,13 @@ macro_rules! entity_str_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     entity_id: get_int(m, "entity_id")?,
                     $field: get_str_unescaped(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &["entity_id", stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &["entity_id", stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2062,10 +2203,13 @@ pub struct RankRequest {
 
 impl RankRequest {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "RankRequest") {
+            return None;
+        }
         Some(RankRequest {
             entity_id: get_int(m, "entity_id")?,
             rank: get_int(m, "rank"),
-            extra: extra_fields(&m.body, &["entity_id", "rank"]),
+            extra: strict_extra_fields(&m.body, &["entity_id", "rank"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -2090,10 +2234,13 @@ pub struct RankInfo {
 
 impl RankInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "RankInfo") {
+            return None;
+        }
         Some(RankInfo {
             entity_id: get_int(m, "entity_id")?,
             rank: get_int(m, "rank"),
-            extra: extra_fields(&m.body, &["entity_id", "rank"]),
+            extra: strict_extra_fields(&m.body, &["entity_id", "rank"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -2118,10 +2265,13 @@ pub struct VersionInfo {
 
 impl VersionInfo {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "VersionInfo") {
+            return None;
+        }
         Some(VersionInfo {
             version: get_str_unescaped(m, "version")?,
             system: get_str_unescaped(m, "system")?,
-            extra: extra_fields(&m.body, &["version", "system"]),
+            extra: strict_extra_fields(&m.body, &["version", "system"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -2147,11 +2297,14 @@ pub struct BotAdded {
 
 impl BotAdded {
     pub fn parse(m: &RawMessage) -> Option<Self> {
+        if !kind_is(m, "BotAdded") {
+            return None;
+        }
         Some(BotAdded {
             connection_id: get_int(m, "connection_id")?,
             player_id: get_int(m, "player_id")?,
             level: get_int(m, "level")?,
-            extra: extra_fields(&m.body, &["connection_id", "player_id", "level"]),
+            extra: strict_extra_fields(&m.body, &["connection_id", "player_id", "level"])?,
         })
     }
     pub fn to_msg(&self) -> String {
@@ -2521,9 +2674,12 @@ macro_rules! bool_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_bool(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2549,9 +2705,12 @@ macro_rules! i64_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_int(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2576,9 +2735,12 @@ macro_rules! opt_i64_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_int(m, stringify!($field)),
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2603,9 +2765,12 @@ macro_rules! str_field_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $field: get_str_unescaped(m, stringify!($field))?,
-                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($field)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2631,10 +2796,13 @@ macro_rules! i64_pair_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
                 Some(Self {
                     $a: get_int(m, stringify!($a))?,
                     $b: get_int(m, stringify!($b))?,
-                    extra: extra_fields(&m.body, &[stringify!($a), stringify!($b)]),
+                    extra: strict_extra_fields(&m.body, &[stringify!($a), stringify!($b)])?,
                 })
             }
             pub fn to_msg(&self) -> String {
@@ -2661,7 +2829,10 @@ macro_rules! empty_body_event {
         }
         impl $ty {
             pub fn parse(m: &RawMessage) -> Option<Self> {
-                Some(Self { extra: split_fields(&m.body) })
+                if !kind_is(m, stringify!($ty)) {
+                    return None;
+                }
+                Some(Self { extra: strict_extra_fields(&m.body, &[])? })
             }
             pub fn to_msg(&self) -> String {
                 emit_object(stringify!($ty), &[], &self.extra)
