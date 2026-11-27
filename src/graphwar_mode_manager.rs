@@ -108,6 +108,87 @@ impl TimeMode {
             TimeMode::TimerInf => "res://turn_inf.svg",
         }
     }
+
+    /// 协议里用的名字（serde 外部表示的变体名）。
+    ///
+    /// **逐位**：单态 `0x3cbce0` 的 `Serialize` 体里是跳表 `0x1c6350`（6 项），每个 case
+    /// 一条 `lea r?,[rip+变体名]` + `mov r32,LEN`（LEN 自校验）⇒ 线上写的就是变体名字面量。
+    /// 见 `fixtures/struct_audit_plan2.txt` §1 E6 与 `docs/06` §109.4。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TimeMode::Timer30s => "Timer30s",
+            TimeMode::Timer1m => "Timer1m",
+            TimeMode::Timer2m => "Timer2m",
+            TimeMode::Timer3m => "Timer3m",
+            TimeMode::Timer5m => "Timer5m",
+            TimeMode::TimerInf => "TimerInf",
+        }
+    }
+
+    /// 从协议名解析（反方向 = serde 的 `visit_str` 逐名字比较；未知名字返回 `None`，
+    /// 与 serde 的「未知变体 ⇒ 反序列化失败」一致）。
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "Timer30s" => TimeMode::Timer30s,
+            "Timer1m" => TimeMode::Timer1m,
+            "Timer2m" => TimeMode::Timer2m,
+            "Timer3m" => TimeMode::Timer3m,
+            "Timer5m" => TimeMode::Timer5m,
+            "TimerInf" => TimeMode::TimerInf,
+            _ => return None,
+        })
+    }
+}
+
+/// **协议名**（serde 外部表示）的两个方向：`serialize_str(变体名)` / `visit_str` 逐字节比较。
+///
+/// **逐位**：单态 `0x3cb560` 的 `Serialize` 体里是跳表 `0x1be124`（4 项），每个 case
+/// 一条 `lea r?,[rip+变体名]` + `mov r32,LEN`（LEN 自校验）；变体名与判别值见
+/// `fixtures/struct_audit2.tsv` 的 `AxisMode` 行（`docs/06` §109.4）。
+impl AxisMode {
+    /// 协议里用的名字。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AxisMode::NoAxis => "NoAxis",
+            AxisMode::OnlyMain => "OnlyMain",
+            AxisMode::EveryFive => "EveryFive",
+            AxisMode::EveryUnit => "EveryUnit",
+        }
+    }
+
+    /// 从协议名解析（未知名字 ⇒ `None`）。
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "NoAxis" => AxisMode::NoAxis,
+            "OnlyMain" => AxisMode::OnlyMain,
+            "EveryFive" => AxisMode::EveryFive,
+            "EveryUnit" => AxisMode::EveryUnit,
+            _ => return None,
+        })
+    }
+}
+
+/// **协议名**（serde 外部表示）的两个方向，见 [`AxisMode`] 的同一段说明。
+///
+/// **逐位**：单态 `0x3cb670` 没有跳表（2 变体走 `cmp byte,0` + `cmovne`），
+/// 两个变体名都在 `.rodata` 里、由 `Serialize` 的两条 `lea` 取用（`docs/06` §109.4）。
+impl FunctionMode {
+    /// 协议里用的名字。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FunctionMode::NormalFunction => "NormalFunction",
+            FunctionMode::DiffEqFunction => "DiffEqFunction",
+        }
+    }
+
+    /// 从协议名解析（未知名字 ⇒ `None`）。
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "NormalFunction" => FunctionMode::NormalFunction,
+            "DiffEqFunction" => FunctionMode::DiffEqFunction,
+            _ => return None,
+        })
+    }
 }
 
 /// 三个模式的**同一个**持有者。

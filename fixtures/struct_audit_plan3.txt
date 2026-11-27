@@ -1,0 +1,243 @@
+# T66 数据结构审计 · 第三轮 · 预注册（fixtures/struct_audit_plan3.txt）
+#
+# 生成于 2026-11-27，**提交早于**本轮任何结构体改动与 struct_audit2.tsv 的判定列重算。
+# 判据（§1）、清单（§2–§3）、每个结构体的**期望取证结果**（§2.3 / §3.3）都先写死；
+# 跑完不许改判据、不许改期望（对不上就如实写"期望错在哪"）。
+#
+# 本轮接的是 `docs/06` §109（T56 数据结构审计第二轮）§109.6 与 §109.9 留下的三条：
+#   ① `GameInfo` 的 5 个枚举字段没落地（拦路石 = `tests/` 的 `#[path]` 包含）；
+#   ② 12 条 unknown（非 serde 结构体只有 E7 下界）；
+#   ③ 我方 `GameInfo` 有 3 处形态（`_scaffold/protocol.rs::GameInfo`、`events.rs::GameInfo`、
+#      `_scaffold/protocol.rs::Broadcast`），要从 3 收敛到 1（`events.rs` 为权威）。
+#
+# 取证工具：**仍然只用 `tools/struct_audit.py`**（T32 建、T56 扩展的那个，不另起一套）。
+# 本轮在它里面新增 `bounds` 子命令（E8，见 §1），并让 `tsv2` 现场重算 E8。
+#
+# ⚠️ 盲测边界（诚实登记 —— 它决定这份预注册值多少）：
+#   * **§2 不是盲测**：§2 是 T56 §109.6-1/§109.6-4 已经点名的**明确下一步**，我在写本文件前
+#     已经读过 `src/events.rs` / `src/_scaffold/protocol.rs` / 14 个 `#[path]` 测试，并且已经
+#     把拦路石定位到行。§2 的价值在「改法与验收判据先写死」，不在「盲」。
+#   * **§3 半盲**：12 条 unknown 的窗口数字（偏移集合/跨度/下界）我在写前**已从
+#     `fixtures/struct_audit2.tsv` 读到**；但我**还没有**跑过 E8 夹逼，也没有把窗口偏移
+#     与我方结构体的字段偏移逐项对过。⇒ §3.3 的「预测结果」是**真预测**。
+#   * 写前已经知道的两条硬事实（不是预测，是读数）：
+#     a) 本分支基线 `struct_audit.py tsv2 --check` **已经是红的**：T57 把
+#        `src/_scaffold/graphwar_plane_class.rs` / `graphwar_lan_vbox_class.rs` 那批类搬进了
+#        `src/graphwar_plane.rs` / `src/graphwar_lan_vbox.rs`，tsv 里的「我方位置」列过期
+#        （盘上是旧路径、重算是新路径 + 0 字段）。⇒ 本轮必须把 tsv2 重算一遍才算过门槛。
+#     b) `tests/wire_format.rs::payload_structs_have_the_binary_key_order` 里 `time_mode`
+#        的期望串是 **`"Timers1m"`**（多一个 s）。**真值不是它**：冻结抓包
+#        `fixtures/protocol_live_frames.jsonl`（真 broker 帧）与 `fixtures/protocol.jsonl`
+#        全是 `"Timer1m"`，且 §109.4 的 E6 变体名 LEN 自校验也给出 `Timer1m`（7 字节）。
+#        ⇒ 这条断言是**我方自造期望值**（我方序列化器输出 vs 我方常量），错字一直没被咬到。
+#        本轮**不改这条断言**（任务书：断言一条不许动），把它当**已知回归风险**登记：
+#        §2.2 的改法必须让这条测试**仍然通过**，否则就是改法错，不是测试错。
+#
+# 复算工具（全部在 `tools/struct_audit.py` 里，没有第二个脚本）：
+#   tsv2 [--check]   bounds <addr>…    mono <addr>…    layout <addr>…    structs --tsv
+
+## 1. 判据（跑完不许改）
+
+### 1.1 沿用（E1–E7，一字未改，见 `fixtures/struct_audit_plan2.txt` §1）
+* **E1** 字段数（`struct <Name> with N elements` 的 serde 名串槽）；**E2** 字段名 + 声明顺序
+  （`lea rsi` 键序列）；**E3** 值偏移（`lea rcx,[self+k]`）；**E4** 尺寸**下界**；
+  **E5** 单态 → 类型类；**E6** 枚举变体名 + 判别值（跳表 / `cmp byte` 形态，LEN 自校验）；
+  **E7** 非 serde 结构体窗口（同一基址 ≥4 个固定偏移，只给下界）。
+* 判定规则同 plan2 §1：「match」= 字段数/名字/顺序（或变体集合+判别值）两边全等；
+  「unknown」= 只有下界；「mismatch」= 有上界/名字证据且不一致。
+
+### 1.2 本轮新增：E8 上界夹逼（三种源，全部指令级；**不许把下界当上界**）
+
+E8 要回答的是「这个窗口**最多**能有多大」，从而把 E7 的偏移集合截成
+`[0, U)` 内的字段偏移集合，再与我方结构体逐项比。
+
+| 源 | 判据（复算即 `cmd_bounds`） | 给出 | 档 |
+|---|---|---|---|
+| **E8a 调用方栈缓冲** | 锚点函数 f 的**直接** `call rel32` 调用点所在函数 C：在 C 里取 `sub rsp, N`（取最大者）；若调用 f 时 `rdi` 来自 `lea rdi,[rsp+k]`（或 `lea r,[rsp+k]` + `mov rdi,r`），则 `U = N − k` | 上界 | **推断**（只证明"至少分配了这么多栈"，不证明"这块就是那个结构体"） |
+| **E8b 调用方 / 自身 sret 缓冲** | 同上，但 f 是 **sret 返回**（返回大于 16 字节的结构体 ⇒ `rdi` 是出参）：调用方把 `mallloc` 的返回值或一块 `sub rsp` 出来的缓冲区当 `rdi` 传给 f，则 `U =` 那块缓冲长度 | 上界 | 推断 |
+| **E8c 同函数栈窗口** | 锚点函数 f 里同时出现 `sub rsp, N` 与 `lea r,[rsp+k]`，且**同一个基址寄存器窗口**的偏移都落在 `[k, k+?)`——只有当 `lea` 的指针确实是该窗口的基址（`mov <basereg>, r` 或 `lea <basereg>,[rsp+k]`）时成立 | 上界 | 推断 |
+
+**E8 的拒绝规则（写死，防止自欺）**：
+1. `U` 必须 **≥ E7 下界**，否则这条源**不成立**（说明那块缓冲不是这个结构体）；
+2. 只取**最小**的合格 `U`（多个调用方取 min）；
+3. 一条源都不成立 ⇒ 该行仍是 **unknown**，并在「备注」里写清
+   `E8a: 无直接调用点 / 调用方无栈缓冲 / 夹逼 < 下界` 这类**具体失败点**；
+4. 拿到 `U` 之后**不**允许把窗口偏移"裁剪到 ≤U"了就当对上：裁掉的偏移数必须记下来
+   （说明那部分偏移属于**另一个对象**，即窗口是多对象混采 —— 这本身是结论）。
+
+### 1.3 新增判定（E8 之后的档）
+* **match（偏移+宽度档）**：`U` 成立，且 `[0,U)` 内的窗口偏移集合 == 我方结构体字段偏移集合
+  （同一偏移的访问宽度也相等，宽度按 `mov/movsd/movss/...` 的 size 取最大）。**字段名仍无证据**
+  ⇒ 备注必须写「名字未证，只有偏移+宽度」。这是 plan2 §4 注释里允许的升档路径。
+* **mismatch**：`U` 成立，且 `[0,U)` 内存在我方结构体**解释不了**的偏移（无对应字段 /
+  宽度矛盾）。mismatch 必须写清是哪个偏移、对应我方哪个字段、差多少。
+* **unknown**：`U` 不成立（三条源全失败），或窗口明显混了多个对象且无法分离。
+  ⇒ 本轮**至少**要把每条 unknown 从「只有下界」推进到「下界 + 已试过的源 + 卡在哪」。
+
+## 2. 清单 A：`GameInfo` 5 个枚举落地 + 3 处形态收敛（本轮主目标）
+
+### 2.1 `GameInfo` 的 5 个字段换成真枚举（权威位置 = `src/events.rs`）
+
+| # | 字段 | 现类型（`events.rs:312`） | 目标类型 | 目标类型的定义处（已复原） | 证据 |
+|---|---|---|---|---|---|
+| 1 | `game_state` | `u8` | `crate::turnstate::GameState` | `src/turnstate.rs:38`（8 变体） | §109.4 E6 逐位 |
+| 2 | `axis_mode` | `u8` | `crate::graphwar_mode_manager::AxisMode` | `src/graphwar_mode_manager.rs:57`（4 变体） | 同上 |
+| 3 | `function_mode` | `u8` | `crate::graphwar_mode_manager::FunctionMode` | 同文件 `:68`（2 变体） | 同上 |
+| 4 | `turn_mode` | `u8` | `crate::graphwar_turn_manager::TurnMode` | `src/graphwar_turn_manager.rs:250`（2 变体） | 同上 |
+| 5 | `time_mode` | `u8` | `crate::graphwar_mode_manager::TimeMode` | 同文件 `:77`（6 变体） | 同上 |
+
+* `current_player_count` 已经是 `u32`（T56 定案，不动）；`locked` 已 `bool`；`room_name` 已 `String`。
+* `address` **按 T56 定的形态**：32 字节 / 1 字节 tag / 2 变体枚举、线上是字符串，但**身份
+  （`std::net::SocketAddr`）拿不到符号** ⇒ **继续用 `String`**，只把「形状 vs 身份」两档写清
+  （形状=观测，身份=推断）。本轮**不**改类型。
+* 判据（先写死）：
+  - **P-A1** `GameInfo` 的字段集与顺序仍然是 9 个、`GAME_INFO_FIELD_COUNT == 9` 不变；
+  - **P-A2** 5 个字段的**类型名**逐项等于上表目标类型（源码级 grep 可复算）；
+  - **P-A3** `events.rs` 能被**真 crate 引用**（`use gw2_rebuild::events::…`）编过 ——
+    即 §2.2 的取源改造完成后，`events.rs` 里出现 `crate::turnstate::…` 不再 `E0433`；
+  - **P-A4** 不引入新的重复枚举（仍允许 T56 §109.6-5 已登记的 5 处重复，本轮不动）。
+
+### 2.2 拦路石：`tests/` 的 `#[path]` 包含改成真 crate 引用（**只改取源方式**）
+
+现状（写前实测）：**14 个**测试文件用 `#[path = "../src/events.rs"] mod events;` 把源文件
+编进测试二进制；其中部分还成对包含 `graphwar_event_handler.rs` / `turnstate.rs` /
+`graphwar_game_recorder.rs` / `graphwar_replay_reader.rs`；**另有 4 个**测试文件
+`#[path]` 包含 `_scaffold/protocol.rs`（`graphwar_lan_broadcaster_v6` / `graphwar_server_broker_handler` /
+`server_broker_request_connection` / `graphwar_replay_reader`），§2.3 一改 `protocol.rs` 就要一起改。
+
+改法（先写死）：
+1. 每处 `#[path = "../src/X.rs"] mod X;` → `use gw2_rebuild::X;`（模块已在 `src/lib.rs` 里
+   `pub mod`，写前逐条核对）；`mod be;` 这类**改名**保留（`use gw2_rebuild::graphwar_backend as be;`）。
+2. **断言行一条不改**；只改 `mod`/`use` 的取源方式。测试条数、测试名、期望值全部不变
+   （判据：`cargo test` 总数与基线**逐位相同**）。
+3. `#[path]` 改成 crate 引用后，**私有** item 不能再被测试看见 ⇒ 若某个测试引用了私有 item，
+   如实登记并**保留该文件的 `#[path]`**（那一份不算完成），不许把 item 改 `pub` 来迁就测试。
+
+### 2.3 3 处形态 → 1 处（`events.rs` 权威）
+
+**写前实测的 3 处**（注意 T56 的 §109.6-4 数得对，只是路径要重新核）：
+1. `src/events.rs:312` `pub struct GameInfo`（9 字段，5 个枚举目前是 `u8`）；
+2. `src/_scaffold/protocol.rs:1844` `pub struct GameInfo`（9 字段、wire 串表示、`to_json`/`parse`）；
+3. `src/_scaffold/protocol.rs:80` `pub struct Broadcast`（同样 9 字段，T32 漏掉的那处）。
+
+改法（先写死；每处**单独 commit**）：
+* **C1**：`events.rs::GameInfo` → 真枚举（§2.1）+ `Default` 手写（不要求 5 个枚举都有 `Default`）。
+* **C2**：`_scaffold/protocol.rs::GameInfo` **不再定义结构体**：改成指向权威形态的
+  **JSON 视图**（wire DTO）。判据：
+  - 结构体字段集/键序与 `events::GameInfo` **逐项相同**（用一条**编译期 pin**：
+    `let GameInfo { room_name, game_state, … } = dto;` 与 `let events::GameInfo { … } = info;`
+    两处 `let` 解构都要求恰好这 9 个字段）**且**偏移/宽度不必相同（DTO 是 String 表示）；
+  - 提供 `From<&events::GameInfo>`（枚举 → 串）与 `TryFrom<&GameInfo>`（串 → 枚举，未知名字返回
+    `Err`）两个方向的转换 ⇒ 数据形状只有一处定义、wire 表示只是投影；
+  - `to_json` / `parse` 的**字节输出**与改前逐字节相同（判据：`tests/wire_format.rs`
+    与 `broker.rs` 的「逐字节等于抓包」测试全绿）。
+* **C3**：`_scaffold/protocol.rs::Broadcast` → 与 C2 的 DTO **合并成同一个类型**
+  （`pub use GameInfo as Broadcast;`），因为原版**只有一个** `struct GameInfo`。
+  判据：`Broadcast::parse(&str)` 与 `GameInfo::parse(&RawMessage)` 两个调用形态
+  **调用点零改动**（用一个泛型入口同时接受两种输入），`broker.rs` / 真实报文
+  「解析→重序列化逐字节相等」测试全绿。
+  ⚠️ **写前已知的两条硬约束**（它们决定 C3 能做到什么程度，跑完不许反悔）：
+  - `_scaffold/broker.rs` 的测试助手按 **`i64`** 构造 `current_player_count`
+    （`fn sample(addr: &str, players: i64)`），而 canonical 是 `u32` ⇒ 合并后的 DTO 的该字段
+    只能用 `i64`（JSON 数字载体），**u32 证据留在 canonical**。若认为这不可接受，
+    只能改 `broker.rs`（**本轮写域外**，不在我被允许改的文件里）。
+  - `tests/wire_format.rs` 的 `"Timers1m"` 错字断言**不改**（见文件头 §0 盲测边界 b）⇒
+    DTO 的 `parse` **不许**对 5 个枚举名做严格校验（否则该测试变红）；严格校验只在
+    `TryFrom<&DTO> for events::GameInfo` 里做。
+
+### 2.4 期望（先写死，跑完对照）
+* 5 个枚举字段 **5/5 落地**（若被拦：写明卡在哪个测试文件的哪一行、缺什么）。
+* 3 处形态：**GameInfo 两处 → 1 处**（C1+C2 完成后，`pub struct GameInfo` 的**定义**只剩
+  `events.rs` 一处）；`Broadcast` 与 wire DTO **合并成一处**（定义只剩 1 个 DTO 类型）。
+  ⇒ 结构体**定义数 3 → 2**（1 权威 + 1 wire 视图）。**能不能压到 1 见 §2.3 的两条硬约束**，
+  压不到不许含糊，必须在报告里点名是哪条约束。
+* `struct_audit2.tsv` 的 `GameInfo` 行：`match`，且「我方字段集」列改成**真类型**
+  （`game_state: GameState` 等），「备注」列删掉 T56 的「本轮已修…wire 编解码层仍用串」那段
+  （已经变成两形态）。
+
+## 3. 清单 B：12 条 unknown 的 E8 上界夹逼（本轮第二目标）
+
+### 3.1 清单（12 行 = `struct_audit2.tsv` 里判定为 `unknown` 的全部）
+| # | 结构体（T56 名） | E7 锚点函数 | E7 窗口（写前读数） | 我方现状（写前读数，T57 搬过家） |
+|---|---|---|---|---|
+| 1 | AxisDrawer | `0x3e2a00` | 18 偏移 / 跨度 310 / 下界 0x137 | `src/_scaffold/axis_drawer_class.rs`（gdext 类） |
+| 2 | ClientConnectionHandler | `0x45a340` | 8 偏移 / 下界 0x69 | `src/graphwar_client_connection_handler.rs` |
+| 3 | EffectAudioData | `0x5238c0` | 16 偏移 / 下界 0xea | `src/graphwar_audio_control.rs:269` |
+| 4 | FunctionEvolutionator | `0x41a9d0` | 12 偏移 / 下界 0xc0 | `src/graphwar_function_evolutionator.rs`（无同名结构体） |
+| 5 | GraphicsManager | `0x468d80` | 7 偏移 / 下界 0x98 | `src/graphwar_graphics_manager.rs`（无同名结构体） |
+| 6 | GraphwarGameRecorder | `0x3d4fa0` | 6 偏移 / 下界 0x49 | `src/graphwar_game_recorder.rs:226`（2 字段） |
+| 7 | GraphwarLanVBox | `0x4dec00` | 13 偏移 / 下界 0x92 | `src/graphwar_lan_vbox.rs`（gdext 类，T57 搬） |
+| 8 | GraphwarPlane | `0x4b5df0` | 6 偏移 / 下界 0xa0 | `src/graphwar_plane.rs`（gdext 类，T57 搬） |
+| 9 | LevelManager | `0x499740` | 8 偏移 / 下界 0xf8 | `src/graphwar_level_manager.rs`（无同名结构体） |
+| 10 | PatternSegment | `0x466d20` | 4 偏移 / 下界 0x50 | `src/graphwar_level_generator.rs:295`（7 字段） |
+| 11 | ReplayControl | `0x4c6f40` | 9 偏移 / 下界 0xa0 | `src/graphwar_replay_control.rs`（无同名结构体） |
+| 12 | ShotCalculator | `0x3c2bc0` | 11 偏移 / 下界 0xf8 | `src/graphwar_shot_calculator.rs`（无同名结构体） |
+
+### 3.2 `address` 身份（T56 §109.6-2 遗留，本轮只登记）
+* 已有：32 字节、1 字节 tag、2 变体、线上是串（形状 = 观测）；身份（`SocketAddr`）= 推断。
+* 本轮**只登记**：拿不到符号就**不改类型**；若能在 `struct_audit.py` 里补一条
+  「构造点读 32 字节」的取证（`0x3cbdb0` / `0x457790` 两个 `GameInfo` 调用者），
+  允许把形状从「观测」提到「逐位」，但**身份仍不许写成结论**。
+
+### 3.3 期望（先写死，跑完对照）
+* **预测**：12 行里**≥9 行仍是 unknown**（理由先写在这：这 12 个窗口里至少 7 个是
+  **gdext 类**——窗口的基址是 Godot 引擎对象，`+0x00..+0x60` 那段是引擎头，不是我方
+  Rust 结构体的字段；E8a/E8b 的夹逼给的是「栈/堆上那块缓冲有多大」，但**不能**证明
+  「窗口的哪个偏移是我们模型的哪个字段」）。**能升档的至多 2–3 行**，且只允许是
+  「偏移+宽度」档（名字仍无证据）。
+* **不预测具体是哪几行**（写死了就成了事后找补）；跑完如实报「预测 vs 实际」。
+* 每行的**最低要求**（这一条一定会达到）：从「只有 E7 下界一行字」推进到
+  「下界 + E8 三条源各自的结论 + 卡在哪」，并且**窗口里的偏移集合**在 tsv 里
+  按 `[0,U)`（若 U 到手）或全量（若没到手）列全。
+
+## 4. 本轮**不审**的东西（写在这里，防止事后找补）
+* 协议 58 个共用整数单态 `0x3cc060` 的 `WIRE_SPEC` 类型（T56 §109.6-3）：跨模块重构，不动。
+* T56 §109.6-5 的 5 处重复枚举（`AxisMode` 3 处 / `TimeMode` 2 处 / `FunctionMode` 2 处 /
+  `TurnMode` 2 处）：本轮只登记，**不**改别的模块（改法需要 `pub use` 收敛，属另一件事）。
+* `tests/` 的 `"Timers1m"` 错字（见 §0-b）：**只登记不改**。
+* `_scaffold/broker.rs` 的 `i64` 测试助手（见 §2.3）：**写域外，只登记**。
+* 我方的 `GameInfo` 归属模块问题（`events.rs` vs `graphwar_game_info.rs`，T56 §109.4 末）：
+  归属已由 `graphwar_game_info.rs` 的 `pub use` 登记，本轮**不搬家**（边界无证据不猜不搬）。
+
+## 5. 门槛（每处改动后跑，一位不许退）
+`cargo test --offline` **1853 / 0 / 1ignored**；`--features gdext-bindings` **1983 / 0 / 1**；
+`tools/coverage_matrix.py --check` OK（`COVERAGE_MATRIX_UPSTREAM=<主工作区>/.reference/upstream`）；
+`tools/check_doc_refs.py` rc=0；三轴 `fire 647 / batch 647 / batch_conv 637`；
+`tools/boundary_audit.py --check` mismatch 0；`struct_audit.py tsv --check` 与 `tsv2 --check` 都 OK；
+冻结快照 403 份未动。
+
+## 6. 复跑命令（本轮所有读数都能重算）
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<你的 target>
+
+$PY tools/struct_audit.py tsv2              # 重算 fixtures/struct_audit2.tsv（含 E8）
+$PY tools/struct_audit.py tsv2 --check      # 只校验
+$PY tools/struct_audit.py bounds 0x3e2a00 0x45a340 0x5238c0 0x41a9d0 0x468d80 \
+        0x3d4fa0 0x4dec00 0x4b5df0 0x499740 0x466d20 0x4c6f40 0x3c2bc0
+$PY tools/struct_audit.py layout 0x5060d0   # GameInfo 9 字段键序/偏移/单态/类型类
+$PY tools/struct_audit.py mono 0x3cb560 0x3cb670 0x3cbf70 0x3cbce0 0x3cc260
+$PY tools/struct_audit.py tsv --check       # 第一轮（§82）那张表必须仍 OK
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py
+$PY tools/boundary_audit.py --check
+```
+
+## 7. 追记（预注册**之后**发生的事；判据/期望一个字没改，只记事实）
+
+* **rebase**：本分支从基点 `6ff8938` rebase 到 `f5a43d0`（master，晚 22 个 commit：T53/T54/T55/T57/T58/
+  T59/T61/T62/T63/T64/T65/T68/T69）。冲突解在 `docs/06` §117.6 逐条写了；
+  `src/_scaffold/protocol.rs` 是**自动合并**（T53 真帧硬闸 + T64 的真帧 round-trip 都保住）。
+* **节号顺延**：§111 已被 T68 占、§112=T65、§113=T62、§114=T63、§115=T64、§116=T69
+  （`tools/docsec.py check` 现场读数）⇒ 本轮记录顺延到 **§117**。
+* **§2.3 的"3 处 → 2 处"变成"3 处 → 1 处"**：lead 批准了 §2.3 里点名的两条硬约束（改
+  `tests/wire_format.rs` 的 `"Timers1m"` 错字 + `_scaffold/broker.rs` 的 `i64`→`u32`），
+  所以 JSON 视图本身也被消掉，`protocol::GameInfo` 变成 `pub use crate::events::GameInfo;`
+  的**同一类型**（只留 serde 两个进出口）。判据 P-A1..P-A4 与 E8 判据不受影响。
+* **§3.3 的预测 vs 实际**：预测"≥9 行仍 unknown、至多 2–3 行能升档"。实际：4 行拿到上界、
+  1 行升到 mismatch（`PatternSegment`）、其余 7–8 行仍 unknown（其中 3 行补了函数指针槽证据）。
+  ⇒ **预测偏保守**（多 1–2 行拿到上界），如实记在这里。

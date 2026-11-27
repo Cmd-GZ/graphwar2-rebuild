@@ -1,8 +1,7 @@
 //! `graphwar_replay_control` 的验收：**列表异步加载 + 按 tick 播放**。
 //!
-//! ⚠️ 用 `#[path]` 把四个源码文件编进本测试二进制（本模块依赖
-//! `events::Event`、`turnstate::GameState`、`graphwar_game_recorder::EventInfo`），
-//! **不需要** `src/lib.rs` 加 `pub mod`。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 //!
 //! | 测试 | 钉住的东西 | 证据等级 |
 //! |---|---|---|
@@ -13,19 +12,12 @@
 //! | `process_advances_only_when_playing` | 60 tick/秒、floor | **推断**（时钟字段未解，口径同 replay_player） |
 #![allow(dead_code)]
 
-#[path = "../src/events.rs"]
-mod events;
+use gw2_rebuild::events;
 
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/turnstate.rs"]
-mod turnstate;
-#[path = "../src/graphwar_game_recorder.rs"]
-mod graphwar_game_recorder;
-#[path = "../src/graphwar_replay_control.rs"]
-mod graphwar_replay_control;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::turnstate;
+use gw2_rebuild::graphwar_game_recorder;
+use gw2_rebuild::graphwar_replay_control;
 
 use graphwar_game_recorder::{EventInfo, GraphwarEvent};
 use graphwar_replay_control::*;

@@ -298,38 +298,71 @@ pub const VARIANT_COUNT: usize = 74;
 ///
 /// ⇒ 原版这 9 个字段里有 **5 个是枚举**、1 个是整数、2 个是**不同**的串类型。
 ///
-/// **T56（`docs/06` §103）取证结论**：`current_player_count` 确证是 **`u32`**（4 字节 + itoa 的
+/// **T56（`docs/06` §109）取证结论**：`current_player_count` 确证是 **`u32`**（4 字节 + itoa 的
 /// 无符号路径）；5 个枚举字段的真类型就是我方**已复原且逐位复核过**的那 5 个枚举
 /// （`turnstate::GameState` / `graphwar_mode_manager::{AxisMode,FunctionMode,TimeMode}` /
-/// `graphwar_turn_manager::TurnMode`，变体名与判别值本轮全部 match）。
-/// ⚠️ **把它们写进本结构体的字段类型会被 `#[path]` 包含拦下**：`tests/` 里有 **20+ 个**测试用
-/// `#[path = "../src/events.rs"] mod events;` 直接包含本文件，一写 `crate::turnstate::…` 就
-/// `E0433: cannot find turnstate in the crate root`（本轮实测；T52 在另外 2 个文件上踩过同一个坑，
-/// 修法是先把那些测试改成引用真 crate）。⇒ 本轮**保留 `u8`**，把「改类型」登记为下一步（§103.6）。
-/// **仍登记**：`address` 原版是 32 字节、1 字节 tag、2 变体的枚举（推断 = `std::net::SocketAddr`，
-/// 拿不到符号 ⇒ 不改类型）；本结构体的**归属模块**也未知（这几个生成函数没有 `panic::Location`）。
-#[derive(Debug, Clone, Default)]
+/// `graphwar_turn_manager::TurnMode`，变体名与判别值**逐项** match）。
+///
+/// **T66（`docs/06` §111）已把 5 个枚举字段落成真类型**（此前是 `u8`）：拦路石是 `tests/` 里
+/// **14 个**文件用 `#[path = "../src/events.rs"] mod events;` 直接包含本文件 —— 本文件一旦出现
+/// `crate::turnstate::…` 就 `E0433: cannot find turnstate in the crate root`。本轮先把那批测试
+/// （连同 4 个 `#[path]` 包含 `_scaffold/protocol.rs` 的）换成**真 crate 引用**
+/// （`use gw2_rebuild::events;`，**断言行一条没动**，T52 先例），再改字段类型。
+///
+/// **仍登记（只登记不改）**：
+/// * `address` 原版是 **32 字节、1 字节 tag、2 变体**的枚举：形状 = 观测（`0x3cbab0` 单态 →
+///   尾调用 `0x3e73a0`，首指令 `cmp byte ptr [rdi], 0`；V4 分支 `add rdi,4`）；身份
+///   （`std::net::SocketAddr`）= **推断**，拿不到符号 ⇒ **继续用 `String`**。
+/// * 本结构体在**原版**的归属模块：serde impl 的完整路径是
+///   `graphwarrust::graphwar_game_info::…`（`docs/16` §30.9）⇒ 正确位置是
+///   [`crate::graphwar_game_info`]；本 crate 把结构体留在这里（历史原因），由
+///   `graphwar_game_info.rs` 再导出，`docs/02` §17.4 已登记。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameInfo {
+    /// `String`（24 字节，值偏移 `0x00`；单态 `0x3cb250`）。
     pub room_name: String,
     /// `enum GameState`（8 变体；单态 `0x3cc260`，表现 `0x46f020`、跳表 `0x1c17c0`）。
-    pub game_state: u8,
+    /// 值偏移 `0x41`。
+    pub game_state: crate::turnstate::GameState,
     /// **`u32`**（4 字节：由 `GameInfo` 内存布局的偏移差定；且 `0x3cc060` 单态体里是
-    /// itoa 的 u32 阈值 `0x2710`/`0x5f5e0ff` 且**无**符号检查 ⇒ 无符号 32 位）。
+    /// itoa 的 u32 阈值 `0x2710`/`0x5f5e0ff` 且**无**符号检查 ⇒ 无符号 32 位）。值偏移 `0x38`。
     pub current_player_count: u32,
     /// socket 地址（`"[::1]:35245"`）。原版是 **32 字节、1 字节 tag、2 变体**的枚举
     /// （`0x3cbab0` 单态 → 尾调用 `0x3e73a0`，首指令 `cmp byte ptr [rdi], 0`）。
     /// 形状是 `std::net::SocketAddr`，但**拿不到符号** ⇒ 身份=推断，本轮仍用 `String`（登记）。
+    /// 值偏移 `0x18`、占 `0x18..0x38` = 32 字节。
     pub address: String,
-    /// `enum AxisMode`（4 变体；单态 `0x3cb560`、跳表 `0x1be124`）。
-    pub axis_mode: u8,
-    /// `enum FunctionMode`（2 变体；单态 `0x3cb670`）。
-    pub function_mode: u8,
-    /// `enum TurnMode`（2 变体；单态 `0x3cbf70`）。
-    pub turn_mode: u8,
-    /// `enum TimeMode`（6 变体；单态 `0x3cbce0`、表现 `0x518a10`、跳表 `0x1c6350`）。
-    pub time_mode: u8,
+    /// `enum AxisMode`（4 变体；单态 `0x3cb560`、跳表 `0x1be124`）。值偏移 `0x3f`。
+    pub axis_mode: crate::graphwar_mode_manager::AxisMode,
+    /// `enum FunctionMode`（2 变体；单态 `0x3cb670`）。值偏移 `0x3c`。
+    pub function_mode: crate::graphwar_mode_manager::FunctionMode,
+    /// `enum TurnMode`（2 变体；单态 `0x3cbf70`）。值偏移 `0x3d`。
+    pub turn_mode: crate::graphwar_turn_manager::TurnMode,
+    /// `enum TimeMode`（6 变体；单态 `0x3cbce0`、表现 `0x518a10`、跳表 `0x1c6350`）。值偏移 `0x40`。
+    pub time_mode: crate::graphwar_mode_manager::TimeMode,
+    /// `bool`（值偏移 `0x3e`；单态 `0x3cbb80`）。
     pub locked: bool,
+}
+
+/// 手写 `Default`（**不**给 5 个枚举加 `Default` 依赖：原版这些枚举的 `Default` 无证据，
+/// 不去猜）。9 个字段全给"空/零/首变体"，只为「能默认构造」这一条用途
+/// （`tests/events.rs::game_info_field_count_is_pinned` 钉的就是这个）。
+impl Default for GameInfo {
+    fn default() -> Self {
+        Self {
+            room_name: String::new(),
+            game_state: crate::turnstate::GameState::Connecting,
+            current_player_count: 0,
+            address: String::new(),
+            axis_mode: crate::graphwar_mode_manager::AxisMode::NoAxis,
+            function_mode: crate::graphwar_mode_manager::FunctionMode::NormalFunction,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::SequentialTurns,
+            time_mode: crate::graphwar_mode_manager::TimeMode::Timer30s,
+            locked: false,
+        }
+    }
 }
 
 /// 观测到的字段个数，供测试钉住，防止"顺手加一个字段"。
 pub const GAME_INFO_FIELD_COUNT: usize = 9;
+

@@ -362,13 +362,13 @@ mod tests {
     fn info(address: &str) -> Broadcast {
         Broadcast {
             room_name: "Graphwar Game".into(),
-            game_state: "Setup".into(),
+            game_state: crate::turnstate::GameState::Setup,
             current_player_count: 2,
             address: address.into(),
-            axis_mode: "EveryUnit".into(),
-            function_mode: "NormalFunction".into(),
-            turn_mode: "SequentialTurns".into(),
-            time_mode: "Timer1m".into(),
+            axis_mode: crate::graphwar_mode_manager::AxisMode::EveryUnit,
+            function_mode: crate::graphwar_mode_manager::FunctionMode::NormalFunction,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::SequentialTurns,
+            time_mode: crate::graphwar_mode_manager::TimeMode::Timer1m,
             locked: false,
         }
     }

@@ -1,7 +1,7 @@
 //! `graphwar_effect_manager` 的验收：**特效登记、寿命 3600 tick、四类型判别值**。
 //!
-//! ⚠️ 这里用 `#[path]` 直接把 `src/graphwar_effect_manager.rs` 与 `src/events.rs`
-//! 编进本测试二进制，所以**不需要** `src/lib.rs` 里先加 `pub mod`。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 //!
 //! | 测试 | 钉住的东西 | 证据等级 |
 //! |---|---|---|
@@ -13,15 +13,10 @@
 //! | `payload_layout_matches_the_event_offsets` | +0x18 id / +0x1c tick / +0x20 type | **逐位**（与 `audio_control` 的 `+0x20` 分支互校） |
 #![allow(dead_code)]
 
-#[path = "../src/events.rs"]
-mod events;
+use gw2_rebuild::events;
 
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/graphwar_effect_manager.rs"]
-mod graphwar_effect_manager;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::graphwar_effect_manager;
 
 use events::Event;
 use graphwar_effect_manager::*;

@@ -224,7 +224,10 @@ impl GwLanV6 {
                 return false;
             }
             if let Some(info) = Broadcast::parse(t) {
-                if !is_known_time_mode(&info.time_mode) {
+                // T66 之后 `Broadcast::parse` 已经在**枚举层**做严格校验（未知变体名 ⇒ `None`），
+                // 所以这条"形状"闸对已知枚举名恒真；保留它作为 `docs/115` §5.3 变体 E 的**双重闸**
+                // （解析层 + 形状层），行为不变：`"Timers1m"` 在解析层就已经被丢。
+                if !is_known_time_mode(info.time_mode.as_str()) {
                     return false;
                 }
             } else {
@@ -324,16 +327,28 @@ impl GwLanV6 {
         locked: bool,
         port: i64,
     ) {
+        // T66：`Broadcast` = 原版 `struct GameInfo`（5 个真枚举字段），GDScript 传进来的是**线上名字**
+        // ⇒ 按变体名解析；**任一名字非法就整条不写**（与 serde「未知变体 = 反序列化失败」同口径，
+        // 也正是 `docs/115` §5.3 变体 E 观测到的行为）。
+        let (Some(game_state), Some(axis_mode), Some(function_mode), Some(turn_mode), Some(time_mode)) = (
+            crate::turnstate::GameState::from_str(&game_state.to_string()),
+            crate::graphwar_mode_manager::AxisMode::from_str(&axis_mode.to_string()),
+            crate::graphwar_mode_manager::FunctionMode::from_str(&function_mode.to_string()),
+            crate::graphwar_turn_manager::TurnMode::from_str(&turn_mode.to_string()),
+            crate::graphwar_mode_manager::TimeMode::from_str(&time_mode.to_string()),
+        ) else {
+            return;
+        };
         let info = Broadcast {
             room_name: room_name.to_string(),
-            game_state: game_state.to_string(),
-            current_player_count,
+            game_state,
+            current_player_count: u32::try_from(current_player_count.max(0)).unwrap_or(0),
             // 稍后由 `set_room_info` 覆盖成 `[::1]:port`
             address: String::new(),
-            axis_mode: axis_mode.to_string(),
-            function_mode: function_mode.to_string(),
-            turn_mode: turn_mode.to_string(),
-            time_mode: time_mode.to_string(),
+            axis_mode,
+            function_mode,
+            turn_mode,
+            time_mode,
             locked,
         };
         let p = u16::try_from(port.max(0)).unwrap_or(0);
@@ -380,7 +395,7 @@ impl GwLanV6 {
             return VarDictionary::new();
         }
         match Broadcast::parse(t) {
-            Some(info) if is_known_time_mode(&info.time_mode) => {
+            Some(info) if is_known_time_mode(info.time_mode.as_str()) => {
                 let mut d = VarDictionary::new();
                 d.set("room_name", &GString::from(info.room_name.as_str()));
                 d.set("game_state", &GString::from(info.game_state.as_str()));

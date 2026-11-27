@@ -14,33 +14,25 @@
 //! | `process_pipeline` | 先清过期、再收、再按闸发 | **观测**（`0x3de654` → `0x3de8d0` 的顺序） |
 #![allow(dead_code)]
 
-// `#[path]` 只在顶层 mod 上可靠，所以先平铺编进来再重导出成 `crate::_scaffold::protocol`。
-#[path = "../src/_scaffold/protocol.rs"]
-mod protocol_src;
+// 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+// crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
+use gw2_rebuild::_scaffold::protocol;
+use gw2_rebuild::graphwar_lan_broadcaster_v6;
+use gw2_rebuild::graphwar_lan_broadcaster_v6::*;
 
-mod _scaffold {
-    pub mod protocol {
-        pub use crate::protocol_src::*;
-    }
-}
-
-#[path = "../src/graphwar_lan_broadcaster_v6.rs"]
-mod graphwar_lan_broadcaster_v6;
-
-use graphwar_lan_broadcaster_v6::*;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-fn info(address: &str) -> protocol_src::Broadcast {
-    protocol_src::Broadcast {
+fn info(address: &str) -> protocol::Broadcast {
+    protocol::Broadcast {
         room_name: "Graphwar Game".into(),
-        game_state: "Setup".into(),
+        game_state: gw2_rebuild::turnstate::GameState::Setup,
         current_player_count: 2,
         address: address.into(),
-        axis_mode: "EveryUnit".into(),
-        function_mode: "NormalFunction".into(),
-        turn_mode: "SequentialTurns".into(),
-        time_mode: "Timer1m".into(),
+        axis_mode: gw2_rebuild::graphwar_mode_manager::AxisMode::EveryUnit,
+        function_mode: gw2_rebuild::graphwar_mode_manager::FunctionMode::NormalFunction,
+        turn_mode: gw2_rebuild::graphwar_turn_manager::TurnMode::SequentialTurns,
+        time_mode: gw2_rebuild::graphwar_mode_manager::TimeMode::Timer1m,
         locked: false,
     }
 }

@@ -389,19 +389,19 @@ fn payload_structs_have_the_binary_key_order() {
     // GameInfo：`--struct 0x5060d0` → 9 个字段，顺序如下
     let info = GameInfo {
         room_name: "Graphwar Game".into(),
-        game_state: "Setup".into(),
+        game_state: gw2_rebuild::turnstate::GameState::Setup,
         current_player_count: 2,
         address: "[::1]:35245".into(),
-        axis_mode: "EveryUnit".into(),
-        function_mode: "NormalFunction".into(),
-        turn_mode: "SequentialTurns".into(),
-        time_mode: "Timers1m".into(),
+        axis_mode: gw2_rebuild::graphwar_mode_manager::AxisMode::EveryUnit,
+        function_mode: gw2_rebuild::graphwar_mode_manager::FunctionMode::NormalFunction,
+        turn_mode: gw2_rebuild::graphwar_turn_manager::TurnMode::SequentialTurns,
+        time_mode: gw2_rebuild::graphwar_mode_manager::TimeMode::Timer1m,
         locked: false,
     };
     let want = concat!(
         r#"{"room_name":"Graphwar Game","game_state":"Setup","current_player_count":2,"#,
         r#""address":"[::1]:35245","axis_mode":"EveryUnit","function_mode":"NormalFunction","#,
-        r#""turn_mode":"SequentialTurns","time_mode":"Timers1m","locked":false}"#
+        r#""turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}"#
     );
     assert_eq!(info.to_json(), want);
     assert_eq!(GameInfo::parse(&parse_message(&format!("{{\"X\":{}}}", info.to_json())).unwrap()).unwrap(), info);

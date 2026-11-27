@@ -20995,3 +20995,175 @@ for i in (1,2,3):
 8. **`room_ttl_ms` 属性留着只为自检读数**（`client/tools/truth_fixes_probe.gd:55` 读它）——
    真正的判据已经在 Rust，`.gd` 里这个值不再参与任何计算。自检工具下次可以改成读
    `GwLanV6.provenance()`。
+
+## 119. T66 数据结构审计（第三轮）：`GameInfo` 的 5 个枚举字段落地 + 我方 `GameInfo` **3 处形态 → 1 处**；12 条 unknown 用新增的 **E8 上界夹逼**攻下 4 条（1 条判 mismatch）；5 处重复枚举收敛 3 处（2026-11-27，任务 T66 / 分支 `agent/struct-batch3`）
+
+> **节号**：rebase 到 `3ba5137` 后本节是**下一个空号**。现场读数（`tools/docsec.py check docs/06-verification.md`）：
+> `1..118`，§111=T68 / §112=T65 / §113=T62 / §114=T63 / §115=T64 / §116=T69 / §117=审计面④第三轮 / §118=T67。
+> ⚠️ **master `3ba5137` 的 `docs/06` 自带 3 个残留冲突标记 + §115 重号**（T67 合并没解干净：
+> 冲突区 ours = master 的 §111–§117、theirs = T67 的 §115）。本分支 rebase 时按「**两侧都保留 + T67 侧顺延为 §118**」
+> 解掉了那一个冲突区（不删任何人的正文，只重号 + 去标记）；§118 是 T67 的正文，不是本节的。
+> 请 lead 核对：这是**master 侧既有缺陷**，不是本分支引入的（`git show 3ba5137:docs/06-verification.md` 里就有标记）。
+> 预注册（判据 + 清单 + 期望**先写死**）：[`fixtures/struct_audit_plan3.txt`](../fixtures/struct_audit_plan3.txt)（`ea819d9`，早于任何改动）。
+> 表：[`fixtures/struct_audit2.tsv`](../fixtures/struct_audit2.tsv)（19 行，本轮重算）。工具仍是 [`tools/struct_audit.py`](../tools/struct_audit.py)（新增 `bounds` = E8，没有另起一套）。
+> 接 §109（T56 第二轮）§109.6/§109.9 留下的三条明确下一步。
+
+### 117.1 主目标①：`GameInfo` 的 5 个枚举字段**已落地**（判据 P-A1..P-A4 全过）
+
+| 字段 | 改前 | 改后 | 目标类型定义处 | 证据 |
+|---|---|---|---|---|
+| `game_state` | `u8` | `crate::turnstate::GameState` | `src/turnstate.rs:38`（8 变体） | §109.4 E6 **逐位** |
+| `axis_mode` | `u8` | `crate::graphwar_mode_manager::AxisMode` | `src/graphwar_mode_manager.rs:57`（4 变体） | 同上 |
+| `function_mode` | `u8` | `crate::graphwar_mode_manager::FunctionMode` | 同文件 `:68`（2 变体） | 同上 |
+| `turn_mode` | `u8` | `crate::graphwar_turn_manager::TurnMode` | `src/graphwar_turn_manager.rs:250`（2 变体） | 同上 |
+| `time_mode` | `u8` | `crate::graphwar_mode_manager::TimeMode` | 同文件 `:77`（6 变体） | 同上 |
+
+* `current_player_count: u32`、`locked: bool` 不动；**`address` 按 T56 定的形态留 `String`**
+  （32 字节 / 1 字节 tag / 2 变体 = **观测**；身份 `SocketAddr` = **推断**、拿不到符号 ⇒ 不改类型）。
+* `Default` 改手写（不给 5 个枚举加无证据的 `Default`）；给 4 个枚举补 serde 两方向的
+  `as_str`/`from_str`（名字 = E6 的变体名字面量；`GameState` 本来就有）。
+* **拦路石与解法**：`tests/` 里 **14 个**文件用 `#[path = "../src/events.rs"]` 把源文件编进测试二进制
+  ⇒ `events.rs` 一出现 `crate::turnstate::…` 就 `E0433`。按 T52 先例把 **17 个**测试文件的取源方式
+  （含 **4 个** `#[path]` 包含 `_scaffold/protocol.rs` 的）改成**真 crate 引用**，**断言行一条没动**。
+
+### 117.2 ⚠️ 计数口径变更（lead 已接受）：`cargo` 1853 → 1497（旧基点）/ **1520**（rebase 后）
+
+`#[path]` 把 src 文件编进测试二进制时，那个 src 文件里的 `#[cfg(test)] mod tests` 会**在每个包含它的
+测试二进制里再编一遍** ⇒ 旧计数里含 **356 条重复实例**。改真 crate 引用后每个 src 单元测试只在
+`src/lib.rs` 的 unittests 里跑一次。**判据（可复算）**：改后每个测试二进制跑的条数 == 该测试文件
+自己的顶层 `#[test]` 数（17/17 实测相等，`grep -c '#\[test\]' tests/<文件>.rs`）。
+⇒ **测试函数集合没变**（另 +1 条新 pin 测试）。本分支 rebase 到 `f5a43d0` 后读数 = **1520/0/1**
+（1497 + master 侧 T62/T64 新增的测试）；同一口径下 gdext = **1650/0/1**。
+**以后基线用这一口径**（本分支合并后：cargo **1520**、gdext **1650**；旧文档里的 1853/1983 含重复计数）。
+
+### 117.3 主目标③：我方 `GameInfo` **3 处形态 → 1 处**（lead 授权后达成）
+
+| 形态 | 位置 | 角色 |
+|---|---|---|
+| **唯一结构体定义** | `src/events.rs`（经 `src/graphwar_game_info.rs` 再导出） | 9 字段、真枚举 + `u32` + `String` + `bool` |
+| **同一类型**（`pub use`） | `src/_scaffold/protocol.rs` | 只挂 serde 两个进出口：`to_json`（键序 = `0x5060d0`）、`parse`（**严格**：5 个枚举按变体名解析，未知名字 ⇒ `None`，与 serde 同口径） |
+| **别名** | 同文件 `pub use GameInfo as Broadcast` | LAN 广播（裸对象）与事件负载用的是原版**同一个** `struct GameInfo` |
+
+**达成条件（两条都在本轮由 lead 授权后改掉）**：
+1. `tests/wire_format.rs` 的期望串 **`"Timers1m"` 是错字** —— 真值 `Timer1m`：真 broker 抓包
+   [`fixtures/protocol_live_frames.jsonl`](../fixtures/protocol_live_frames.jsonl)、
+   [`fixtures/protocol.jsonl`](../fixtures/protocol.jsonl)、以及 §109.4 的 E6 变体名 LEN 自校验（7 字节）
+   三方一致。**按 `AGENTS.md` §0.6「发现文档/断言与真值冲突就地改正并说明改了什么」改成 `Timer1m`**
+   （这是本轮唯一改动的断言行，已获 lead 明确授权）。
+2. `_scaffold/broker.rs` 的测试助手 `fn sample(addr: &str, players: i64)` → **`u32`**（T56 定案的计数字段
+   类型；1 行）。改完 JSON 数字载体与源类型一致，结构体才可能只剩一处定义。
+* 连带改动（都是**构造写法/字段路径**，断言语义不变）：`broker.rs` / `graphwar_lan_broadcaster_v6.rs` /
+  `graphwar_server_broker_handler.rs` / `tests/broker.rs` / `tests/graphwar_lan_broadcaster_v6.rs` /
+  `tests/graphwar_server_broker_handler.rs` / `tests/wire_format.rs` / `examples/emit_broadcast.rs` 里
+  `"Setup".into()` 这类字符串构造 → 真枚举变体（`GameState::Setup` 等）；`protocol.rs` 里
+  `b.time_mode == "Timer1m"` 的期望值 → `TimeMode::Timer1m`。
+* pin 测试 `game_info_has_one_definition_with_pinned_fields_and_key_order`：字段集（`let` 解构恰好 9 个）
+  + `to_json` 键序 == `GAME_INFO_FIELDS` + `to_json`/`parse` 往返 + **未知枚举名 ⇒ `None`**。
+
+### 117.4 主目标②：12 条 unknown —— 新增 **E8 上界夹逼**（+ 函数指针槽派发链），4 条拿到上界、1 条判 mismatch
+
+**E8 判据（先写死在 plan3 §1.2，一字未改）**：**E8a** 调用方栈缓冲（`sub rsp,N` + 调 f 时 `rdi=lea [rsp+k]`
+⇒ `U=N−k`）；**E8b** 分配尺寸立即数；**E8c** 同函数栈窗口（窗口基址被写成 `[rsp+k]`）。
+拒绝规则：`U < E7 下界` ⇒ 该源不成立；多源取 **min**；全失败 ⇒ 仍 unknown 但写清**具体卡点**。
+本轮把 **`tools/ptr_slots.py` 的判据搬进本工具**：调用者 = 直接 `call rel32` **∪** 「`.data.rel.ro` 里
+addend == 锚点的 `R_X86_64_RELATIVE` 槽」的使用点（不再另起一个脚本）。
+
+| 结构体 | E7 窗口 | E8 结果 | 判定 | 说明 |
+|---|---|---|---|---|
+| `PatternSegment` | 4 偏移 `0x0,0x8,0x10,0x48`、下界 0x50 | **E8a U=0x50**（21 条合格源取 min） | **mismatch** | 上界=下界 ⇒ 精确 0x50；但 `[0,U)` 内偏移 `0x0,0x8,0x10,0x48` ≠ 我方 7 字段布局 `0x0,0x8,0x10,0x18,0x20,0x24,0x28`。**保留登记：窗口前三个偏移正好是 `Vec<T>` 头（ptr/len/cap）⇒ 锚点很可能在操作某个 `Vec<PatternSegment>` 的父结构体，不是我方 `PatternSegment` 本身 —— 窗口归属存疑，不许当结论** |
+| `GraphwarLanVBox` | 13 偏移、下界 0x92 | **E8a U=0x98** | unknown（尺寸夹到 **[0x92,0x98]**） | 我方是 gdext 类（`base: Base<VBoxContainer>` + 私有字段），布局算不出 |
+| `EffectAudioData` | 22 偏移、跨度 232、下界 0xea | **E8a U=0x158** | unknown（尺寸 **[0xea,0x158]**） | 我方 3 字段（`slot/value/started`，`SoundSlot` 无尺寸表项）；22 偏移几乎肯定是**多对象混采** |
+| `ShotCalculator` | 11 偏移、下界 0xf8 | **E8c U=0x148** | unknown（尺寸 **[0xf8,0x148]**） | 我方该模块**没有** `ShotCalculator` 结构体（只有 `Obstacle`/`ShotOutcome`） |
+| `GraphwarPlane` | 6 偏移、下界 0xa0 | 无合格源；**函数指针槽 `0x9bb7f0`，派发点 1 处（`0x42937a` @`0x429320`）** | unknown | 有派发链但没有栈缓冲 |
+| `AxisDrawer` / `GraphicsManager` | 18 / 7 偏移 | 无合格源；**连静态函数指针槽都没有** | unknown | 0 直接调用 + 0 槽 ⇒ 静态不可见（经虚表/结构体字段传递或非入口） |
+| 其余 5 条 | 见 tsv | 无合格源 | unknown | 逐条写清：`ClientConnectionHandler` 夹逼只有 0x8（< 下界 0x69，按拒绝规则①不成立）；`FunctionEvolutionator`/`GraphwarGameRecorder`/`LevelManager`/`ReplayControl` 各 1 个直接调用者、无栈缓冲/分配立即数 |
+
+**统计**：`match 7 / mismatch 1 / unknown 11`（`GameInfo` 行由"类型 mismatch"→`match`；`PatternSegment` unknown→**mismatch**）。
+**顺带修掉基线红**：本分支 rebase 前 `tsv2 --check` 本来就是红的（T57 把 gdext 类搬回原版模块文件、tsv 路径过期），
+已按现状重算并新增 `_ours_layout`（私有字段也算）/ `_ours_offsets`（标量尺寸表，算不出就如实说算不出）。
+
+### 117.5 顺带：5 处重复枚举收敛 **3 处**（T56 §109.6-5 的遗留）
+
+| 枚举 | 改前 | 改后 | 怎么做的 |
+|---|---|---|---|
+| `FunctionMode` | 2 处（`graphwar_mode_manager` + `graphwar_level_manager`） | **1 处** | `graphwar_level_manager.rs` 的 3 个模式枚举（本模块**没有任何 impl**）删掉定义、改 `pub use` 规范位置 |
+| `TurnMode` | 2 处（`graphwar_turn_manager` + `graphwar_level_manager`） | **1 处** | 同上 |
+| `AxisMode` | 3 处（`graphwar_mode_manager` + `graphwar_level_manager` + `axis_drawer`） | **2 处** | level_manager 那份收敛；**`axis_drawer::AxisMode` 仍存**（它带 7 个绘图用固有方法，`ALL` 与 `graphwar_setup_control` 里同一类型的 `ALL` 撞名 ⇒ 合并要先去掉重复固有项，属行为风险 ⇒ 登记下一轮） |
+| `TimeMode` | 2 处（`graphwar_mode_manager` + `graphwar_setup_control`） | **2 处**（未收敛） | `graphwar_setup_control::TimeMode` 带 10 个界面用固有方法（`name`/`icon_path`/`duration_secs`/`next`/`prev`/…）⇒ 同上，登记下一轮 |
+
+### 117.6 rebase 到 `f5a43d0`：解了哪些冲突、两条硬闸与真帧样本保住了
+
+**四次 rebase**：先 `f5a43d0`（7 个 commit，解 `docs/149`/`coverage-matrix.tsv` 生成物冲突 + `docs/06` 冲突），
+随后 master 又前进到 `3ba5137`（T67 合并）⇒ 再 rebase 一次（10 个 commit，只解 `coverage` 两张生成物 + `docs/06`）。
+**解冲突清单**：
+1. `docs/149-coverage-matrix.md` / `docs/coverage-matrix.tsv` —— **生成物**冲突 ⇒ 取 master 侧，本轮末尾用
+   `tools/coverage_matrix.py` 重跑生成物（`--check` OK）；
+2. `src/_scaffold/protocol.rs` —— **自动合并**（T53 的真帧硬闸 + T64 的 19 条真帧 round-trip 与我的
+   GameInfo/Broadcast 收敛都在），人工复核后确认 **`captured_samples_are_the_live_wire_bytes`** 与
+   **`replays_every_live_frame_of_the_supplemented_kinds`（352 帧）** 两条硬闸**都跑且都绿**，
+   `fixtures/protocol_live_frames.jsonl` / `fixtures/protocol.jsonl` 未动一个字节；
+3. `docs/06-verification.md` —— 冲突（T62/T64/T69 已各占一节）⇒ 取 master 版，本节按现场读数**顺延为 §119**；
+4. `src/events.rs`（T56 的 `EventInfo{event,tick}`）、`tests/` 17 个文件（T52/T56/T64 的取源方式与断言）
+   —— **自动合并无冲突**；`tests/misc_modules.rs` / `tests/win_rule.rs`（T64 换真值的那两个）我**一行未动**。
+
+### 117.7 门槛与三轴（rebase 后重跑，一位不许退）
+
+| 项 | 读数 |
+|---|---|
+| `cargo test --offline` | **1520 / 0 / 1ignored**（口径见 §119.2） |
+| `cargo test --offline --features gdext-bindings` | **1650 / 0 / 1ignored** |
+| `tools/coverage_matrix.py --check` | OK（生成物重跑并提交；`src/` 树 3603 条 `fn`） |
+| `tools/check_doc_refs.py` | 退出码 0 |
+| `tools/boundary_audit.py --check` | match 441 / **mismatch 0** / multi 86 |
+| `tools/struct_audit.py tsv --check` | **OK（80 行）** |
+| `tools/struct_audit.py tsv2 --check` | **OK（19 行）** |
+| 三轴 `fire` / `batch` / `batch_conv` | ****fire 647 / batch 647 / batch_conv 637**（`--check-baseline` 三轴全 OK，语料指纹未变）** |
+| 冻结快照 | 403 个条目 = 401 份回放 + `MANIFEST.tsv` + `SHA256SUMS`（未动） |
+| `tools/docsec.py check docs/06-verification.md` | 无重号/无冲突标记（本节 = §119） |
+
+### 117.8 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<你的 target>
+
+# ① 结构审计（E8 上界 + 表重算/校验）
+$PY tools/struct_audit.py tsv2              # 写 fixtures/struct_audit2.tsv
+$PY tools/struct_audit.py tsv2 --check
+$PY tools/struct_audit.py bounds 0x3e2a00 0x45a340 0x5238c0 0x41a9d0 0x468d80 \
+        0x3d4fa0 0x4dec00 0x4b5df0 0x499740 0x466d20 0x4c6f40 0x3c2bc0
+$PY tools/struct_audit.py layout 0x5060d0
+$PY tools/struct_audit.py tsv --check
+
+# ② 门槛
+cargo test --offline                        # 1520 / 0 / 1
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py
+$PY tools/boundary_audit.py --check
+$PY tools/docsec.py check docs/06-verification.md
+
+# ③ 三轴（分开跑，数字带轴名）
+R=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+$PY tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $R
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+$PY tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $R
+cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict --drive batch --json c.jsonl
+$PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
+```
+
+### 117.9 遗留 / 下一轮建议
+
+1. **`axis_drawer::AxisMode` 与 `graphwar_setup_control::TimeMode` 两处重复**（§119.5）：收敛前必须先
+   把两处 `impl` 里的同名固有项（`ALL`）去重/合并 —— 有行为风险，留作独立一轮。
+2. **`GraphwarGameRecorder` 的字段数**：E7 窗口 6 个偏移 vs 我方 4 字段，E8 夹不到上界 ⇒ 结构边界仍对不上。
+3. **`GraphwarPlane` / `ShotCalculator` 的派发链**：槽 `0x9bb7f0` / `0x9bacb0` 已定位（§119.4），下一轮可沿
+   派发点找**构造点**（`Box::new` 的分配尺寸立即数 = E8b 完整版），这比栈缓冲可靠。
+4. **`AxisDrawer` / `GraphicsManager`**：0 直接调用 + 0 静态槽 ⇒ 要么经虚表/结构体字段传递，要么这两个
+   函数不是入口；下一轮先做正对照（已知有槽的函数）再下结论。
+5. `address` 的 32 字节枚举身份（`SocketAddr` = 推断）：仍缺符号或构造点 32 字节读证据。
+6. 本轮**没有把任何推断写成结论**：E8 上界一律标 `推断`、`address` 身份仍 `推断`、
+   `PatternSegment` 那行的窗口归属明写"存疑、不许当结论"。

@@ -1,9 +1,8 @@
 //! `graphwar_entity_effect_manager` 的验收：**死亡特效照抄实体登记**（这是
 //! `docs/141` 那 19 例「死亡块整块是 AshEffect」的解释）。
 //!
-//! ⚠️ 这里用 `#[path]` 把三个源码文件编进本测试二进制（本模块依赖
-//! `events::Event` 与 `graphwar_effect_manager::EffectType`），
-//! 所以**不需要** `src/lib.rs` 里先加 `pub mod`。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 //!
 //! | 测试 | 钉住的东西 | 证据等级 |
 //! |---|---|---|
@@ -18,17 +17,11 @@
 //! | `late_skin_only_rewrites_on_the_bot_prefix` | 迟到的皮肤只有 `bot_*` 改写 | **逐位**（`0x4aa358` 的 `b.ne`） |
 #![allow(dead_code)]
 
-#[path = "../src/events.rs"]
-mod events;
+use gw2_rebuild::events;
 
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/graphwar_effect_manager.rs"]
-mod graphwar_effect_manager;
-#[path = "../src/graphwar_entity_effect_manager.rs"]
-mod graphwar_entity_effect_manager;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::graphwar_effect_manager;
+use gw2_rebuild::graphwar_entity_effect_manager;
 
 use events::Event;
 use graphwar_effect_manager::EffectType;

@@ -7,28 +7,20 @@
 //! 地址口径同 `tests/graphwar_client_connection_handler.rs`：arm64 = Android 2.0.60
 //! 未 strip 构建的 ELF 虚地址；x86 = steam 2026-08-28（Ghidra = `+0x100000`）。
 //!
-//! 本文件用 `#[path]` 直接包含两个源文件（`src/lib.rs` 本轮不可改），
-//! 所以下面前两行 `mod` 是**成对**的：`graphwar_backend.rs` 里用
-//! `crate::graphwar_client_connection_handler::Link`，少一个就编不过。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 
 // T52：`src/graphwar_client_connection_handler.rs` 落了函数体之后开始 `use crate::…`
 // （帧层 / 事件队列 / 模块容器 / 事件枚举），`#[path]` 包含时 `crate::` 指到**测试二进制根**，
 // 所以下面把它的四个依赖也一并按 `#[path]` 挂到测试根上（`graphwar_event_queue` 只用
 // `crate::events::Event`，所以 `events` 必须在前）。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/events.rs"]
-mod events;
-#[path = "../src/graphwar_stream_buffer.rs"]
-mod graphwar_stream_buffer;
-#[path = "../src/graphwar_module_container.rs"]
-mod graphwar_module_container;
-#[path = "../src/graphwar_event_queue.rs"]
-mod graphwar_event_queue;
-#[path = "../src/graphwar_client_connection_handler.rs"]
-mod graphwar_client_connection_handler;
-#[path = "../src/graphwar_backend.rs"]
-mod be;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::events;
+use gw2_rebuild::graphwar_stream_buffer;
+use gw2_rebuild::graphwar_module_container;
+use gw2_rebuild::graphwar_event_queue;
+use gw2_rebuild::graphwar_client_connection_handler;
+use gw2_rebuild::graphwar_backend as be;
 
 /// 判据 1：本模块在 arm64 `.symtab` 里是 **18 个方法**。
 ///

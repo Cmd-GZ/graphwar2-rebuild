@@ -1,10 +1,8 @@
 //! `graphwar_target_manager` 的验收：**靶子表里没有「复原」这件事**，
 //! 复原的判定点在 `queue_end_turn_trigger` 的闭包里。
 //!
-//! ⚠️ 这里用 `#[path]` 直接把 `src/graphwar_target_manager.rs` 与 `src/events.rs`
-//! 编进本测试二进制，所以**不需要** `src/lib.rs` 里先加 `pub mod`。
-//! 两份源码都只依赖 `std`，因此这种引法是合法的；父 agent 加上 `pub mod` 之后
-//! 本文件可以改成 `use gw2_rebuild::graphwar_target_manager::*;` 而不改断言。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 //!
 //! 每条断言指向的证据见 `src/graphwar_target_manager.rs` 的模块文档
 //! （地址一律 vaddr，Ghidra 地址 = vaddr + `0x100000`）：
@@ -20,15 +18,10 @@
 //! | `reset_condition_truth_table` | 复原的三个条件（`0x4abc80`–`0x4abc94`） | **观测** |
 #![allow(dead_code)]
 
-#[path = "../src/events.rs"]
-mod events;
+use gw2_rebuild::events;
 
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/graphwar_target_manager.rs"]
-mod graphwar_target_manager;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::graphwar_target_manager;
 
 use events::Event;
 use graphwar_target_manager::*;
