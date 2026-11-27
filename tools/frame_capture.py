@@ -726,6 +726,372 @@ def wait_server_listening(srv_log, seconds=15.0):
     return False
 
 
+# ══════════════════════════════════════════════════════════════════════════════════
+# T76（2026-11-27）：**按 tick 停帧**（`--stop-plan` / `--stop-observe` 才生效）
+# ══════════════════════════════════════════════════════════════════════════════════
+#
+# 为什么需要：`--flow replay`/`--flow match` 原本用**墙钟 wait** 决定"拍第几帧"
+# （`('click', …, 2.0)` / `('wait', 45.0)`），同一份代码两次采集可给出不同读数 ——
+# `docs/06` §118.8 第 1 条记的 `replay_play`/`replay_end` 名字归属互换（1126/856 vs 856/856，
+# **总数 1982 px 逐位相同**）就是这么来的：差的那 270 px 是**我方回放屏多画的一根闪烁光标**
+# （3×90 px 白条，见 §120.4），不是渲染差异。
+#
+# 本节的机制（**默认全关**，不给参数时行为与改动前逐字相同）：
+#   * 目标进程里挂一个 **frida 只读探针**，每帧读该侧的**运行时 tick**：
+#       - 原版 = `GraphwarTickHandler` 的 `tick` 计数器（`0x519840` 的 `rdi` + `0x40`，
+#         时基/暂停标记的静态依据见 `docs/06` §63：每 tick +16_666_666 ns、`nanos==1e9` ⇔ 未暂停）；
+#       - 我方 = `GwReplayDriver::progress/tick`（每帧被 `_update_replay_ui()` 调）或
+#         `GraphwarPlane::set_fractional_tick(f64)`（曲线揭示每帧调，参数就是 tick 轴上的量）；
+#   * 探针值到预注册目标时，**在目标进程内** `raise(SIGSTOP)` ⇒ 冻住的正是那一帧
+#     （比"Python 收到消息再 kill"精确：没有 IPC 往返里多跑一帧的窗口）；
+#   * 拍完 `SIGCONT` 放行，继续下一屏；
+#   * `manifest.json` 记下**实际停在哪一 tick**（`frozen_value`）、探针名、目标值、冻结确认。
+#
+# 停帧规则本身**不在这里定**：预注册在 `fixtures/frame_capture_freeze_plan.txt`（单独 commit）。
+STOP_PLAN_DEFAULT = os.path.join(REPO, 'fixtures', 'frame_capture_freeze_plan.txt')
+STOP_KINDS = ('tick', 'frozen', 'ftick', 'progress', 'replay_tick', 'settle')
+STOP_PROBES = ('orig_tick', 'ours_progress', 'ours_tick', 'ours_ftick', 'none')
+
+
+def load_stop_plan(path):
+    """读预注册停帧表 → `{(flow, screen, side): {kind, value, probe, note}}`。
+
+    表格式（TSV，`#` 注释）：`flow  screen  side  stop_kind  stop_value  probe  note`
+    `side` 可以是 `original` / `ours` / `both`（`both` = 两侧共用一条）。
+    """
+    plan = {}
+    with open(path, encoding='utf-8') as f:
+        for ln in f:
+            ln = ln.rstrip('\n')
+            if not ln.strip() or ln.lstrip().startswith('#'):
+                continue
+            cols = [c.strip() for c in ln.split('\t')]
+            while len(cols) < 7:
+                cols.append('')
+            flow, screen, side, kind, value, probe, note = cols[:7]
+            if kind not in STOP_KINDS:
+                raise SystemExit('停帧表未知 stop_kind=%r（行：%r）' % (kind, ln))
+            if probe and probe not in STOP_PROBES:
+                raise SystemExit('停帧表未知 probe=%r（行：%r）' % (probe, ln))
+            plan[(flow, screen, side)] = {'kind': kind, 'value': value,
+                                          'probe': probe, 'note': note, 'line': ln}
+    return plan
+
+
+def stop_spec_for(plan, flow, screen, side):
+    return plan.get((flow, screen, side)) or plan.get((flow, screen, 'both'))
+
+
+def auto_probe(side, flow):
+    """没写 probe 时的默认探针（原版 = 时基 tick；我方回放 = 驱动 tick；我方对局 = 曲线 tick）。"""
+    if side == 'original':
+        return 'orig_tick'
+    return 'ours_tick' if flow == 'replay' else 'ours_ftick'
+
+
+def freeze_agent_source():
+    """frida 只读探针（T76）。**只读目标内存 + 到点数调用**，不写目标进程一个字节。
+
+    口径：地址一律 **ELF vaddr（RVA）**，下断 = `base + RVA`（见 `AGENTS.md` 地址空间那条）。
+    """
+    return r"""
+'use strict';
+// T76 停帧探针：每帧读该侧的运行时 tick；到预注册目标时用 raise(SIGSTOP) 把进程冻在那一帧。
+const ORIG_TICK_RVA = 0x519840;   // GraphwarTickHandler::tick（rdi = &handler；tick@+0x40，暂停标记@+0x28）
+let probes = {};                  // name -> {last, calls, info}
+let armed = false, target = null, armedProbe = null, stopped = false, stopValue = null;
+let events = [];
+
+function ev(o) { if (events.length < 300) events.push(o); try { send(o); } catch (e) {} }
+function f64(buf) { try { return new Float64Array(buf)[0]; } catch (e) { return null; } }
+function findSym(m, needle) {
+  try { const ss = m.enumerateSymbols();
+    for (let i = 0; i < ss.length; i++) if (ss[i].name.indexOf(needle) >= 0) return ss[i];
+  } catch (e) {}
+  return null;
+}
+function observe(name, v) {
+  let p = probes[name];
+  if (!p) { p = probes[name] = {last: null, calls: 0}; }
+  p.last = v; p.calls += 1;
+  if (armed && !stopped && name === armedProbe && v !== null && v >= target) {
+    stopped = true; stopValue = v;
+    ev({type: 'frozen', probe: name, value: v, target: target, calls: p.calls});
+    try {
+      const raise = new NativeFunction(Module.getGlobalExportByName('raise'), 'int', ['int']);
+      raise(19);                  // SIGSTOP：进程内同步生效 —— 截的就是这一帧
+    } catch (e) { ev({type: 'stop_err', msg: '' + e}); }
+  }
+}
+function install(name) {
+  if (probes[name]) return probes[name].info || {ok: true, detail: 'already'};
+  let ok = false, detail = '';
+  if (name === 'orig_tick') {
+    const m = Process.findModuleByName('libgraphwarrust.so');
+    if (m) {
+      Interceptor.attach(m.base.add(ORIG_TICK_RVA), {
+        onEnter() { try { observe('orig_tick', this.context.rdi.add(0x40).readU32()); } catch (e) {} },
+      });
+      ok = true; detail = 'libgraphwarrust.so+' + ORIG_TICK_RVA.toString(16) + ' (tick@+0x40)';
+    } else { detail = 'libgraphwarrust.so 没加载（不是我方构建？）'; }
+  } else if (name === 'ours_progress' || name === 'ours_tick') {
+    const m = Process.findModuleByName('libgw2_rebuild.so');
+    const needle = name === 'ours_progress' ? 'GwReplayDriver8progress' : 'GwReplayDriver4tick';
+    const sym = m ? findSym(m, needle) : null;
+    if (sym) {
+      if (name === 'ours_progress') {
+        Interceptor.attach(sym.address, { onLeave() { observe('ours_progress', f64(this.context.xmm0)); } });
+      } else {
+        Interceptor.attach(sym.address, { onLeave() { observe('ours_tick', this.context.rax.toInt32()); } });
+      }
+      ok = true; detail = sym.name;
+    } else { detail = 'symbol *' + needle + ' 找不到'; }
+  } else if (name === 'ours_ftick') {
+    const m = Process.findModuleByName('libgw2_rebuild.so');
+    const sym = m ? findSym(m, 'GraphwarPlane19set_fractional_tick') : null;
+    if (sym) {
+      Interceptor.attach(sym.address, { onEnter() { observe('ours_ftick', f64(this.context.xmm0)); } });
+      ok = true; detail = sym.name;
+    } else { detail = 'symbol *GraphwarPlane19set_fractional_tick 找不到'; }
+  } else { detail = 'unknown probe ' + name; }
+  if (!probes[name]) probes[name] = {last: null, calls: 0};
+  probes[name].info = {ok: ok, detail: detail};
+  ev({type: 'probe', probe: name, ok: ok, detail: detail});
+  return probes[name].info;
+}
+rpc.exports = {
+  cfg(o) {
+    o = o || {};
+    const names = o.probes || (o.probe ? [o.probe] : []);
+    const out = {};
+    for (const n of names) out[n] = install(n);
+    return out;
+  },
+  arm(o) {
+    armedProbe = (o && o.probe) || 'orig_tick';
+    target = Number((o && o.target) || 0);
+    armed = true; stopped = false; stopValue = null;
+    return {probe: armedProbe, target: target};
+  },
+  disarm() { armed = false; return true; },
+  state() {
+    const p = {};
+    for (const k in probes) p[k] = {last: probes[k].last, calls: probes[k].calls, info: probes[k].info || null};
+    return {probes: p, armed: armed, target: target, armed_probe: armedProbe,
+            stopped: stopped, stop_value: stopValue, events: events.slice(-40)};
+  },
+};
+"""
+
+
+def _proc_state(pid):
+    """`/proc/<pid>/stat` 的状态字母（`T` = 被 SIGSTOP 冻住；`R`/`S` = 在跑）。"""
+    try:
+        with open('/proc/%d/stat' % pid) as f:
+            return f.read().rsplit(')', 1)[1].split()[0]
+    except (OSError, IndexError):
+        return ''
+
+
+def _wait_proc_state(pid, wanted, seconds):
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        if _proc_state(pid) in wanted:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _probe_series(freezer, probe, n=4, gap=0.1):
+    """标定用：连续读 n 次探针值（判断"这个探针到底有没有在动"）。"""
+    out = []
+    for _ in range(n):
+        try:
+            st = freezer.state()
+            p = (st.get('probes') or {}).get(probe) or {}
+            out.append(p.get('last'))
+        except Exception:  # noqa: BLE001
+            out.append(None)
+        time.sleep(gap)
+    return out
+
+
+class StopFreezer:
+    """按 tick 停帧的代理（T76）：装探针 → 到点冻住 → 拍 → 放行。
+
+    冻结有两种来源，两者都会在 `record` 里标清：
+    * `tick` / `ftick` / `progress` / `replay_tick` —— 目标进程内 `raise(SIGSTOP)`（**在那一帧内**）；
+    * `frozen` —— 探针值连续 N 次采样不变（= 时钟已停，例如回放载入即暂停）⇒ 本侧发 SIGSTOP；
+    * `settle` —— 该侧这一屏**没有可读的运行时 tick**（我方对局屏的动画走墙钟，见 §120.6），
+      只能墙钟等：登记为**推断**，并在 manifest 里把 `frozen_value` 留空。
+    """
+
+    def __init__(self, pid, side, log_path=None):
+        import frida                                    # 只有启用停帧才需要 frida
+        self.pid = pid
+        self.side = side
+        self.dev = frida.get_local_device()
+        self.session = self.dev.attach(pid)
+        self.script = self.session.create_script(freeze_agent_source(), runtime='v8')
+        self.msgs = []
+        self.log_path = log_path
+        self.fout = open(log_path, 'w', encoding='utf-8') if log_path else None
+        self.script.on('message', self._on_message)
+        self.script.load()
+
+    def _on_message(self, msg, _data):
+        if msg.get('type') == 'error':
+            rec = {'type': 'js_error', 'msg': msg.get('description')}
+        else:
+            rec = msg.get('payload') or {}
+        self.msgs.append(rec)
+        if self.fout is not None:
+            self.fout.write(json.dumps(rec, ensure_ascii=False) + '\n')
+            self.fout.flush()
+
+    def configure(self, probes):
+        return self.script.exports_sync.cfg({'probes': list(probes)})
+
+    def arm(self, probe, target):
+        return self.script.exports_sync.arm({'probe': probe, 'target': target})
+
+    def state(self):
+        return self.script.exports_sync.state()
+
+    def disarm(self):
+        try:
+            return self.script.exports_sync.disarm()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def begin(self, spec, side, flow, timeout=60.0, snap_probe=None):
+        """按预注册规则把这一屏停住；返回 `record`（拍完调 `end` 收尾）。
+
+        `snap_probe`（可选，只有 `settle` 用）= 一个"现在截一帧并回 sha256"的函数：
+        停帧前先过一道**内容稳定闸**（相邻两帧逐字节相同才停），因为墙钟偏移猜不准
+        "我方这一屏什么时候才算过渡完"（实测跨轮 5.7 s 已稳 / 6.0 s 还没稳）。
+        """
+        kind = spec['kind']
+        probe = spec['probe'] or auto_probe(side, flow)
+        rec = {'stop_kind': kind, 'stop_value_requested': spec['value'],
+               'stop_probe': probe if probe != 'none' else None, 'stop_line': spec['line']}
+        if kind == 'settle':
+            # 这一屏该侧没有可读的运行时 tick（我方对局屏动画走墙钟）⇒ 先按墙钟等到
+            # `stop_value` 秒，再过一个**内容稳定闸**：连拍（0.6 s 间隔）直到相邻两帧
+            # **逐字节相同**才停 —— 墙钟秒数只是"最早可以开始等"的下界，真正的停帧判据是
+            # "画面不再变"这件事本身（不是猜秒数）。停住之后 3 帧自然逐字节相同。
+            time.sleep(float(spec['value']))
+            if snap_probe is not None:
+                hist = []
+                prev = snap_probe()
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    time.sleep(0.6)
+                    cur = snap_probe()
+                    hist.append({'prev': prev[:12], 'cur': cur[:12],
+                                 't_rel': round(time.time(), 3), 'same': cur == prev})
+                    if cur == prev:
+                        break
+                    prev = cur
+                else:
+                    raise RuntimeError('内容稳定闸超时：%.0fs 内没出现相邻两帧逐字节相同（%s）'
+                                       % (timeout, hist[-3:]))
+                rec['stop_stable_probes'] = hist[-4:]
+            os.kill(self.pid, signal.SIGSTOP)
+            rec['stop_frozen'] = _wait_proc_state(self.pid, ('T',), 5.0)
+            rec['stop_inferred'] = True                # 没有运行时 tick 读数 ⇒ 推断
+            return rec
+        info = self.configure([probe])
+        rec['stop_probe_info'] = info.get(probe)
+        if not (rec['stop_probe_info'] or {}).get('ok'):
+            raise RuntimeError('停帧探针装不上：%s（%s）' % (probe, rec['stop_probe_info']))
+        if kind == 'frozen':
+            n = int(float(spec['value']))
+            hist, t0, got = [], time.time(), None
+            while time.time() - t0 < timeout:
+                st = self.state()
+                p = (st.get('probes') or {}).get(probe) or {}
+                if p.get('calls'):
+                    hist.append(p.get('last'))
+                    if len(hist) > n and all(v == hist[-1] for v in hist[-(n + 1):]):
+                        got = hist[-1]
+                        break
+                time.sleep(0.12)
+            if got is None:
+                raise RuntimeError('停帧失败：%s 的值在 %.0fs 内没连续 %d 次采样不变'
+                                   '（最近采样：%s）' % (probe, timeout, n, hist[-12:]))
+            rec['stop_value_inferred'] = got
+            os.kill(self.pid, signal.SIGSTOP)          # 时钟已停，这里只是把 3 帧钉成逐字节相同
+            rec['stop_frozen'] = _wait_proc_state(self.pid, ('T',), 5.0)
+            return rec
+        # tick / ftick / progress / replay_tick：进程内 raise(SIGSTOP)
+        # 目标值支持 `+K` = **相对 arming 时刻的读数**（跨轮 boot 时间会飘，绝对值钉不住同一视觉状态；
+        # 相对值钉的是"从同一个协议点起再走 K 个 tick"，才是可复现的那条口径）
+        raw = str(spec['value'])
+        if raw.startswith('+'):
+            st = self.state()
+            cur = ((st.get('probes') or {}).get(probe) or {}).get('last')
+            if cur is None:
+                self.disarm()
+                raise RuntimeError('停帧失败：相对目标 %r 需要探针先有读数（%s 一次都没调到）'
+                                   '—— 这一屏没有该探针时停帧表应写 settle' % (raw, probe))
+            target = float(cur) + float(raw[1:])
+            rec['stop_target_basis'] = cur
+        else:
+            target = float(raw)
+        rec['stop_value_target'] = target
+        self.arm(probe, target)
+        ok = _wait_proc_state(self.pid, ('T',), timeout)
+        rec['stop_frozen'] = ok
+        if not ok:
+            self.disarm()
+            raise RuntimeError('停帧失败：%s 在 %.0fs 内没到 %s（进程没被冻住）' %
+                               (probe, timeout, spec['value']))
+        return rec
+
+    def end(self, rec, settle_after=0.35):
+        """拍完：SIGCONT 放行 → 再读冻结值 → 解除武装 → 写回实际 tick。
+
+        ⚠️ 顺序是硬的：**进程冻在 SIGSTOP 上时 frida RPC 一律不通**（目标进程所有线程都停了），
+        所以必须先 SIGCONT、等等它真的跑起来，才能问冻结值 —— 反着写会**永远挂住**
+        （2026-11-27 实测踩过，第一次跑就这么卡的）。
+        """
+        if rec.get('stop_frozen'):
+            os.kill(self.pid, signal.SIGCONT)
+            _wait_proc_state(self.pid, ('R', 'S', 'D'), 10.0)
+            time.sleep(0.15)                            # 让被冻住的那条 frida 钩子先返回
+        st = None
+        for _ in range(20):
+            try:
+                st = self.state()
+                break
+            except Exception as e:  # noqa: BLE001
+                st = {'err': str(e)}
+                time.sleep(0.1)
+        self.disarm()
+        probes = (st or {}).get('probes') or {}
+        probe = rec.get('stop_probe')
+        p = probes.get(probe) or {}
+        rec['stop_value_observed'] = p.get('last')       # 放行后读到的**探针当前值**
+        rec['stop_value_frozen'] = (st or {}).get('stop_value') or rec.get('stop_value_inferred')
+        rec['stop_probe_calls'] = p.get('calls')
+        rec['stop_events'] = [e for e in ((st or {}).get('events') or []) if 'frozen' in str(e.get('type'))]
+        rec['stop_resumed_at'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+        time.sleep(settle_after)
+        return rec
+
+    def close(self):
+        try:
+            self.session.detach()
+        except Exception:  # noqa: BLE001
+            pass
+        if self.fout is not None:
+            try:
+                self.fout.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -776,6 +1142,19 @@ def main(argv=None):
                          'pck = 导出模板 + 同名 .pck（4.7.0 release export template 只认这种）')
     ap.add_argument('--ours-pck-dir', default=None,
                     help='--ours-mode pck 时：放 <引擎同名词>.pck 与 libgw2_rebuild.so 的目录')
+    # ── T76（按 tick 停帧；**不给这两个参数时行为与改动前逐字相同**）──────────────────
+    ap.add_argument('--stop-plan', nargs='?', const=STOP_PLAN_DEFAULT, default=None,
+                    help='预注册停帧表（默认 %s）：按该侧的**运行时 tick** 决定停在哪一帧，'
+                         '而不是墙钟 wait。给 `-` 时用 --freeze-tick 的单值（见下）。'
+                         % os.path.basename(STOP_PLAN_DEFAULT))
+    ap.add_argument('--freeze-tick', type=float, default=None,
+                    help='T76 单值覆盖：所有**计划里列出的屏**都停在这个 tick 上（调试用）')
+    ap.add_argument('--stop-observe', action='store_true',
+                    help='T76 标定模式：只装探针、每屏记录 tick 读数（**不冻结**），用来定预注册值')
+    ap.add_argument('--stop-probe', default=None, choices=list(STOP_PROBES),
+                    help='T76 --stop-observe 用哪个探针（默认按 side/flow 自动）')
+    ap.add_argument('--stop-timeout', type=float, default=60.0,
+                    help='T76 等"探针到目标/值稳定"的上限秒数（默认 60）')
     args = ap.parse_args(argv)
 
     out = os.path.abspath(args.out)
@@ -813,6 +1192,23 @@ def main(argv=None):
     if args.seed_replays:
         manifest['replays_seeded'] = seed_replays(args.side, home, args.snapshot)
         log('回放已就位: %s' % manifest['replays_seeded'])
+
+    # ── T76：预注册停帧表（不给 --stop-plan/--stop-observe ⇒ 下面全不生效）───────────────
+    stop_plan = None
+    if args.stop_plan and args.stop_plan != '-':
+        path = os.path.abspath(args.stop_plan)
+        if not os.path.exists(path):
+            raise SystemExit('找不到预注册停帧表: %s' % path)
+        stop_plan = load_stop_plan(path)
+        with open(path, 'rb') as f:
+            manifest['stop_plan'] = {'path': path, 'sha256': hashlib.sha256(f.read()).hexdigest(),
+                                     'lines': len(stop_plan)}
+        log('停帧表: %s（%d 条规则）' % (os.path.basename(path), len(stop_plan)))
+    elif args.stop_plan == '-':
+        if args.freeze_tick is None:
+            ap.error('--stop-plan - 需要同时给 --freeze-tick')
+        stop_plan = {}
+        manifest['stop_plan'] = {'path': None, 'sha256': None, 'freeze_tick': args.freeze_tick}
 
     # ── T8：`--flow match` 要一台脚本化服务器把局面钉死（只在这条分支上做，既有三支不受影响）──
     # ── T8 / T18 / T20：脚本化服务器（`match` / `endgame` / 大厅·设置·连接·对局弹窗各支）──
@@ -891,7 +1287,7 @@ def main(argv=None):
         log('静默 TCP 监听就绪：127.0.0.1:%d（只收不发）' % CONNECT_SILENT_PORT)
         manifest['silent_listener'] = {'port': CONNECT_SILENT_PORT, 'log': silent_files[0]}
 
-    xvfb = game = None
+    xvfb = game = freezer = None
     xlog = flog = None
     ok = False
     try:
@@ -913,6 +1309,38 @@ def main(argv=None):
         log('窗口 %s 几何 %sx%s+%s+%s' % (win, geo.get('WIDTH'), geo.get('HEIGHT'),
                                           geo.get('X'), geo.get('Y')))
         time.sleep(args.settle_boot)
+
+        # ── T76：停帧代理（`--stop-plan` / `--stop-observe` 才建；否则一行都不跑）────────
+        freezer = None
+        if stop_plan is not None or args.stop_observe:
+            try:
+                freezer = StopFreezer(game.pid, args.side,
+                                      os.path.join(out, 'stop_agent.jsonl'))
+                log('停帧代理已挂上 pid=%d（frida）' % game.pid)
+                manifest['stop_agent'] = {'pid': game.pid,
+                                          'log': os.path.join(out, 'stop_agent.jsonl'),
+                                          'observe': bool(args.stop_observe)}
+                # 探针必须**在进屏之前**装好：原版回放屏"载入即暂停" ⇒ 进屏之后 tick 钩子
+                # 一次都不会再被调到（实测：进屏后才装 ⇒ calls 恒 0，等不到"值不变"）。
+                want = []
+                if stop_plan:
+                    for (fl, sc, sd), spec in stop_plan.items():
+                        if fl == args.flow and sd in (args.side, 'both'):
+                            pr = spec['probe'] or auto_probe(args.side, args.flow)
+                            if pr and pr != 'none' and pr not in want:
+                                want.append(pr)
+                if args.stop_observe:
+                    pr = args.stop_probe or auto_probe(args.side, args.flow)
+                    if pr and pr != 'none' and pr not in want:
+                        want.append(pr)
+                if want:
+                    info = freezer.configure(want)
+                    manifest['stop_agent']['probes'] = info
+                    log('停帧探针预装：%s' % {k: (v or {}).get('ok') for k, v in info.items()})
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError('停帧代理挂不上（frida attach 失败）：%s' % e)
+        if freezer is not None:
+            manifest.setdefault('stops', [])
 
         for screen, steps in steps_for(args.flow, args.side, args.endgame_wait):
             for st in steps:
@@ -955,6 +1383,42 @@ def main(argv=None):
                     manifest['steps'].append({'screen': screen, 'action': 'key',
                                               'key': st[1]})
                 log('%s: %s' % (screen, st[0]))
+            # ── T76：拍之前把这一屏**停到预注册的那一 tick**（不给停帧参数 ⇒ 什么都不做）──
+            stop_rec = None
+            if freezer is not None:
+                if args.stop_observe:
+                    probe = args.stop_probe or auto_probe(args.side, args.flow)
+                    info = freezer.configure([probe])
+                    time.sleep(0.5)                      # 让探针跑几帧再读
+                    stt = freezer.state()
+                    p = (stt.get('probes') or {}).get(probe) or {}
+                    stop_rec = {'stop_kind': 'observe', 'stop_probe': probe,
+                                'stop_probe_info': info.get(probe),
+                                'stop_value_observed': p.get('last'),
+                                'stop_probe_calls': p.get('calls'),
+                                'stop_observe_series': _probe_series(freezer, probe, 4, 0.1)}
+                    log('%s: observe %s -> %s（calls=%s）' % (
+                        screen, probe, stop_rec['stop_value_observed'],
+                        stop_rec['stop_probe_calls']))
+                else:
+                    spec = stop_spec_for(stop_plan, args.flow, screen, args.side)
+                    if spec is None:
+                        stop_rec = {'stop_kind': 'none'}
+                        log('%s: 停帧表里没有这一屏，按默认拍' % screen)
+                    else:
+                        if args.freeze_tick is not None:
+                            spec = dict(spec, kind='tick', value=str(args.freeze_tick))
+                        log('%s: 停帧 %s=%s（%s）' % (screen, spec['kind'], spec['value'],
+                                                     spec['probe'] or 'auto'))
+                        _probe_path = os.path.join(frames_dir, '_stable_probe.png')
+
+                        def _snap_probe():
+                            return snap(genv, win, _probe_path)['sha256']
+
+                        stop_rec = freezer.begin(spec, args.side, args.flow,
+                                                 timeout=args.stop_timeout,
+                                                 snap_probe=_snap_probe)
+                        log('%s: 已冻住（SIGSTOP）→ 拍 3 帧' % screen)
             for i in range(FRAMES_PER_SCREEN):
                 path = os.path.join(frames_dir, '%s_%d.png' % (screen, i + 1))
                 rec = snap(genv, win, path)
@@ -964,11 +1428,24 @@ def main(argv=None):
                 log('%s #%d -> %s' % (screen, i + 1, rec['file']))
                 if i + 1 < FRAMES_PER_SCREEN:
                     time.sleep(FRAME_GAP_S)
+            if stop_rec is not None:
+                if freezer is not None and stop_rec.get('stop_frozen') is not None and \
+                        not args.stop_observe:
+                    stop_rec = freezer.end(stop_rec)
+                manifest['stops'].append(dict(stop_rec, screen=screen))
         ok = True
     except Exception as e:  # noqa: BLE001
         manifest['error'] = str(e)
         log('失败：%s' % e)
     finally:
+        # T76：进程可能还冻在 SIGSTOP 上（异常路径）⇒ 先放行，否则 SIGTERM 会一直挂着
+        if game is not None and _proc_state(game.pid) == 'T':
+            try:
+                os.kill(game.pid, signal.SIGCONT)
+            except OSError:
+                pass
+        if freezer is not None:
+            freezer.close()
         for p in (game, xvfb):
             if p is not None and p.poll() is None:
                 try:
