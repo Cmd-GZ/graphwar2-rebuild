@@ -154,30 +154,12 @@ pub const MAX_LEVEL_INDEX: u32 = 20;
 // 2. 每关的 4 个模式字节（`+0x38..+0x3b`）
 // ---------------------------------------------------------------------------
 
-/// `+0x38` 功能模式。名字取自 `docs/88` §7 从 `.rodata` 解出的枚举名；
-/// **数字 → 名字**的对应是观测（21 关中 `1` 恰好是第 16–20 关，5/5 与"开始教微分方程"一致）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FunctionMode {
-    NormalFunction = 0,
-    DiffEqFunction = 1,
-}
-
-/// `+0x39` 回合模式。`1` 恰好是第 11 关（描述明写 "firing simultaneously"）与第 14 关，2/2 一致。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnMode {
-    SequentialTurns = 0,
-    SimultaneousTurns = 1,
-}
-
-/// `+0x3a` 坐标轴模式。`3/2/1/0 = EveryUnit/EveryFive/OnlyMain/NoAxis` ——
-/// **逐位 + 运行时**（385 份回放里 `AxisModeInfo` 的名字与数字 21/21 一一对应）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AxisMode {
-    NoAxis = 0,
-    OnlyMain = 1,
-    EveryFive = 2,
-    EveryUnit = 3,
-}
+// 三个模式枚举**不再在本模块重复定义**（T66 收敛，`docs/06` §117）：
+// 原版每个模式枚举只有**一个** serde 实现（T56 `docs/06` §109.4 逐位），
+// 规范位置是 `graphwar_mode_manager`（`AxisMode`/`FunctionMode`）与 `graphwar_turn_manager`（`TurnMode`）。
+// 这里保留 `pub use`，本模块的 `LevelModes` 与 21 关 `SETUPS` 表继续用同名类型（调用方零改动）。
+pub use crate::graphwar_mode_manager::{AxisMode, FunctionMode};
+pub use crate::graphwar_turn_manager::TurnMode;
 
 /// 一关的 4 个模式字节。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
