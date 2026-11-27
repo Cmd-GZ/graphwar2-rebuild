@@ -1,0 +1,274 @@
+# global_triage_sampling.tsv —— **预注册抽样复核**（tools/global_triage.py --sample 生成）
+# 抽样率：real-missing 10%%；na:std-mono / na:gdext-glue / na:other 各 2%%；unknown 1%%
+#            （计划书 fixtures/global_triage_plan.txt 写的是 na 与 unknown 各 5%%；
+#             5%% 合计约 690 条不可能逐条人看 ⇒ **入库取样率下调并在此写明**，误差按实抽样本算）
+# seed=20261127；verdict 由人工逐条读 dis/串/Location 后填写（agree / disagree / unclear）
+cls	addr	sub	layer	size	module	sample_n	pool_n	verdict	note
+real-missing	0x3b8a90	prop:game	L4-prop	0xb0	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x3b98a0	prop:game	L4-prop	0x60	—	54	542	disagree	gdext 方法壳（邻居全是 na:gdext-glue，位于 gdext 注册区）
+real-missing	0x3bb8b0	str-game	L3-str	0x1d90	—	54	542	disagree	clap 参数表（"Args bool broker_address broadcast_port logger_"）
+real-missing	0x3be540	prop:game	L4-prop	0x290	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x3be7d0	prop:game	L4-prop	0x270	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x3bec50	prop:game	L4-prop	0x210	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x3bfb50	prop:game	L4-prop	0x280	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x3c8590	prop:game	L4-prop	0x260	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x3ccb50	prop:game	L4-prop	0x630	—	54	542	disagree	唯一邻居是 na:std-mono，无任何游戏证据
+real-missing	0x3d6a40	T82	L1-t82	0x170	src/graphwar_replay_player.rs	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x3dc470	T82	L1-t82	0x1c0	src/graphwar_play_screen_control.rs	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x3e6260	prop:game	L4-prop	0x30	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x4069a0	prop:game	L4-prop	0xb0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x420560	str-game	L3-str	0x60	—	54	542	disagree	类注册串 `graphwarrust::axis_drawer::AxisDrawer` ⇒ gdext ClassDB，不是业务函数
+real-missing	0x45f670	prop:game	L4-prop	0x1d0	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x45fd30	prop:game	L4-prop	0x220	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x465a70	T82	L1-t82	0x730	src/graphwar_level_generator.rs	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x469590	prop:game	L4-prop	0xa0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x4698b0	prop:game	L4-prop	0xa0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x469f90	prop:game	L4-prop	0xa0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x46a0d0	prop:game	L4-prop	0xa0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x46a2b0	prop:game	L4-prop	0xa0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x46a3f0	prop:game	L4-prop	0xa0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x46a490	prop:game	L4-prop	0x170	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x477540	T82	L1-t82	0x5a0	src/graphwar_game_state_manager.rs	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47abe0	region:game	L5-region	0x10	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47abf0	region:game	L5-region	0x10	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47ac30	region:game	L5-region	0x10	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47b940	region:game	L5-region	0x3e	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47c120	region:game	L5-region	0x990	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47cdf5	region:game	L5-region	0x22	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47cf40	region:game	L5-region	0x13	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47d9f0	region:game	L5-region	0xb0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47daa0	region:game	L5-region	0x160	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47e5f0	region:game	L5-region	0x160	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47e750	region:game	L5-region	0x180	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x47f520	region:game	L5-region	0x1e0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x484270	prop:game	L4-prop	0x140	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x486f20	prop:game	L4-prop	0x140	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x4f0370	str-game	L3-str	0xc0	—	54	542	disagree	gdext 方法壳（"get_ad_unit_id" / "on_size_changed" 方法名 blob）
+real-missing	0x501e30	prop:game	L4-prop	0x30	—	54	542	unclear	无 Location / 无串 / 无可判邻居
+real-missing	0x50d3a0	prop:game	L4-prop	0x1f0	—	54	542	disagree	serde 字段名 blob（VersionInfo/RankRequest/LockRequest/ChatMessage）⇒ derive 产物
+real-missing	0x5126d0	region:game	L5-region	0x1f0	—	54	542	disagree	serde 字段名 blob（VersionInfo/RankRequest/LockRequest/ChatMessage）⇒ derive 产物
+real-missing	0x513b00	region:game	L5-region	0x1d0	—	54	542	disagree	serde 字段名 blob（VersionInfo/RankRequest/LockRequest/ChatMessage）⇒ derive 产物
+real-missing	0x514600	region:game	L5-region	0x190	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x515140	region:game	L5-region	0x70	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x515320	region:game	L5-region	0xd0	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x5190c0	region:game	L5-region	0x20	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x519690	region:game	L5-region	0x190	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x520fe0	prop:game	L4-prop	0x60	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x521340	prop:game	L4-prop	0x50	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x521ca0	prop:game	L4-prop	0x240	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x527f00	prop:game	L4-prop	0x6	—	54	542	agree	硬证据/强串/布局局部性支持 game
+real-missing	0x527f06	prop:game	L4-prop	0x24	—	54	542	agree	硬证据/强串/布局局部性支持 game
+na:std-mono	0x3c2530	struct:sortmono	L2-struct	0x690	—	30	1494	agree	Location=alloc/src/slice/sort 上游单态化特征
+na:std-mono	0x402f60	std:	L1-location	0x4a0	—	30	1494		
+na:std-mono	0x500270	std:	L1-location	0x40	—	30	1494		
+na:std-mono	0x508685	std:	L1-location	0xae	—	30	1494		
+na:std-mono	0x508e00	std:	L1-location	0xa0	—	30	1494		
+na:std-mono	0x58e370	std:	L1-location	0x200	—	30	1494		
+na:std-mono	0x6c9830	region:std	L5-region	0x120	—	30	1494		
+na:std-mono	0x74fed0	std:	L1-location	0x1e0	—	30	1494	agree	std Location mod.rs:1863 + std 串
+na:std-mono	0x7f63c0	struct:sortmono	L2-struct	0x470	—	30	1494		
+na:std-mono	0x873a90	std:	L1-location	0x210	—	30	1494		
+na:std-mono	0x88a8e0	std:	L1-location	0x40	—	30	1494		
+na:std-mono	0x88aaa0	std:	L1-location	0x40	—	30	1494		
+na:std-mono	0x88b547	std:	L1-location	0x44	—	30	1494		
+na:std-mono	0x88ba0f	std:	L1-location	0x44	—	30	1494		
+na:std-mono	0x88bf80	std:	L1-location	0x40	—	30	1494	disagree	Location once.rs:226 是 gdext 里 OnceLock 的内联点，串全是 Godot 类名（ImageTexture/DisplayServer）⇒ 判 gdext 更对
+na:std-mono	0x8a7e80	std:	L1-location	0x120	—	30	1494		
+na:std-mono	0x8d5470	std:	L1-location	0x290	—	30	1494		
+na:std-mono	0x8e48e0	region:std	L5-region	0x3d0	—	30	1494		
+na:std-mono	0x8f6600	std:	L1-location	0x40	—	30	1494		
+na:std-mono	0x8f9de0	region:std	L5-region	0x23e0	—	30	1494		
+na:std-mono	0x905250	region:std	L5-region	0x1e0	—	30	1494		
+na:std-mono	0x907610	region:std	L5-region	0xc0	—	30	1494	unclear	region:std，但本函数自身无证据
+na:std-mono	0x90c680	region:std	L5-region	0xc0	—	30	1494		
+na:std-mono	0x90dcc0	std:	L1-location	0x210	—	30	1494		
+na:std-mono	0x9198d2	region:std	L5-region	0x15	—	30	1494		
+na:std-mono	0x91a201	region:std	L5-region	0x82	—	30	1494		
+na:std-mono	0x91d840	region:std	L5-region	0x250	—	30	1494		
+na:std-mono	0x92aa30	region:std	L5-region	0x40	—	30	1494		
+na:std-mono	0x92b400	region:std	L5-region	0x280	—	30	1494	unclear	region:std，但本函数自身无证据
+na:std-mono	0x92e250	region:std	L5-region	0x70	—	30	1494		
+na:gdext-glue	0x3ed890	loc-gdext	L1-location	0x270	—	29	1456		
+na:gdext-glue	0x407030	prop:gdext	L4-prop	0xd0	—	29	1456		
+na:gdext-glue	0x407dc0	str-godot	L3-str	0x120	—	29	1456		
+na:gdext-glue	0x4082a0	str-godot	L3-str	0x120	—	29	1456		
+na:gdext-glue	0x409280	str-godot	L3-str	0xb0	—	29	1456		
+na:gdext-glue	0x40ac20	str-godot	L3-str	0x200	—	29	1456	agree	str-godot（godot_core::gen::central）
+na:gdext-glue	0x40b170	prop:gdext	L4-prop	0x120	—	29	1456		
+na:gdext-glue	0x42a8a0	loc-gdext	L1-location	0x360	—	29	1456		
+na:gdext-glue	0x440d40	region:gdext	L5-region	0x1a0	—	29	1456		
+na:gdext-glue	0x44bb70	loc-gdext	L1-location	0x1c0	—	29	1456		
+na:gdext-glue	0x461cd0	prop:gdext	L4-prop	0x110	—	29	1456		
+na:gdext-glue	0x497610	loc-gdext	L1-location	0xf0	—	29	1456		
+na:gdext-glue	0x4b19b0	loc-gdext	L1-location	0x1b0	—	29	1456	agree	gdext Location traits.rs:521 + "Gd<Self>"
+na:gdext-glue	0x4b5bb0	str-godot	L3-str	0xc0	—	29	1456		
+na:gdext-glue	0x4b8010	loc-gdext	L1-location	0x200	—	29	1456		
+na:gdext-glue	0x6b3410	str-godot	L3-str	0x330	—	29	1456		
+na:gdext-glue	0x8872f0	str-godot	L3-str	0x150	—	29	1456		
+na:gdext-glue	0x8893f0	prop:gdext	L4-prop	0xd0	—	29	1456		
+na:gdext-glue	0x89b090	region:gdext	L5-region	0xa0	—	29	1456		
+na:gdext-glue	0x89bad0	region:gdext	L5-region	0x30	—	29	1456	unclear	region:gdext，本函数无自身证据
+na:gdext-glue	0x8a43c0	region:gdext	L5-region	0x10	—	29	1456		
+na:gdext-glue	0x8a7370	region:gdext	L5-region	0x180	—	29	1456		
+na:gdext-glue	0x8a8ad0	region:gdext	L5-region	0xa0	—	29	1456		
+na:gdext-glue	0x8a8cf0	region:gdext	L5-region	0x57	—	29	1456		
+na:gdext-glue	0x8aaf30	loc-gdext	L1-location	0x2d0	—	29	1456		
+na:gdext-glue	0x8abca0	loc-gdext	L1-location	0x350	—	29	1456		
+na:gdext-glue	0x8b99c0	region:gdext	L5-region	0x70	—	29	1456	unclear	region:gdext，本函数无自身证据
+na:gdext-glue	0x8ba630	loc-gdext	L1-location	0x210	—	29	1456		
+na:gdext-glue	0x8cafb0	loc-gdext	L1-location	0x2a0	—	29	1456		
+na:other	0x37d1d0	prop:third	L4-prop	0xe0	—	123	6154		
+na:other	0x380960	derive:serde	L3-str	0x770	—	123	6154		
+na:other	0x446130	third-party	L1-location	0xd00	—	123	6154		
+na:other	0x5058eb	prop:third	L4-prop	0x84	—	123	6154		
+na:other	0x505f35	prop:third	L4-prop	0x19b	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x52a6f0	prop:third	L4-prop	0xd0	—	123	6154		
+na:other	0x52d8f0	prop:third	L4-prop	0x130	—	123	6154		
+na:other	0x531410	prop:third	L4-prop	0x150	—	123	6154		
+na:other	0x53a5d0	third-party	L1-location	0x150	—	123	6154		
+na:other	0x53e150	prop:third	L4-prop	0x140	—	123	6154		
+na:other	0x548102	region:third	L5-region	0x1d	—	123	6154		
+na:other	0x54ac80	region:third	L5-region	0x10	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x54b164	region:third	L5-region	0x4a	—	123	6154		
+na:other	0x54b3ad	region:third	L5-region	0x75	—	123	6154		
+na:other	0x550923	region:third	L5-region	0x3d	—	123	6154		
+na:other	0x5556d0	region:third	L5-region	0x80	—	123	6154		
+na:other	0x559190	third-party	L1-location	0x910	—	123	6154		
+na:other	0x55bd80	region:third	L5-region	0x5a	—	123	6154		
+na:other	0x55bfa0	region:third	L5-region	0x140	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x567503	region:third	L5-region	0x1d	—	123	6154		
+na:other	0x56d729	region:third	L5-region	0xf	—	123	6154		
+na:other	0x56fbc9	region:third	L5-region	0xda	—	123	6154		
+na:other	0x570f20	region:third	L5-region	0x10	—	123	6154		
+na:other	0x573ea0	region:third	L5-region	0xb	—	123	6154		
+na:other	0x5745d0	region:third	L5-region	0x30	—	123	6154		
+na:other	0x5763b0	region:third	L5-region	0x110	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x576c42	region:third	L5-region	0x1bb	—	123	6154		
+na:other	0x577700	region:third	L5-region	0x54	—	123	6154		
+na:other	0x5792b0	third-party	L1-location	0x6b0	—	123	6154		
+na:other	0x57f5e0	third-party	L1-location	0x130	—	123	6154		
+na:other	0x588b20	region:third	L5-region	0x2e0	—	123	6154		
+na:other	0x589850	region:third	L5-region	0xa0	—	123	6154		
+na:other	0x5898f0	region:third	L5-region	0xa0	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x598e40	third-party	L1-location	0x200	—	123	6154		
+na:other	0x5995a0	prop:third	L4-prop	0x4f0	—	123	6154		
+na:other	0x5a9980	region:third	L5-region	0x10	—	123	6154		
+na:other	0x5adb50	region:third	L5-region	0x100	—	123	6154		
+na:other	0x5b41fb	region:third	L5-region	0x2f5	—	123	6154		
+na:other	0x5ba530	region:third	L5-region	0x90	—	123	6154		
+na:other	0x5ba867	region:third	L5-region	0x39	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x5bafd0	region:third	L5-region	0x5b	—	123	6154		
+na:other	0x5c3d65	region:third	L5-region	0xab	—	123	6154		
+na:other	0x5cbc60	region:third	L5-region	0x640	—	123	6154		
+na:other	0x5df0a9	region:third	L5-region	0x47	—	123	6154		
+na:other	0x5e0262	region:third	L5-region	0x53	—	123	6154		
+na:other	0x5e0ac6	region:third	L5-region	0x42	—	123	6154		
+na:other	0x5e0c95	region:third	L5-region	0x17b	—	123	6154	agree	tokio/hyper Location（driver.rs / "received unexpected message"）
+na:other	0x5e58a0	region:third	L5-region	0x90	—	123	6154		
+na:other	0x5e7500	third-party	L1-location	0x120	—	123	6154		
+na:other	0x5faa00	third-party	L1-location	0xd0	—	123	6154		
+na:other	0x5fb6a0	region:third	L5-region	0xf	—	123	6154		
+na:other	0x5fb6af	region:third	L5-region	0x131	—	123	6154		
+na:other	0x5fdc80	third-party	L1-location	0x1e0	—	123	6154		
+na:other	0x601f80	region:third	L5-region	0x10	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x60abb0	region:third	L5-region	0xd0	—	123	6154		
+na:other	0x61e879	region:third	L5-region	0x10	—	123	6154		
+na:other	0x625ab0	region:third	L5-region	0x180	—	123	6154		
+na:other	0x627260	region:third	L5-region	0x150	—	123	6154		
+na:other	0x62aeb0	third-party	L1-location	0x1d0	—	123	6154		
+na:other	0x6316a0	third-party	L1-location	0x30	—	123	6154		
+na:other	0x6797d0	prop:third	L4-prop	0x380	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x67bb90	prop:third	L4-prop	0x140	—	123	6154		
+na:other	0x682f50	third-party	L1-location	0xf0	—	123	6154		
+na:other	0x684ec0	region:third	L5-region	0x10	—	123	6154		
+na:other	0x688dc0	region:third	L5-region	0xf0	—	123	6154		
+na:other	0x68a540	region:third	L5-region	0x10	—	123	6154		
+na:other	0x68a830	third-party	L1-location	0x190	—	123	6154		
+na:other	0x68ec10	third-party	L1-location	0xc0	—	123	6154	agree	tokio/hyper Location（driver.rs / "received unexpected message"）
+na:other	0x68f6f0	third-party	L1-location	0x1e0	—	123	6154		
+na:other	0x68fef0	region:third	L5-region	0xc0	—	123	6154		
+na:other	0x692490	region:third	L5-region	0x70	—	123	6154		
+na:other	0x6957f0	region:third	L5-region	0x30	—	123	6154		
+na:other	0x698800	region:third	L5-region	0x10	—	123	6154		
+na:other	0x699990	third-party	L1-location	0x180	—	123	6154		
+na:other	0x69b160	region:third	L5-region	0x40	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x69b760	region:third	L5-region	0xa0	—	123	6154		
+na:other	0x69b900	region:third	L5-region	0x10	—	123	6154		
+na:other	0x69f090	third-party	L1-location	0xfb0	—	123	6154		
+na:other	0x6b97c0	third-party	L1-location	0xf0	—	123	6154		
+na:other	0x6bad70	prop:third	L4-prop	0x60	—	123	6154		
+na:other	0x6c5500	third-party	L1-location	0xe60	—	123	6154		
+na:other	0x6e1d10	region:third	L5-region	0x30	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x6ef020	region:third	L5-region	0xa0	—	123	6154		
+na:other	0x6f48d0	prop:third	L4-prop	0x560	—	123	6154		
+na:other	0x709610	prop:third	L4-prop	0x70	—	123	6154		
+na:other	0x71c610	prop:third	L4-prop	0x1a0	—	123	6154		
+na:other	0x737c40	prop:third	L4-prop	0x130	—	123	6154		
+na:other	0x747b40	third-party	L1-location	0x4c0	—	123	6154		
+na:other	0x74b630	region:third	L5-region	0x1a0	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x7527d0	region:third	L5-region	0x10	—	123	6154		
+na:other	0x7549c0	region:third	L5-region	0x10	—	123	6154		
+na:other	0x755710	third-party	L1-location	0x120	—	123	6154		
+na:other	0x755ba0	third-party	L1-location	0x100	—	123	6154		
+na:other	0x762440	third-party	L1-location	0x280	—	123	6154		
+na:other	0x7638e0	region:third	L5-region	0x250	—	123	6154		
+na:other	0x767b80	region:third	L5-region	0x50	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x768c40	region:third	L5-region	0x1e0	—	123	6154		
+na:other	0x779140	region:third	L5-region	0x330	—	123	6154		
+na:other	0x779f90	region:third	L5-region	0x30	—	123	6154		
+na:other	0x77e540	region:third	L5-region	0x10	—	123	6154		
+na:other	0x77f5a0	region:third	L5-region	0x40	—	123	6154		
+na:other	0x7837f0	region:third	L5-region	0x150	—	123	6154		
+na:other	0x783980	region:third	L5-region	0x40	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x794bb0	third-party	L1-location	0xa0	—	123	6154		
+na:other	0x7ba400	region:third	L5-region	0x70	—	123	6154		
+na:other	0x7bc3e0	region:third	L5-region	0x20	—	123	6154		
+na:other	0x7bc4f0	region:third	L5-region	0x10	—	123	6154		
+na:other	0x7d7b60	region:third	L5-region	0x70	—	123	6154		
+na:other	0x7dc3b0	region:third	L5-region	0x40	—	123	6154		
+na:other	0x7dd310	region:third	L5-region	0x30	—	123	6154	unclear	region:third，本函数无自身证据
+na:other	0x7e60b0	third-party	L1-location	0x390	—	123	6154		
+na:other	0x7f48b0	region:third	L5-region	0xb0	—	123	6154		
+na:other	0x7fed40	third-party	L1-location	0x270	—	123	6154		
+na:other	0x80ff70	third-party	L1-location	0x80	—	123	6154		
+na:other	0x821db0	region:third	L5-region	0x80	—	123	6154		
+na:other	0x822b60	region:third	L5-region	0x30	—	123	6154		
+na:other	0x8268e0	region:third	L5-region	0x30	—	123	6154		
+na:other	0x8269d0	region:third	L5-region	0x90	—	123	6154		
+na:other	0x82cde0	third-party	L1-location	0x6b0	—	123	6154		
+na:other	0x83d910	prop:third	L4-prop	0x380	—	123	6154		
+na:other	0x850fa0	prop:third	L4-prop	0x1e0	—	123	6154		
+na:other	0x87c370	prop:third	L4-prop	0xd0	—	123	6154		
+na:other	0x886690	third-party	L1-location	0xd0	—	123	6154		
+unknown	0x3ca2d0	no-evidence	L-none	0x260	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x3cbdb0	no-evidence	L-none	0xd0	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x43d320	no-evidence	L-none	0x60	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x43d730	no-evidence	L-none	0x30	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x480530	no-evidence	L-none	0xc0	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x484713	no-evidence	L-none	0x12d	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x496c20	no-evidence	L-none	0x5c0	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x4d9200	no-evidence	L-none	0x6	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x4da29b	no-evidence	L-none	0x95	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x4dc8b0	no-evidence	L-none	0x90	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x4ea9bc	no-evidence	L-none	0x124	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x4fffb0	no-evidence	L-none	0x10	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x508277	no-evidence	L-none	0xe5	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x526ea1	no-evidence	L-none	0x34f	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x5312f0	no-evidence	L-none	0x2a	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x593880	no-evidence	L-none	0xb0	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x6ba040	no-evidence	L-none	0x100	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x6d1180	no-evidence	L-none	0x10	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x6dd4e0	no-evidence	L-none	0xa0	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x6ff0b0	no-evidence	L-none	0xd0	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x70c3b0	no-evidence	L-none	0x10	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x721010	no-evidence	L-none	0x20	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x721530	no-evidence	L-none	0x10	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x727e20	no-evidence	L-none	0x20	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x728620	no-evidence	L-none	0x30	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x736f80	no-evidence	L-none	0x210	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x73f6c0	no-evidence	L-none	0x20	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x850248	no-evidence	L-none	0x88	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x860060	no-evidence	L-none	0x60	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x875ca0	no-evidence	L-none	0x20	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x931240	no-evidence	L-none	0x10	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了
+unknown	0x93faa0	no-evidence	L-none	0x60	—	32	3208	unclear	无 Location / 无串 / 无已标注邻居 ⇒ 抽样也定不了

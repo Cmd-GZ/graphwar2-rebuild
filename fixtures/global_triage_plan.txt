@@ -1,0 +1,162 @@
+# global_triage_plan.txt —— T86 **预注册**：把 T82 的五类判据从 F3 的 153 条扩到**全部 13,263 条**（先提交，后跑）
+#
+# 为什么先写死再跑：本轮要回答一个**战略问题**——「距离源码级还原，全局上还差多少」。
+# 现在同时有三个分母在流通，彼此差得很远：
+#   ① **527**  = 能按 `panic::Location`（`src/*.rs`）**硬归属**到某个原版源文件的函数数
+#                （`tools/function_coverage.py` 的分母；它自己在文件头写明「可度量下限，不是模块规模」）
+#   ② **13,263** = Ghidra 侧 `.text` 内可分析函数数（13503 − 无 `.eh_frame` 的汇编桩，`docs/02` §12）
+#   ③ **885 / 13263 = 6.7%** = `docs/02` §10 用**另一套归属法**（Location 种子 + 调用图 3 轮扩散）算出来的，
+#                其中观测 441 + 推断 444
+# 若判据边跑边改，结论必然是"想让它是多少就是多少"。所以本文件**先单独 commit**，
+# 然后才写 `tools/global_triage.py` 的全量分支、才出 `fixtures/global_triage.tsv`。
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#   * 分母 = `analysis/funcstarts_ghidra_va.pkl`（上游）**13,263 条** funcstart（= Ghidra 13503 里落在 `.text`
+#     的换算区间 `[0x47b940, 0xa4eb84]` 内的那批；本机实测最小/最大 = `0x37b940`/`0x94eb70`）。
+#   * 函数范围 = ① funcstart 分区 `[self, next_funcstart)`（每一条都有、互不重叠、无洞）；
+#     ② 另记 `.eh_frame` FDE 范围 `size_fde`（**仅当该 funcstart 本身就是 FDE 起点**时非空）。
+#     ⇒ 体积上限取 `max(size, size_fde)`。差别记录在 TSV 的 `size`/`size_fde` 两列。
+#   * Location = `panic::Location`（`.data.rel.ro` 的 `{file,len,line,col}` 24 字节结构，
+#     `.rela.dyn` 的 `R_X86_64_RELATIVE` 还原指针）。**本工具不要求 `src/` 前缀**（这是与 527 口径的关键差别）。
+#   * 反汇编 = capstone x86-64（`.reference/venv`）；ELF/FDE/重定位复用 `tools/addr_probe.py` 的 `Ctx`。
+#   * 二进制 sha256 = `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`
+#     （`.reference/steam/2026-08-28/libgraphwarrust.so`，与 `fixtures/boundary_audit.tsv` 文件头一致）。
+
+## 1. 六类定义（五类继承 T82 §129.1 的语义，第六类是「不用判」的已实现）
+
+| 类别 | 定义 | 进不进"诚实缺口" |
+|---|---|---|
+| `implemented` | 527 台账里 **F1/F2** 的行（已有实现；F1 有物证、F2 无物证） | 否（已实现，缺口看 T38/T82） |
+| `real-missing` | **原版有我方没有的业务函数** | **进** |
+| `na:std-mono` | **标准库代码**：①`/rustc/<hex>/library/{core,alloc,std,…}/…` 的 Location（硬）；②T82 的排序单态化结构特征 | 否 |
+| `na:gdext-glue` | **gdext/Godot 侧产物**：`godot*`/`gdext*` crate 的 Location；类注册 `/` 属性访问器 / `#[func]` 分发壳的结构特征；只引 Godot 引擎词汇 | 否 |
+| `na:other` | **其它非本 crate 源码**：三方 crate（`~/.cargo/registry/src/…/<crate>-<ver>/`）、泛型单态化实例、编译器产物、Ghidra 重复切分块 | 否 |
+| `unknown` | **判不了**（证据不足，必须在 `evid` 列写明缺什么） | **进**（保守） |
+
+**为什么"不该由我们手写"这类要单列**：`na:*` 的原版 Rust 源码里**没有那一行 `fn`**——它的边界来自
+①标准库泛型实例化 ②宏展开 ③编译器生成 ④三方 crate。我们**写不出**对应源码，
+强行写一份等于"凭空造一份没有物证的实现"（违反 `AGENTS.md` §0.3/§2）。
+反过来，若把 std 地址写进我方注释，会让 P2 地址指认**虚高**（T71 实测假抬 5 条 F1，`docs/06` §123.5）。
+
+## 2. 三层证据（优先级从高到低，**命中即停**）
+
+**L1 = Location 硬归属**（机械可复算，证据档 = `观测`；每个 file 路径都能指到 `.data.rel.ro` 槽）：
+
+| # | 命中条件 | 判 |
+|---|---|---|
+| L1a | 引用 `src/<x>.rs` 的 Location，且该地址在 **527 台账**里 `bucket ∈ {F1,F2}` | `implemented`（子类 = F1/F2） |
+| L1b | 同上但 `bucket = F3` | 直接用 **T82 §129 的逐条裁决**（`fixtures/f3_triage.tsv` 的类别列） |
+| L1c | 引用 `src/<x>.rs` 的 Location，**但不在 527**，且该 Location 与 527 里某条**共享** | `na:other / dup:ghidra-split`（同一源码函数被 Ghidra 切出的另一块，**不重复计缺口**） |
+| L1d | 引用 `src/<x>.rs` 的 Location，不在 527 且不共享 | `real-missing / crate-loc-unmapped`（保守进缺口） |
+| L1e | 引用 `…/.cargo/registry/src/…/<crate>-<ver>/…` 的 Location | crate 名匹配 `^(godot\|gdext)` ⇒ `na:gdext-glue`；否则 `na:other` |
+| L1f | 引用 `/rustc/<hex>/library/<mod>/…` 的 Location | `na:std-mono`（子类记 `<mod>`） |
+| L1g | 引用了**其它**形如 `*.rs` 的路径 Location | `na:other / loc-other` |
+
+**L2 = 结构证据**（继承 T82 §129.1 §2 的 13 项特征里的 6 条；**只对 `max(size,size_fde) ≤ 0x721` 的函数生效**）：
+
+* `VOL_CAP = 0x721`（来自 T82 §129.3 的实测：`na` 全部 ≤0x721 字节；≥0x800 的大函数上这些特征是
+  假阳性，反例 `0x3c2bc0` 2624 指令的业务函数同时命中 `STRIDE/CMP/BULK`）。上限**取 max(size,size_fde)**。
+* `G1` = `lock cmpxchg` 写可写全局（`.data/.bss/.got/.data.rel.ro`）**且** 全 `.text` 零 `call rel32` 调用点 ⇒ `na:gdext-glue`
+* `G1b` = 零调用点 **且** 本函数地址出现在 `.rela.dyn` 数据表（`SLOT≥1`）**且** `imul …,0x78`（gdext 方法/属性记录步长）⇒ `na:gdext-glue`
+* `G2` = `[reg+0x10]` 0→−1 借用标记 **且** 调用点 ≤1 **且** `SLOT≥1` ⇒ `na:gdext-glue`
+* `A` = 直接自递归 ≥2 **且** 元素步长 `imul …,imm (0x20..0x10000)` 命中 ⇒ `na:std-mono`
+* `B` = `ucomisd ≥2` 且 `jp ≥2` **且** (`movups/movaps/movdqu ≥2` 或 `cmov ≥4`) ⇒ `na:std-mono`
+* `C` = `ucomisd ≥2` 且 `jp ≥2` **且** 本批内存在**同 size** 的另一条 ⇒ `na:std-mono`（成对单态化）
+* **A/B/C 全不中 ⇒ 不许判 std**（与 T82 预注册同纪律）。
+
+**L3 = 字符串族证据**（只作**判定条件明确的**三档，std panic 模板串**不单独定案**）：
+
+* 引用含 Godot 引擎词汇（`godot|GDExtension|gdextension|Variant|ObjectDB|ClassDB|ptrcall|_bind_methods|
+  GodotClass|ExtensionLibrary|Dictionary|PackedVector|GString|StringName|Callable|NodePath|RefCounted`）
+  **且无**游戏侧串 ⇒ `na:gdext-glue / str-godot`
+* 引用游戏侧串（`res://`、`graphwar`、模块词汇…见脚本 `GAME_STRONG`）⇒ `real-missing / str-game`
+* 只引用 std panic 模板串（`index out of bounds` / `called \`Option::…\`` / `attempt to …` …）
+  ⇒ **`unknown`**（弱证据：游戏代码也会 panic）
+* 都没有 ⇒ `unknown / no-evidence`
+
+## 3. 正 / 负对照（**全对才许进全量**；脚本 `--control`，rc=0）
+
+| 组 | 条数 | 期望 | 来源 |
+|---|---|---|---|
+| A | 12 | `na:std-mono` | T71 台账 `fixtures/f3_heavy_anchors.tsv` 的 12 条 std 单态化 |
+| B | 16 | `na:gdext-glue` | 同上 19 条 gdext 里除 3 条源码闭包外的 16 条 |
+| B' | 3 | `unknown` | 同上 3 条源码闭包（`0x4dec00`/`0x500070`/`0x5005b0`，共享 Location、父函数无真名） |
+| C | 2 | 非 `na:*` | T71 落码的真业务 `0x3afcf0`/`0x3b4ec0` |
+| D | 3 | 非 `na:*` | 负对照：已知 F1 真业务 `0x519630`/`0x519840`/`0x4ee720` |
+| E | 153 | 与 T82 §129 逐条一致 | `fixtures/f3_triage.tsv` 全部类别 |
+
+**A–D 是 T82 已经人工裁过的样本**（本轮**独立**用 L1–L3 判法重判，不是读 T82 的结论）；
+**E 是"扩到全量后不许把 F3 判坏"的回归闸**。任一条不对 ⇒ 停下报告，不许调参凑数。
+
+## 4. 抽样人工复核（成本控制：13,263 条不可能条条人看）
+
+* 抽样率（**先写死**）：`real-missing` **10%**、`na:std-mono` / `na:gdext-glue` / `na:other` / `unknown` 各 **5%**。
+* 抽样方式：`random.Random(20261127)` 对每类的候选按地址排序后 `sample`，**随机种子写死在命令里**。
+* 复核方式：逐条读 `.eh_frame`/反汇编 + 引用串 + Location（`--dump <addr>` 的输出），
+  判 `agree` / `disagree` / `unclear`，`disagree` 必须写清**为什么**。
+* 报告：每类的**抽样错误率 + 95% 置信区间（Wilson）**，并给"纠偏后的点估计"（类计数 × 该类的 agree 率）。
+* **反向也要抽**：`na:*` 与 `unknown` 都抽，这样能抓到"**被误判成 na 的真业务函数**"（这类最危险：
+  它会让工作量被系统性低估）。
+
+## 5. 已知判据边界（**会漏什么，先写明**）
+
+1. **L1 只能覆盖"引用 Location 的函数"**。没有 panic 点的函数（纯计算、被内联的叶子）没有任何 Location，
+   只能落到 L2/L3/unknown。⇒ `unknown` 里**必然混着**真游戏函数，这是本轮**估不出精确值**的部分。
+2. **L2 的体积上限是取舍**：`≤0x721` 之外的大函数即使命中结构特征也不判 na（宁缺勿滥）；
+   反过来，超大函数若真是 std/gdext，会落到 `unknown`（保守进缺口）。
+3. **L3 的"游戏侧串"正则会命中一部分 std 代码**：`core::fmt` 的格式化路径会引用调用方传进来的格式串。
+   抽样复核要专门盯这一类。
+4. **`na:other` 是个收容所**（三方 crate + 泛型实例 + 编译器产物 + Ghidra 切分重复块），
+   它的 `sub` 列必须可区分，否则"na:other 有多少"没有解释力。
+5. **funcstart 分区不是真实函数边界**（Ghidra 会把一个函数切成几块）：1,382 条 funcstart 不是 FDE 起点。
+   这些条目的 `size` 是块大小，不是函数大小 ⇒ **不许**把"条数"直接当"原版有多少个函数"。
+6. **本表不改任何既有计分工具**（`tools/function_coverage.py` / `tools/f3_triage.py` 一行不动），
+   也不写回 `fixtures/function_coverage.tsv` / `fixtures/f3_triage.tsv`（那是别人的台账）。
+
+## 6. 复算命令（照抄可跑）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t86 ; cd $WT
+PY=$WT/.reference/venv/bin/python
+$PY tools/global_triage.py --build-index     # 全 .text 反汇编 + 引用解析（约 1 分钟，缓存到 .agent-work/metric-total/）
+$PY tools/global_triage.py --control         # 正/负对照（rc=0 才许信后面的数）
+$PY tools/global_triage.py                   # 全量：写 fixtures/global_triage.tsv + 打印六类计数
+$PY tools/global_triage.py --dump 0x4600e0   # 单条取证（人工复核用）
+$PY tools/global_triage.py --sample          # 预注册抽样（写 fixtures/global_triage_sampling.tsv）
+```
+
+## 7. 勘误（**追加式**：写于全量跑完 + 抽样人工复核第一/二轮之后；原判据一字未删）
+
+抽样复核（`real-missing` 抽 10%）第一轮就抓到 **37/70 = 52.7%** 的假阳性 ⇒ 判据必须改，
+否则"real-missing 542"这个数会被当成"要写 542 个函数"。三条勘误：
+
+**E1（derive 宏产物 ≠ 业务函数）**：`#[derive(Serialize/Deserialize)]` 展开出来的
+反序列化访问器会引用 `struct <TypeName>` / `struct <Type> with N elements` / 字段名 blob。
+T82 §129.1 的 `na:other` 定义里**本来就有"`#[derive]` 生成物"**，只是它的 F3 里没遇到这么多。
+⇒ 新增 L3 判据：命中 `DERIVE_RE`（`struct <Name>(Event|Info|Request|Reply|Message|Data|Params)`、
+`struct X with N element`、`missing field`/`unknown field`/`__Visitor`…）⇒ `na:other / derive:serde`。
+第一轮 423 条 `str-game` 里 **约 350 条**是这一类。
+
+**E2（串证据必须分强/弱；布局局部性优于调用图扩散）**：
+1. `.rodata` 的字符串是**连续排布**的，`cstr(160)` 会把相邻串一起读出来 ⇒
+   `fire|shot|target|effect|draw_|texture|scene|rank|level_|turn_|sound|replay|lan_|bot_|_event`
+   这些**弱词**在三方 crate 的字段名 blob 里也会命中（openh264 / ron / clap 实测）。
+   ⇒ **弱词不单独定案**（降 `unknown / str-weak-game`）；只有**强**证据定 `real-missing`：
+   `res://`、`Graphwar*` 类名、`.tscn/.tres/.pck`。
+2. **新增 L5 布局局部性**（本条是判据**增加**，不是放宽）：链接器把同一 crate 的代码连续排布 ⇒
+   用 64 KiB region 内**硬证据**的族投票（≥6 条且同族 ≥85%）给该 region 未定的函数定族。
+   它比 L4 调用图扩散更可靠（openh264 的 C++ 函数会被扩散成 game，实测 29/70 条）；
+   **优先级：L1 硬证据 > L2 强结构 > L3 强串 > L5 布局 > L4 扩散**。
+3. gdext 在这份构建里是 **git checkout**（`/.cargo/git/checkouts/gdext-<hash>/<rev>/godot-core/…`）
+   和 **build 产物**（`/target/…/build/godot-ffi-…/out/…`），不是 crates.io ⇒ L1 的路径族要覆盖这两种；
+   `/rust/deps/<crate>/` 是 **std 内嵌的三方**（`miniz_oxide`/`rustc-demangle`/`gimli`），算标准库构建。
+
+**E3（抽样率下调，写在入库文件里）**：预注册 §4 写的是 `na:*` 与 `unknown` 各 5%，
+但 5% 合计约 690 条**不可能逐条人看** ⇒ 入库取样率改为 `real-missing` 10% / `na:*` 2% / `unknown` 1%
+（`fixtures/global_triage_sampling.tsv` 文件头写明），误差按**实抽样本**算，未复核行留空供后人补。
+
+**E4（已知残差，未修）**：① `na:std-mono` 里仍有少量 gdext 内联点误判
+（`std::sync::OnceLock` 的 Location `std/src/sync/once.rs:226` 会被 gdext 函数引用，抽样 `0x88bf80`）；
+② `real-missing` 第三轮残差 17.0%（gdext 方法注册壳 / serde 字段名 blob / clap 参数表）。
+两条都**登记不改判据**——再改就是为本轮数字好看而调参。
