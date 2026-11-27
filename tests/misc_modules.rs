@@ -499,6 +499,18 @@ mod mode_manager_tests {
 // ===========================================================================
 // §33.3 event_queue
 // ===========================================================================
+/// ## 口径（T73 / 计划 D02）：**契约断言，不含语义**
+///
+/// 这两条测的是我方 [`GraphwarEventQueue`] 的队列语义（FIFO / 空队列 no-op）。
+/// 原版对应物（arm64）是：
+/// * `GraphwarEventQueue::add_event` = **`0x3d7a40`**（276 字节）—— 函数体就是
+///   `push_back`（`VecDeque::grow` 在调用链里，`graphwar_event_queue.rs` 文件头记了这条）；
+/// * `GraphwarEventQueue::send_buffer` = **`0x3d793c`**（260 字节）—— `drain` + 逐条写 socket。
+///
+/// 但「FIFO 顺序」在**语料/抓包里不可观测**（回放不记队列内部顺序；真流量里
+/// 同一帧的多个事件本来就是按队列顺序发出去的，无法反推队列结构），而 `push_back`/`drain`
+/// 的语义只有读到 `VecDeque` 的**方法体**才能算逐位 ⇒ 本轮**换不了**。
+/// 本测试只证「我方队列不退化成 LIFO/丢事件」，**不构成复原证据**。
 mod event_queue_tests {
     use super::events::Event;
     use super::graphwar_event_queue::GraphwarEventQueue;
@@ -529,11 +541,95 @@ mod crash_tests {
     use super::backtracer::PanicLogHook;
     use super::graphwar_crash_reporter::{self as cr, CrashReportTarget};
 
+    // ===================================================================
+    // T73 真值表：`fixtures/test_expectation_truth4.tsv` 的 `R/*` 段
+    // （生成器 `tools/gen_test_expectations4.py`，`--check` 可复算）
+    // ===================================================================
+    const TRUTH4: &str = include_str!("../fixtures/test_expectation_truth4.tsv");
+
+    fn truth4(section: &str, key: &str) -> &'static str {
+        for line in TRUTH4.lines() {
+            let mut it = line.split('\t');
+            if it.next() == Some(section) && it.next() == Some(key) {
+                return it.next().unwrap_or("");
+            }
+        }
+        panic!("truth4 里没有 {section}/{key}")
+    }
+
+    /// 从 AArch64 `MOVZ Wd, #imm16, LSL #hw<<4` 的 32 位字里解出立即数。
+    ///
+    /// 编码（ARM ARM C6.2.196）：`sf(1)=0 | opc(2)=10 | 100101(6) | hw(2) | imm16(16) | Rd(5)`。
+    fn decode_movz(word: u32) -> Option<u64> {
+        // MOVZ 32-bit：bit31..23 = 0b0_10_100101 ⇒ 与 0x7F80_0000 掩码后等于 0x5280_0000
+        if word & 0x7F80_0000 != 0x5280_0000 {
+            return None;
+        }
+        let hw = (word >> 21) & 0b11;
+        let imm16 = ((word >> 5) & 0xFFFF) as u64;
+        Some(imm16 << (hw * 16))
+    }
+
+    /// `CRASH_REPORT_PORT` 的真值来自**真二进制指令**，不是我方常量。
+    ///
+    /// ## 真值来源（T73 / 计划 D01，`逐位`）
+    ///
+    /// arm64 **Android 2.0.60**（未 strip，`.symtab` 有真名；sha256
+    /// `8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df`）里
+    /// `GraphwarCrashReporter::resolve_default_address`（ELF vaddr **`0x4ca8b4`**，980 字节）
+    /// 有两条把端口materialize 的 `mov w8/w10,#imm`：
+    /// * `0x4cab30: 5294fb88`
+    /// * `0x4cab64: 5294fb8a`
+    ///
+    /// 本测试把这两个 32 位字**解码**成 MOVZ 立即数，再与 `CRASH_REPORT_PORT` 比 ——
+    /// 常量抄错一位（42972 → 42973/49272…）这里立刻红。
+    ///
+    /// 复跑（取指）：`llvm-objdump -d --start-address=0x4ca8b4 --stop-address=0x4cac8c <arm64 .so>`
+    /// 复跑（真值表）：`.reference/venv/bin/python tools/gen_test_expectations4.py --check`
     #[test]
     fn port_is_42972() {
         assert_eq!(cr::CRASH_REPORT_PORT, 42972);
+        // 二进制身份：整份 arm64 .so 的 sha256（换构建 ⇒ 立刻发现）
+        assert_eq!(truth4("R", "binary_sha256"),
+                   "8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df");
+        assert_eq!(truth4("R", "port_function"),
+                   "GraphwarCrashReporter::resolve_default_address");
+        assert_eq!(truth4("R", "port_function_addr"), "0x4ca8b4");
+        assert_eq!(truth4("R", "port_function_len"), "980");
+        let func_addr = u64::from_str_radix(
+            truth4("R", "port_function_addr").trim_start_matches("0x"), 16).unwrap();
+        let func_len: u64 = truth4("R", "port_function_len").parse().unwrap();
+
+        let words = truth4("R", "port_words");
+        let mut decoded = Vec::new();
+        for part in words.split(',') {
+            let (addr, word) = part.split_once(':').expect("addr:word");
+            let addr = u64::from_str_radix(addr.trim_start_matches("0x"), 16).unwrap();
+            let word = u32::from_str_radix(word.trim_start_matches("0x"), 16).unwrap();
+            assert!((func_addr..func_addr + func_len).contains(&addr),
+                    "0x{addr:x} 应落在 resolve_default_address 内");
+            let value = decode_movz(word)
+                .unwrap_or_else(|| panic!("0x{word:08x} 不是 MOVZ"));
+            decoded.push(value);
+        }
+        assert_eq!(decoded.len(), 2, "函数体里应有两条端口立即数");
+        assert_eq!(truth4("R", "port_value"), "42972");
+        for (i, v) in decoded.iter().enumerate() {
+            assert_eq!(*v, cr::CRASH_REPORT_PORT as u64,
+                       "第 {} 条 MOVZ 解出的端口 {v} 与我方常量不一致", i + 1);
+        }
+        assert_eq!(cr::CRASH_REPORT_PORT as u64, 0xa7dc, "端口位型（mov w8,#0xa7dc）");
     }
 
+    /// ## 口径（T73 / 计划 D03）：下面六条是**推断，不是控制流证据**
+    ///
+    /// 六条断言的是我方 `resolve_default_address` 的**优先级顺序**（CLI > env > 全局地址 >
+    /// 待发）。真值侧的物证只有三样：①`port_is_42972` 钉住的**端口立即数**（两条
+    /// `mov w8,#0xa7dc`，`逐位`）；②`.rodata` 里 clap 的三条帮助串与三条失败串；
+    /// ③ 函数体里 `reqwest::blocking::get`（拉 `graphwar_ii_ip.txt`）与
+    /// `chrono::Utc::now`（时间戳）的调用。**优先级顺序本身**没有逐条读成证据
+    /// ⇒ 本组是**推断**，缺的是 `resolve_default_address` 里三条 `if`/`Option::or_else`
+    /// 链的逐条控制流（`0x4ca8b4..0x4cac88` 只读到了两条端口立即数附近的片段）。
     #[test]
     fn cli_wins_over_env_and_global() {
         assert_eq!(

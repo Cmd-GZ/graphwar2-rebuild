@@ -1,0 +1,164 @@
+section	key	value	source	note
+F	frames_total	1717	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	抓包去重后帧数（meta.frames_deduped）
+F	frames_verified	1715	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	能逐字节重建的帧（hex + sha256 + frame_sha256 + n 四项自校验通过）
+F	frames_masked	2	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	打码帧（ChatMessage / ChatMessageRequest，正文换 <len=N>）
+F	prefix_rule	u16be(n)||payload	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	frame_sha256 = sha256(u16 大端长度 ‖ 负载)
+F	wire_fnv	0x9bbcccff8e913e1e	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	**全部 1715 帧的完整 wire 字节**（u16 前缀 + 负载）按抓包顺序拼接的 FNV-1a 64
+F	wire_len	100861	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	上式的字节总数
+F	kinds	56	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	抓包里出现过的事件种类数
+F	lan_broadcast_lines	2	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	旧抓包里 LAN 广播文本行数（无 u16 前缀）
+F	lan_broadcast_first_byte	0x7b	线上真 wire 字节 fixtures/protocol_live_frames.jsonl（T53 抓包）	LAN 广播原文首字节（`{` = 0x7b；带前缀时首字节会是长度高位 0x00）
+L	NameRequest/frames	3	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	NameRequest/fieldcounts	{"2": 3}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	NameRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	NameRequest/keyorder	entity_id|name	同上	**真帧现场键序**（我方序列化必须同序）
+L	NameRequest/payload_fnv	0x93ddc46f0175f6a6	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	NameInfo/frames	20	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	NameInfo/fieldcounts	{"2": 20}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	NameInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	NameInfo/keyorder	entity_id|name	同上	**真帧现场键序**（我方序列化必须同序）
+L	NameInfo/payload_fnv	0x56001feeea8db908	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	RankRequest/frames	3	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	RankRequest/fieldcounts	{"2": 3}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	RankRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	RankRequest/keyorder	entity_id|rank	同上	**真帧现场键序**（我方序列化必须同序）
+L	RankRequest/payload_fnv	0xc657f1c4b28529f9	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	RankInfo/frames	14	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	RankInfo/fieldcounts	{"2": 14}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	RankInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	RankInfo/keyorder	entity_id|rank	同上	**真帧现场键序**（我方序列化必须同序）
+L	RankInfo/payload_fnv	0x82edf648b9db3507	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	LockInfo/frames	2	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	LockInfo/fieldcounts	{"1": 2}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	LockInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	LockInfo/keyorder	lock	同上	**真帧现场键序**（我方序列化必须同序）
+L	LockInfo/payload_fnv	0x830e047da4ce0458	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	LockRequest/frames	2	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	LockRequest/fieldcounts	{"1": 2}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	LockRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	LockRequest/keyorder	lock	同上	**真帧现场键序**（我方序列化必须同序）
+L	LockRequest/payload_fnv	0x7b7f99bc82876c0a	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	ChatMessage/frames	1	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	ChatMessage/fieldcounts	{"2": 1}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	ChatMessage/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	ChatMessage/keyorder	entity_id|message	同上	**真帧现场键序**（我方序列化必须同序）
+L	ChatMessage/payload_fnv	0x9a9dba88a7b9b38c	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	ChatMessageRequest/frames	1	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	ChatMessageRequest/fieldcounts	{"2": 1}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	ChatMessageRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	ChatMessageRequest/keyorder	entity_id|message	同上	**真帧现场键序**（我方序列化必须同序）
+L	ChatMessageRequest/payload_fnv	0x52efa3e1b341f80f	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	SkinGraphicsRequest/frames	3	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	SkinGraphicsRequest/fieldcounts	{"2": 3}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	SkinGraphicsRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	SkinGraphicsRequest/keyorder	entity_id|graphics_str	同上	**真帧现场键序**（我方序列化必须同序）
+L	SkinGraphicsRequest/payload_fnv	0x5739accfb33d476a	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	SkinGraphicsInfo/frames	60	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	SkinGraphicsInfo/fieldcounts	{"2": 60}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	SkinGraphicsInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	SkinGraphicsInfo/keyorder	entity_id|graphics_str	同上	**真帧现场键序**（我方序列化必须同序）
+L	SkinGraphicsInfo/payload_fnv	0x591042a67d0837ed	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	FaceGraphicsRequest/frames	3	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	FaceGraphicsRequest/fieldcounts	{"2": 3}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	FaceGraphicsRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	FaceGraphicsRequest/keyorder	entity_id|graphics_str	同上	**真帧现场键序**（我方序列化必须同序）
+L	FaceGraphicsRequest/payload_fnv	0xb0216553994b7f57	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	FaceGraphicsInfo/frames	60	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	FaceGraphicsInfo/fieldcounts	{"2": 60}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	FaceGraphicsInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	FaceGraphicsInfo/keyorder	entity_id|graphics_str	同上	**真帧现场键序**（我方序列化必须同序）
+L	FaceGraphicsInfo/payload_fnv	0xefd325e745e8d117	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	HatGraphicsRequest/frames	3	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	HatGraphicsRequest/fieldcounts	{"2": 3}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	HatGraphicsRequest/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	HatGraphicsRequest/keyorder	entity_id|graphics_str	同上	**真帧现场键序**（我方序列化必须同序）
+L	HatGraphicsRequest/payload_fnv	0xd7261229245af66e	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	HatGraphicsInfo/frames	60	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	HatGraphicsInfo/fieldcounts	{"2": 60}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	HatGraphicsInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	HatGraphicsInfo/keyorder	entity_id|graphics_str	同上	**真帧现场键序**（我方序列化必须同序）
+L	HatGraphicsInfo/payload_fnv	0xe3d802b833617465	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	GameHeartbeat/frames	0	线上真帧 fixtures/protocol_live_frames.jsonl	线上 0 帧（换不了）
+L	GameHeartbeat/fieldcounts	{}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	GameHeartbeat/keyorders	0	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	GameRemoved/frames	1	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	GameRemoved/fieldcounts	{"1": 1}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	GameRemoved/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	GameRemoved/keyorder	game_address	同上	**真帧现场键序**（我方序列化必须同序）
+L	GameRemoved/payload_fnv	0x1b1e3b53b3be9174	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	VersionInfo/frames	0	线上真帧 fixtures/protocol_live_frames.jsonl	线上 0 帧（换不了）
+L	VersionInfo/fieldcounts	{}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	VersionInfo/keyorders	0	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	BotAdded/frames	4	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	BotAdded/fieldcounts	{"3": 4}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	BotAdded/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	BotAdded/keyorder	connection_id|player_id|level	同上	**真帧现场键序**（我方序列化必须同序）
+L	BotAdded/payload_fnv	0x16d248d3c3db3390	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	TurnLimitInfo/frames	0	线上真帧 fixtures/protocol_live_frames.jsonl	线上 0 帧；真值见 T/ 与 test_expectation_truth3.tsv 的语料段
+L	TurnLimitInfo/fieldcounts	{}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	TurnLimitInfo/keyorders	0	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	EntityEffectInfo/frames	110	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	EntityEffectInfo/fieldcounts	{"2": 110}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	EntityEffectInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	EntityEffectInfo/keyorder	entity_id|effect_type	同上	**真帧现场键序**（我方序列化必须同序）
+L	EntityEffectInfo/payload_fnv	0x4d183fe0fe983ab3	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	ClearObstacles/frames	2	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	ClearObstacles/fieldcounts	{"0": 2}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	ClearObstacles/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	ClearObstacles/keyorder		同上	**真帧现场键序**（我方序列化必须同序）
+L	ClearObstacles/payload_fnv	0x85961ecf2132d5e3	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	ClearBansRequest/frames	0	线上真帧 fixtures/protocol_live_frames.jsonl	线上 0 帧（换不了）
+L	ClearBansRequest/fieldcounts	{}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	ClearBansRequest/keyorders	0	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	BanConnectionRequest/frames	0	线上真帧 fixtures/protocol_live_frames.jsonl	线上 0 帧（换不了）
+L	BanConnectionRequest/fieldcounts	{}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	BanConnectionRequest/keyorders	0	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	GameInfo/frames	52	线上真帧 fixtures/protocol_live_frames.jsonl	线上真帧
+L	GameInfo/fieldcounts	{"1": 52}	同上：从**负载字节**解 JSON 后数顶层字段	每种事件逐帧字段数恒定 ⇒ 期望值可直接钉
+L	GameInfo/keyorders	1	同上	真帧里出现过的不同键序个数（1 = 现场顺序唯一）
+L	GameInfo/keyorder	game_info	同上	**真帧现场键序**（我方序列化必须同序）
+L	GameInfo/payload_fnv	0xe679523a2ed4a5ff	同上	该事件全部帧负载按抓包顺序拼接的 FNV-1a 64（打码帧用打码后的字节）
+L	GameInfo/inner_keyorders	1	同上	内层 `game_info` 对象的键序个数
+L	GameInfo/inner_keyorder	room_name|game_state|current_player_count|address|axis_mode|function_mode|turn_mode|time_mode|locked	同上	**真帧内层键序**（9 个字段；我方 `to_json()` 必须同序）
+L	VersionInfo/fixture_frames	1	旧抓包 fixtures/protocol_match.jsonl	线上 1717 帧里没有它；夹具里这一条是解析后文本
+L	VersionInfo/fixture_keyorder	version|system	同上	旧抓包真帧的键序
+L	VersionInfo/fixture_fieldcount	2	同上	旧抓包真帧的顶层字段数
+T	files_scanned	401	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	扫过的回放份数
+T	turninfo_frames	1494	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`TurnInfo` 帧总数
+T	soldier_zero_frames	23	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`TurnInfo.soldier_id == 0` 的帧数
+T	soldier_zero_all_dead	20	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	其中「该玩家有士兵、发帧时全死」的帧数
+T	soldier_zero_all_dead_list	1782642986:62089:153654:2:153656,153655;1782927882:63323:83239:3:83240,83241,83330;1793883985:35348:408:5:505,447,409,448,410;1793883985:35348:411:5:435,412,413,437,436;1793883985:35348:417:5:419,418,440,438,439;1793883985:35348:420:5:503,452,422,421,451;1793883985:35348:423:5:442,424,441,425,443;1793884550:2256:1038:2:1039,1040;1793884550:4566:1047:5:1048,1049,1080,1081,1082;1793884550:6407:1041:5:1042,1043,1077,1078,1079;1793884702:13920:1044:5:1046,1065,1066,1067,1045;1793884702:13920:1047:5:1082,1048,1049,1081,1080;1793884702:13920:1059:5:1061,1086,1087,1088,1060;1793884702:15770:1041:5:1042,1079,1077,1078,1043;1793884702:15770:1050:5:1068,1069,1070,1052,1051;1793884817:20597:1062:5:1063,1064,1072,1073,1071;1793884817:22907:1041:5:1042,1079,1077,1078,1043;1793884817:22907:1050:5:1068,1069,1070,1052,1051;1793884817:22907:1053:5:1083,1054,1055,1084,1085;1793884817:22907:1056:5:1076,1057,1075,1058,1074	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	明细 file:tick:player_id:士兵数:士兵 id 列表（`PlayerTurns` 的输入就是这个顺序 = SoldierInfo 首见顺序）
+T	soldier_zero_empty_roster	3	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	其中「该玩家从来没有 SoldierInfo（空队）」的帧数
+T	soldier_zero_empty_roster_list	1793883985:30689:405;1793884702:9282:1038;1793884817:18266:1038	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	明细 file:tick:player_id
+T	files_with_all_dead_zero	1782642986,1782927882,1793883985,1793884550,1793884702,1793884817	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	出现「全灭广播 0」的回放文件
+T	single_soldier_players	6	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	「玩家只有一个士兵且连发 ≥2 次 TurnInfo」的人数
+T	single_soldier_list	1793874543:633:635:6;1793874543:651:653:8;1793874543:642:643:7;1793874543:630:632:9;1793874543:636:637:7;1793874543:639:640:9	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	明细 file:player_id:soldier_id:连发次数（全部同一个 id）
+T	empty_roster_players	3	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	「有 TurnInfo 但从来没有 SoldierInfo」的玩家数
+T	empty_roster_players_list	1793883985:405:1;1793884702:1038:1;1793884817:1038:1	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	明细 file:player_id:TurnInfo 次数
+T	corpus_names_sha256	c3325c0b72402085c8c89a90b62441e753bd4be5fb1e871985bdf78938703907	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	文件名集合指纹
+T	turn_limit_frames	21	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`TurnLimitInfo` 帧数（线上 1717 帧抓不到它 ⇒ 语料是唯一真值来源）
+T	turn_limit_values	{"1": 1, "5": 8, "6": 7, "10": 5}	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	取值直方图
+T	turn_limit_keyorder	turn_limit	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`TurnLimitInfo` 载荷的字段名（语料重建文本的键）
+T	turn_limit_files	1782640433,1782640520,1782640577,1782640692,1782640762,1782640919,1782641048,1782641222,1782641480,1782760565,1782760707,1782760725,1782760774,1782763110,1783254892,1783353258,1793899739,1793899829,1793899922,1793899944,1793900038	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	出现的回放文件
+S	sim_files	91	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`TurnModeInfo == SimultaneousTurns` 的回放份数
+S	sim_rounds	145	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	这些回放里出现 TurnInfo 的回合数
+S	turninfo_per_round	{"2": 102, "3": 25, "4": 4, "5": 1, "7": 3, "8": 6, "9": 4}	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	每回合 `TurnInfo` 帧数直方图（= 该回合玩家数）
+S	end_of_turn_after_all_turninfo	145	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`EndOfTurnInfo` 出现在该回合**全部** TurnInfo 之后的回合数
+S	function_fire_request_frames	0	冻结语料 401 份回放快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	这些回合里 `FunctionFireRequest` 帧数（client→server 事件，回放不录 ⇒ 0）
+R	binary	android-2.0.60/libgraphwarrust.so	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	来源路径（.reference/，gitignore）
+R	binary_sha256	8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	整份二进制 sha256
+R	port_function	GraphwarCrashReporter::resolve_default_address	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	`.symtab` 真名（arm64 未 strip）
+R	port_function_addr	0x4ca8b4	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	ELF vaddr（= 模块内偏移 = RVA）
+R	port_function_len	980	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	FDE 字节数
+R	port_words	0x4cab30:0x5294fb88,0x4cab64:0x5294fb8a	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	函数体里两条 `mov w8/w10,#0xa7dc` 的（地址, 4 字节小端字）
+R	port_value	42972	真二进制 arm64 Android 2.0.60（未 strip，.symtab 有真名）	两条指令解码出的立即数（MOVZ Wd,#0xa7dc）
+R	alive_teams_function	GraphwarGameStateManager::get_alive_teams	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	boundary_audit.tsv 的 v2 唯一锚（Location 行 867/868/869/875/876）
+R	alive_teams_addr	0x473520	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	ELF vaddr（= 模块内偏移 = RVA）
+R	alive_teams_len	640	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	FDE 字节数
+R	alive_teams_text_delta	0x1000	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	`.text` 的 vaddr − fileoff（复算指令字节时用：fileoff = vaddr − 这个值）
+R	x86_binary_sha256	9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	整份二进制 sha256
+R	alive_teams_guard	0x4735ae:4885db0f84b7000000	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	`48 85 db` = test %rbx,%rbx（rbx = 生命表长度）；`0f 84 <rel32>` = je（非零才进循环）
+R	alive_teams_guard_target	0x47366e	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	上一条 je 的跳转目标（= 空表分支的入口；测试里用 rel32 自己算一遍）
+R	alive_teams_zero_t2	0x47366e:c744240400000000	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	`movl $0x0,0x4(%rsp)`（第二个返回值 = Team2 有活体 = false）
+R	alive_teams_zero_t1	0x473676:c7042400000000	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	`movl $0x0,(%rsp)`（第一个返回值 = Team1 有活体 = false）
+R	alive_teams_loop_dead_exit	0x47367d	真二进制 x86-64 2026-08-28（stripped；指令字节按 `.text` 的 vaddr/offset 映射读出）	循环跑完没找到活人时也落到这里（两条返回值仍是 0x4735be/0x4735c5 的初值 0）

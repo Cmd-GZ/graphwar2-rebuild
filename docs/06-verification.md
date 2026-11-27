@@ -21167,3 +21167,193 @@ $PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv 
 5. `address` 的 32 字节枚举身份（`SocketAddr` = 推断）：仍缺符号或构造点 32 字节读证据。
 6. 本轮**没有把任何推断写成结论**：E8 上界一律标 `推断`、`address` 身份仍 `推断`、
    `PatternSegment` 那行的窗口归属明写"存疑、不许当结论"。
+
+## 120. T73：第四批 S-self 换真值 —— `protocol.rs` 的**175 帧真 wire 字节**、`broker.rs` 的 **52 帧线上 `GameInfo`**、`turn_manager`/`sim_turns` 的**冻结语料回合**、`crash_reporter` 端口升**逐位**、`win_rule` 空局拿到**指令级分支**（2026-11-27，任务 `task-72` / 分支 `agent/tests-batch4`）
+
+### 120.1 一句话结论
+
+T37（§85）判出 **341 条 `S-self`**；T46 换 19（§96）、T59 换 50（§106）、T64 换 38（§115）
+⇒ 本轮起点约 **234 条**。按 T64 §115.11 给的顺序做第五批：
+
+| 块 | 改了几条（测试函数） | 关键读数 |
+|---|---|---|
+| A `src/_scaffold/protocol.rs` | **10 条**（5 条换真值 + 5 条改口径） | 我方 `Frame::encode` 重建 **1715 个真帧**的 wire 字节，FNV-1a 64 = 抓包 `0x9bbcccff8e913e1e`（**逐字节一致**）；23 个补齐事件的**字段数/键序**改由真帧给期望值 |
+| B `src/_scaffold/broker.rs` + `tests/broker.rs` | **7 条**（4 条换真值，其中 1 条是**新增硬闸** + 3 条改口径） | 线上 **52 帧 `GameInfo`** 逐帧「解析→重序列化」**逐字节相同**；`GameRemoved` 从「零帧」变成**1 帧真值** |
+| C `src/graphwar_turn_manager.rs` + `tests/sim_turns.rs` | **5 条**（4 条换真值 + 1 条拆两层） | 语料 **1494 条 `TurnInfo`** 里 **23 条 `soldier_id==0`**：**20 条全灭 + 3 条空队**；同时回合 **145 个**形状钉死 |
+| D `tests/misc_modules.rs` | **8 条**（1 条升 `逐位` + 7 条改口径） | `CRASH_REPORT_PORT` 由 arm64 两条 `mov w8,#0xa7dc` **解码**得到，不再是我方常量 |
+| E `tests/win_rule.rs` | **1 条** | 空生命表 ⇒ `0x473520` 走 `0x47366e` 分支写两个 0（**指令级**）；「不判胜负」那一半仍是推断 |
+
+**真 bug 报告 0 条**（新真值下旧实现一条都没变红）；但**证伪了 2 条旧结论**（T59 的两条「换不了」前提），
+另定位 1 条「我方模型里没有证据的分支」（`EmptyRoster::Skip`），见 §120.10。
+反面对照 **4 条全部按预期变红**（§120.8）。
+
+### 120.2 预注册（`fixtures/test_expectation_plan4.tsv`，单独 commit `414adf4`）
+
+**23 行**，每行写死「为什么最会掩盖错误 / 改前期望值来源 / 预注册真值来源 / 取证手段 / 目标档」。
+跑完**没有为了对上而改判据**；落空的（C06 的 unicorn 直调、D02 的 FIFO、C04 的 getter）如实登记在 §120.11。
+
+真值表：`fixtures/test_expectation_truth4.tsv`（**163 行**，`section/key/value/source/note`），
+生成器 `tools/gen_test_expectations4.py`（`--check` 只比对不写，**rc=0**）。三段指纹先行：
+
+* 1717 条真帧：逐帧核 `sha256`(负载) / `frame_sha256`(u16 前缀 + 负载) / `n` —— **1715 帧全过**，
+  2 条打码帧（`ChatMessage` / `ChatMessageRequest`）只核打码键；
+* 401 份回放：按 `fixtures/guardrails.json` 的 `corpus.files` 逐份 sha256（`names_sha256 = c3325c0b…`）；
+* 两份二进制：arm64 Android 2.0.60 `8a612e95…`、x86-64 2026-08-28 `9a538115…`。
+
+### 120.3 块 A：`protocol.rs` —— 帧格式首次与**真 wire 字节**对拍
+
+1. **`frame_length_prefix_matches_payload_length`**（计划 R01，**逐位**）：T53 抓包的每帧自带
+   `frame_sha256 = sha256(u16be(n) ‖ payload)` ⇒ **原始 socket 字节是有真值的**。
+   测试用我方 `Frame::encode` 重建 1715 帧、按抓包顺序拼接算 FNV-1a 64，
+   必须等于 `F/wire_fnv = 0x9bbcccff8e913e1e`（`F/wire_len = 100861` 字节）。
+   前缀字节序反了 / 把前缀算成负载+2 / 写成 u32 ⇒ 立刻红（§120.8 对照 1）。
+2. **`typed_events_have_exactly_the_serde_field_count`**（计划 R02，观测）：
+   期望值从「我方 `SERDE_FIELD_COUNTS`（人工抄的 `.rodata` N）」换成「**抓包字节里数出来的字段数**」
+   （`L/<事件>/fieldcounts`，每种事件的直方图只有 1 个键 ⇒ 逐帧恒定）。`.rodata` 的 N 降为**交叉核对**：
+   两个独立来源（`.rodata` 串 vs 真帧）必须一致 —— 实测 13/13 一致。
+3. **`upgraded_events_declare_the_binary_field_names`**（计划 R03，观测/推断）：
+   键序期望值从 `WIRE_SPEC` 换成**抓包现场键序**（7 个有真帧/语料帧的事件）；
+   3 个零真帧事件（`GameHeartbeat`/`ClearBansRequest`/`BanConnectionRequest`）**仍标推断**，
+   且测试会**断言它们现在仍然 0 帧** —— 将来抓到帧会红，提醒下一任升档。
+4. **`game_info_has_one_definition_with_pinned_fields_and_key_order`**（计划 R04）：
+   `GameInfo` 的 9 键顺序除等于 `GAME_INFO_FIELDS`（我方表）外，还必须等于
+   **线上 52 帧的内层键序**（`L/GameInfo/inner_keyorder`，`room_name|game_state|…|locked`）。
+5. 口径 5 条（`all_twenty_three_names_are_implemented` / `decode_waits_for_complete_frame` /
+   `rejects_non_json` / `ryu_known_divergences` / `emit_message_uses_ryu`）：逐条写明
+   **契约断言，不含语义** + 为什么换不了（真流量没有半帧/非法帧；ryu 是我方格式化器）+ 指到真值侧的覆盖。
+
+### 120.4 块 B：`broker.rs` —— T59 的两条「换不了」全被证伪
+
+1. **`frame_is_u16_big_endian_prefixed`**（计划 B01，**逐位**）：T59 记「要升档需要一份原始 socket 字节抓包」。
+   **这份抓包已经有了**（`frame_sha256` 覆盖前缀）⇒ broker 的帧编码与 protocol 的 `Frame`
+   是同一段代码，1715 帧全等。
+2. **新增硬闸 `replays_every_live_game_info_frame`**（计划 B02，观测）：线上 **52 帧 `GameInfo`**
+   逐帧「`parse_game_info_event` → `game_info_event`」必须与抓包**逐字节**相同，
+   并把帧数与负载 FNV（`L/GameInfo/payload_fnv = 0xe679523a2ed4a5ff`）钉死。
+   T59 原来的期望只有 `fixtures/protocol_match.jsonl` 的 **3 条**房间（且是解析后文本、无原始字节）。
+3. **`game_removed_round_trips`**（观测）：T59 记「`GameRemoved` 零帧 ⇒ 只能是契约」。
+   T53 抓包里**有 1 帧**（`69.164.213.144:42409`）⇒ 期望值改成**抓到的字节**。
+4. 口径：`room_table_upsert_remove_expire` / `snapshot_is_sorted_and_stable` / `tests/broker.rs::room_table_expires_silent_rooms`
+   （计划 B03/B04）—— **broker 服务端原版没有对应物**（`AGENTS.md` §4），房间表/TTL/排序都是我方的选择；
+   真值侧只有旁证：52 帧 `GameInfo` **每帧恰好一个房间**（协议里没有"房间列表"容器）⇒ 原版列表顺序无从观测。
+   ⚠️ 特别写明：LAN 广播的 `ENTRY_TTL_SECS = 10`（arm64 `0x3de6e4`）**不能**挪来当 broker 的 TTL（另一个机制）。
+
+### 120.5 块 C：`turn_manager` / `sim_turns` —— 语料把「全灭/空队/单兵」三种收场钉死
+
+扫描口径：401 份回放解压后重建「玩家→士兵表（`SoldierInfo` **首见顺序去重**）」与「士兵→活否
+（`LifeInfo` + `EntityRemoved` + `RemoveTeam`；**玩家不算生命表实体**）」，逐条 `TurnInfo` 判状态。
+**1494 条 `TurnInfo` 里 23 条 `soldier_id == 0`**：
+
+| 事实 | 读数 | 落到哪条测试 |
+|---|---|---|
+| 全灭（玩家有 2–5 个士兵、发帧时全死） | **20 帧 / 6 份回放** | `all_dead_returns_some_zero`（每条都用真 replay 的士兵表驱动） |
+| 空队（玩家**从来没有任何 `SoldierInfo`**） | **3 帧**（`1793883985/405`、`1793884702/1038`、`1793884817/1038`） | `some_zero_broadcasts_but_none_does_not`：**空队也广播 0** ⇒ 默认策略 `AnnounceZero` 由推断升**观测** |
+| 单士兵玩家连发 | **6 人**（`1793874543`，各发 6–9 次全是同一 id） | `single_soldier_is_taken_every_turn` |
+| 同时回合形状 | **91 份回放 / 145 个回合**：每回合 `TurnInfo` 数 = 玩家数（`{2:102,3:25,4:4,5:1,7:3,8:6,9:4}`），全部同 tick，`EndOfTurnInfo` 在所有 `TurnInfo` **之后**（145/145） | `tests/sim_turns.rs::collection_waits_for_every_announced_player`（用真实名单规模 2..9 逐个走收集器） |
+
+`empty_roster_returns_none` 拆成两层写清：**getter 层是契约**（依据 `0x4628d0`），
+**广播层是观测**（上面那 3 帧）。
+
+### 120.6 块 D：`misc_modules` —— `CRASH_REPORT_PORT` 升「逐位」
+
+`port_is_42972` 原先只与**我方常量**比。本轮真值来自**真二进制指令**：arm64 Android 2.0.60（未 strip，
+`.symtab` 有真名）里 `GraphwarCrashReporter::resolve_default_address`（ELF vaddr `0x4ca8b4`，980 字节）
+两条 `mov w8/w10,#0xa7dc` ⇒ **`0x4cab30: 5294fb88`**、**`0x4cab64: 5294fb8a`**。
+测试把这两个 32 位字按 ARM ARM 的 MOVZ 编码**解码出立即数**（`imm16 << hw*16`），再与常量比，
+并核「两条指令都落在该函数体内」+ 整份 `.so` 的 sha256 ⇒ 常量抄错一位立刻红。
+
+口径 7 条：`event_queue` 的 FIFO/no-op（原版 `add_event 0x3d7a40` / `send_buffer 0x3d793c` 是
+`push_back`/`drain`，但**顺序在语料里不可观测** ⇒ 换不了，只证不退化成 LIFO）；
+`crash_tests` 的 5 条**地址解析优先级**（CLI > env > 全局 > 待发）—— 物证只有端口立即数、
+`.rodata` 的三条帮助串与失败串、以及函数体里的 `reqwest::blocking::get`；
+**优先级顺序本身没逐条读成控制流** ⇒ 明确标**推断**。
+
+### 120.7 块 E：`win_rule` 空局 —— unicorn 没跑成，用**静态指令级**替代
+
+计划 C06 是「unicorn 直调 `0x473520`（`get_alive_teams`）喂空生命表」。**跑不成**：
+该函数第一条就 `lea 0xe0(%rdi),%rdi` 后调 `0x46e7a0`（`Rc/RefCell` 借用），要造出
+`GameStateManager` + `LifeManager`（`HashMap`）的内部布局 ⇒ `needs_state`，本轮没有那份布局。
+
+**换成的等价主证据**（静态，未跑）：
+
+| 地址 | 字节 | 指令 | 含义 |
+|---|---|---|---|
+| `0x4735a9` | `48 8b 5c 24 30` | `mov 0x30(%rsp),%rbx` | rbx = 生命表长度 |
+| `0x4735ae` | `48 85 db` | `test %rbx,%rbx` | |
+| `0x4735b1` | `0f 84 b7 00 00 00` | `je 0x47366e` | **空表 ⇒ 跳到清零块** |
+| `0x47366e` | `c7 44 24 04 00 00 00 00` | `movl $0x0,0x4(%rsp)` | Team2 有活体 = false |
+| `0x473676` | `c7 04 24 00 00 00 00` | `movl $0x0,(%rsp)` | Team1 有活体 = false |
+
+测试把这些字节**从真值表读出来再解码一遍**（`je` 的 rel32 自己算跳转目标、清零块的 imm32 自己解），
+⇒ 空生命表 ⇒ `(false,false)` 是**指令级**的。
+⚠️ **仍然是推断**的那一半：「(false,false) ⇒ 不结束游戏」在 `LevelRules`（`0x4759f0`）里，
+`0x475a80` 判的是**单队** `al == 0`／`dl == 0`，双 false 落到哪一支本轮没读（`docs/150` 也记着未解）。
+所以 `ending() == None` 钉的是**输入侧**，语义侧仍标推断。
+
+### 120.8 反面对照（临时改坏**被测实现**，确认变红，全部已复原）
+
+| # | 改坏哪处实现 | 期望变红的断言 | 实测 |
+|---|---|---|---|
+| 1 | `protocol.rs::Frame::encode` 前缀 `to_be_bytes → to_le_bytes` | R01 帧格式（两处） | **2 红**：`frame_length_prefix_matches_payload_length`（`GameInfo: 长度前缀必须是大端 u16…`）、`broker::frame_is_u16_big_endian_prefixed` |
+| 2 | `turn_manager::next_shooter` 全灭返回 `Some(0) → None` | C01/C03 | **2 红**：`all_dead_returns_some_zero`（`真回放 1782642986 tick 62089 玩家 153654 全灭时应广播 soldier_id = 0`）、`single_soldier_is_taken_every_turn` |
+| 3 | `CRASH_REPORT_PORT` 42972 → **42973** | D01 | **1 红**：`crash_tests::port_is_42972` |
+| 4 | `GameInfo::to_json` 把 `current_player_count` 与 `address` 两个键对调 | R04/B02 | **2 红**：`game_info_has_one_definition_with_pinned_fields_and_key_order`、`broker::replays_every_live_game_info_frame`（线上真帧回放后字节不一致） |
+
+⇒ 新断言都**能被真实实现错误打破**，不是「怎么写都绿」。四处改动都已还原
+（`git diff src/graphwar_crash_reporter.rs` 为空；其余改动只在 `mod tests` 区域）。
+
+### 120.9 门槛读数（每批都跑）
+
+| 门槛 | 基线（T66 新口径） | 本批实测 | 判定 |
+|---|---|---|---|
+| `cargo test --offline` | **1520 / 0 / 0ignored** | **1521 / 0 / 0ignored** | 过（+1 = 新增硬闸 `replays_every_live_game_info_frame`） |
+| `--features gdext-bindings` | **1650 / 0** | **1651 / 0 / 0ignored** | 过（同样 +1） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（`kind_seq_ok` 1075/1075/1075） | 一步未退（语料指纹 `c3325c0b…` 先核；`bit_exact_attrib --check-baseline` 两轴「全部一致」） |
+| `tools/check_doc_refs.py` | rc=0 | **rc=0** | 过 |
+| `tools/docsec.py check docs/06-verification.md` | rc=0 | **rc=0**（节数 118，范围 1..120，断号仍是历史的 43/89） | 过 |
+| `tools/gen_test_expectations4.py --check` | — | **OK（163 行）** | 真值表可复算 |
+
+### 120.10 我写错了什么 / 旧结论被证伪（**这一节比上面的数字重要**）
+
+1. **T59 的 `broker::frame_is_u16_big_endian_prefixed`「换不了」前提是错的**：原话是
+   「仓库里的抓包是解析后文本、没有 2 字节长度前缀 ⇒ 要升档需要一份原始 socket 字节抓包」。
+   T53 的 `fixtures/protocol_live_frames.jsonl` **就是**原始 socket 字节（每帧带 `frame_sha256`，
+   覆盖 u16 前缀）⇒ 这条从**推断**直接升到**逐位**。
+2. **T59 的 `GameRemoved`「零帧」也是错的**：T53 抓包 1717 帧里有 **1 帧** `GameRemoved`。
+   （和 T46 在 gzip 压缩字节上 grep 造成 `EndingGame`/`TurnLimitInfo` 假阴性同一类错误：**没在真正的
+   线上字节上扫**。）
+3. **`docs/98` §7 伪代码注释 `if n == 0 { return None }  // 不发 TurnInfo` 被语料证伪**：
+   3 帧「玩家从来没有 `SoldierInfo` 却收到 `TurnInfo{soldier_id:0}`」⇒ **空队仍广播 0**。
+   这与 T64 记的指令冲突（`0x463f2f je 0x463fd0` 与"全灭"共用发 0 的块）方向一致。
+   ⇒ 我方 `EmptyRoster` 的**默认** `AnnounceZero` 现在是观测；`Skip` 变体在语料里**没有任何对应物**，
+   属"我方模型里没证据的分支"，**建议 lead 决定是否保留/标注**（本轮只加注释，没删代码）。
+4. **预注册 C03 写「5 个单士兵玩家」，实测 6 个**（多 `639→640`，连发 9 次）。事实补充，**判据未变**。
+5. `single_soldier_players` 第一版把同一个士兵的**重复 `SoldierInfo`** 当成两个兵（实测 `1793884550`
+   玩家 1047 的 `1082` 出现两次）⇒ 扫描改成**首见顺序去重**。这条写进生成器注释，免得下一个人再踩。
+
+### 120.11 遗留：还剩多少 S-self、下一批挑什么
+
+* 本轮按测试函数计**动了 31 条**：**换真值 15 条**（A 5 + B 4（含新增硬闸 1）+ C 4 + D 1 + E 1）
+  + **改口径/拆两层 16 条**（A 5 + B 3 + C 1 + D 7）。按 T37 的 341 条分母，
+  扣掉 T46 的 19、T59 的 50、T64 的 38、本轮的 **15** ⇒ **还剩约 219 条**。
+* **换不了的（本轮查清、登记）**：
+  1. `_scaffold/api.rs`(43) / `replay_driver.rs`(20)：我方自造物（T64 已改口径，本轮未动）；
+  2. `broker` 房间表语义/TTL（4 条）：服务端原版没有；LAN TTL 是另一个机制；
+  3. `event_queue` FIFO（2 条）：顺序在语料里不可观测，`push_back`/`drain` 语义要读 `VecDeque` 方法体；
+  4. `crash_tests` 地址优先级（5 条）：缺 `0x4ca8b4..0x4cac88` 的逐条控制流；
+  5. `win_rule` 空局的**语义侧**：缺 `0x4759f0` 在 `(false,false)` 时的落点。
+* **下一批的顺序（按"还有什么真值没吃"重排）**：
+  1. **`src/graphwar_play_screen_control.rs` 的 18 条**（弹道生命周期/时钟状态机）：这是**最大的单块**。
+     真值可以走 §63 的 frida 真机读数（回放播放时钟）+ 403 份回放的 `FunctionActive`/`EffectInfo`
+     时间差，跟 C 块同一套扫描法；
+  2. **`src/game.rs` 的 12 条**（结算流程内部一致性）：语料里 217 份 `EndingGame` 的结算批顺序可当模板
+     （§85.4 已把 `tests/sim_turns.rs` 的 14 条对上了，`game.rs` 这批还没）；
+  3. **`src/_scaffold/diffconv.rs` 的 10 条**：收敛层是我方实现 ⇒ 只能改口径（同 `api`/`replay_driver` 先例）；
+  4. **`src/graphwar_level_generator.rs` 的 11 条 / `graphwar_function_evolutionator.rs` 的 10 条**：
+     `fixtures/ai_gen_parity.tsv`（注入 ChaCha key 后真二进制的 token 流）已存在，可把「生成器内部不变量」
+     换成「与真二进制 token 流逐 token 对拍」；
+  5. **`src/_scaffold/protocol.rs` 剩下的 `unknown_*`/转义 5 条**：真流量里不会有未知字段/带引号的名字
+     ⇒ 结构性换不了，建议下一轮**只做口径审计**（不再重复尝试）。
+* **两个"可继续做深"的口子**：① `EmptyRoster::Skip` 到底要不要留（§120.10 第 3 条）；
+  ② `win_rule` 的 `0x4759f0` 双零落点——拿到它就能把「双零终局 winner 字段」从推断升到逐位。
+
