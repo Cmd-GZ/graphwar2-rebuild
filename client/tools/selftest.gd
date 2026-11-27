@@ -127,6 +127,9 @@ func run(main: Control) -> int:
 	_group_begin("lobby_fixes")
 	await _test_lobby_fixes()
 	_group_end()
+	_group_begin("controller_migration")
+	_test_controller_migration()
+	_group_end()
 	_diag_line("end")
 
 	_coverage_report()
@@ -281,6 +284,7 @@ const GROUP_EXPECT := {
 	"play_online_real_server": 40,
 	"play_online_lifeinfo_fake_server": 11,
 	"lobby_fixes": 24,
+	"controller_migration": 25,
 }
 
 var _group := ""
@@ -4913,6 +4917,133 @@ func _lobby_row_players(list: VBoxContainer, index: int) -> Label:
 			return (c as Node).find_child("PlayerCount", true, false) as Label
 		i += 1
 	return null
+
+## T67 把四段控制器搬回 Rust（`docs/06` §115）之后的**反向断言**。
+##
+## 每一条的期望值都来自 **Rust 侧/二进制证据**，不是来自我方实现（`AGENTS.md` §0.5）：
+## 搬走的规则如果被搬错（枚举值错、判据写反、屏名拼错），这里会红。所以这批断言的作用
+## 是"钉住搬运结果"而不是"再抄一遍实现"。
+func _test_controller_migration() -> void:
+	# --- ① 战役表：客户端不再有第二份（数据在 `graphwar_campaign_control::LEVEL_INFO`）---
+	_expect(GwCampaignControl.level_count() == 21,
+		"战役：内核 21 关（实际 %d）" % GwCampaignControl.level_count())
+	var lv0 := GwCampaign.level(0)
+	_expect(int(lv0.get("index", -1)) == 0 and String(lv0.get("title", "")) == "Level 0",
+		"战役：第 0 关来自内核（title='%s'）" % String(lv0.get("title", "")))
+	# 内核用 Option 表示"没有对手 / 没有回合上限"，出口约定 -1 / 0（改前 `.gd` 的同一约定）。
+	_expect(int(lv0.get("bot_tier", -99)) == -1 and int(lv0.get("turn_limit", -99)) == 0,
+		"战役：无对手 = bot_tier -1、无回合上限 = turn_limit 0（实际 %d / %d）"
+			% [int(lv0.get("bot_tier", -99)), int(lv0.get("turn_limit", -99))])
+	# `ObstacleMode` 的名字表来自 Rust（判别值 = 下标）；level_0 = None。
+	var modes := GwCampaignControl.obstacle_modes()
+	_expect(modes.size() == 3 and String(modes[int(lv0.get("obstacles", -1))]) == "None",
+		"战役：障碍模式名表来自内核（%s）" % str(modes))
+	# `level_<n>` 解析在 Rust（原版 `rsplit('_')` + 严格 parse）：非数字后缀 = 失败 ⇒ -1。
+	_expect(GwCampaignControl.parse_level_key("level_7") == 7
+		and GwCampaignControl.parse_level_key("level_x") == -1,
+		"战役：level_<n> 解析严格（原版 0x417ef0）")
+
+	# --- ② 屏表 / 切屏：名字与决策都在 `graphwar_root_node` ---
+	var bases := GwRootNode.base_screen_names()
+	_expect(bases.size() == 7 and bases.has("MainMenu") and bases.has("PlayScreen"),
+		"屏表：7 个基础屏名来自 Rust（%s）" % str(bases))
+	var all_screens := GwRootNode.all_screen_names()
+	_expect(all_screens.size() == 15 and GwRootNode.screen_addr("PlayScreen") == 0x1bd92b,
+		"屏表：15 个名字 + PlayScreen 的 .rodata 地址 0x1bd92b（实际 0x%x）"
+			% GwRootNode.screen_addr("PlayScreen"))
+	# 原版屏表 vs 我方屏表的两处**已知不一致**（`docs/06` §115.6）：钉住它们，
+	# 免得哪天改好了却没人知道台账要更新。
+	_expect(all_screens.has("ConfirmPlay") and all_screens.has("ExitPopUp")
+		and not all_screens.has("ChatPopUp"),
+		"屏表：原版 15 槽是 ConfirmPlay + ExitPopUp 两项、且没有 ChatPopUp（我方屏表不同 ⇒ 台账 §115.6）")
+	# 切屏决策：命中 ⇒ 显示、其余 ⇒ 隐藏（4 个条目，两条臂都验）。
+	var plan := GwRootNode.show_plan("LanLobby", false, false)
+	var shown := 0
+	var hidden := 0
+	for item in plan:
+		if int(item["visible"]) == 1:
+			shown += 1
+			_expect(String(item["name"]) == "LanLobby", "切屏：被显示的只有 LanLobby（实际 %s）" % String(item["name"]))
+		elif int(item["visible"]) == 0:
+			hidden += 1
+	_expect(shown == 1 and hidden == plan.size() - 1,
+		"切屏：1 显示 / %d 隐藏（实际 %d / %d）" % [plan.size() - 1, shown, hidden])
+	# `PlayScreen` 的广告臂：`ads_slot = true` 且该屏可见 ⇒ 进/出各要一条 call_deferred
+	# （原版 `create_ad_view` `0x3af9fe` / `destroy_ad_view` `0x3afab5`）。
+	var ads_plan := GwRootNode.show_plan_for(PackedStringArray(["PlayScreen"]), "PlayScreen", true, true)
+	var ads_deferred := String(ads_plan[0]["deferred"]) if ads_plan.size() > 0 else ""
+	_expect(ads_deferred == "destroy_ad_view",
+		"切屏：进 PlayScreen（ads_slot=1 且可见）⇒ destroy_ad_view（实际 '%s'）" % ads_deferred)
+	var ads_plan2 := GwRootNode.show_plan_for(PackedStringArray(["PlayScreen"]), "MainMenu", true, true)
+	var ads_deferred2 := String(ads_plan2[0]["deferred"]) if ads_plan2.size() > 0 else ""
+	_expect(ads_deferred2 == "create_ad_view",
+		"切屏：出 PlayScreen ⇒ create_ad_view（实际 '%s'）" % ads_deferred2)
+	# `background` 这一条**连 set_visible 都不调**（visible = -1 表示不碰）。
+	var bg_plan := GwRootNode.show_plan_for(PackedStringArray(["background"]), "MainMenu", false, false)
+	_expect(int(bg_plan[0]["visible"]) == -1,
+		"切屏：background 条目不动可见性（原版 0x3af980）")
+
+	# --- ③ 命令键：12 条已知键与客户端的 GwCommands 表对得上（拼错就红）---
+	var known := GwRootNode.command_keys()
+	_expect(known.size() == 12, "命令键：0x3b0830 已解 12 条（实际 %d）" % known.size())
+	var client_keys := [
+		GwCommands.PLAYER_SETTINGS, GwCommands.START_LEVEL, GwCommands.MULTIPLAYER,
+		GwCommands.CREATE_GAME, GwCommands.TOGGLE_MUTE, GwCommands.EXIT_CAMPAIGN,
+		GwCommands.ASK_EXIT_PLAY, GwCommands.CANCEL_ADD_BOT, GwCommands.EXIT_LAN_LOBBY,
+		GwCommands.CANCEL_JOIN_IP, GwCommands.ADD_BOT, GwCommands.JOIN_IP,
+	]
+	var matched := 0
+	for k in known:
+		if client_keys.has(String(k)):
+			matched += 1
+	_expect(matched == 12, "命令键：客户端常量表覆盖二进制那 12 条（实际 %d）" % matched)
+	# 词序更正（`docs/16` §15.10 更正 ④）：真值是 `ask_exit_play`，旧文档写的 `exit_ask_play` 是错的。
+	_expect(GwRootNode.command_kind("ask_exit_play") == "ask_exit_play"
+		and GwRootNode.command_kind("exit_ask_play") == "",
+		"命令键：ask_exit_play（不是 exit_ask_play）")
+
+	# --- ④ 连接状态机：判别值与判定都在 `graphwar_client_connection_handler` ---
+	_expect(GwClientLink.state_ids() == {"disconnected": 0, "connecting": 1, "connected": 2, "failed": 3},
+		"连接：4 态判别值 0/1/2/3（实际 %s）" % str(GwClientLink.state_ids()))
+	var step_ok := GwClientLink.step(1, 2, 0.1)
+	_expect(int(step_ok["next_state"]) == 2 and String(step_ok["action"]) == "connected",
+		"连接：connecting + TCP CONNECTED ⇒ 状态 2（实际 %s）" % str(step_ok))
+	# 超时阈值是内核常量 30 s（arm64 `0x48dccc mov w1,#0x1e`）：29.9 s 还没到、30.0 s 到。
+	var step_edge := GwClientLink.step(1, 1, GwClientLink.timeout_secs() - 0.1)
+	var step_over := GwClientLink.step(1, 1, GwClientLink.timeout_secs())
+	_expect(String(step_edge["action"]) == "wait"
+		and String(step_over["action"]) == "failed" and bool(step_over["timed_out"]),
+		"连接：超时阈值 = 内核 30 s（29.9 s 等待 / 30.0 s 失败）")
+	_expect(GwClientLink.is_open(2) and not GwClientLink.is_open(1)
+		and GwClientLink.after_connect_attempt(false) == 3,
+		"连接：is_open 只认状态 2；失败态 = 3")
+
+	# --- ⑤ LAN 广播：表键 = 发送方地址、TTL 判据 >= 10 s（两处改前的语义错）---
+	var v6 := GwLanV6.new()
+	v6.start(42968)
+	var line := GwWireSamples.broadcast("Same Addr", "Setup", 1, "[::1]:1111",
+		"EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false)
+	# 同一个发送方、两个不同 address 字段 ⇒ 真值只有**一行**（键是 SocketAddr）
+	_expect(v6.ingest("127.0.0.1:5001", line.to_utf8_buffer(), 0)
+		and v6.ingest("127.0.0.1:5001", line.replace("[::1]:1111", "[::1]:2222").to_utf8_buffer(), 1000)
+		and v6.room_count() == 1,
+		"LAN：表键是发送方地址（同一 host 换 address 仍一行，实际 %d）" % v6.room_count())
+	v6.stop()
+	v6.start(42968)
+	_expect(v6.ingest("127.0.0.1:5001", line.to_utf8_buffer(), 0)
+		and v6.ingest("127.0.0.1:5002", line.to_utf8_buffer(), 0)
+		and v6.room_count() == 2,
+		"LAN：不同 host 发同一个 address ⇒ 两行（实际 %d）" % v6.room_count())
+	# TTL：真值 `secs >= 10` ⇒ 9999 ms 还在、10000 ms 就删（改前 `.gd` 写 `>` ⇒ 多留一帧）
+	var before := v6.expire_stale(9999)
+	var at_ttl := v6.expire_stale(10000)
+	_expect(before == 0 and at_ttl == 2,
+		"LAN：TTL 判据 >= 10 s（9999 ms 删 %d 条 / 10000 ms 删 %d 条）" % [before, at_ttl])
+	# 变体 B（事件外壳）与变体 E（Timers1m）都必须被丢（`docs/115` §5.3）
+	_expect(GwLanV6.parse_broadcast('{"GameInfo":{"game_info":%s}}' % line).is_empty(),
+		"LAN：带事件外壳的变体被丢弃（原版变体 B）")
+	_expect(GwLanV6.parse_broadcast(line.replace('"Timer1m"', '"Timers1m"')).is_empty(),
+		"LAN：Timers1m 被丢弃（原版变体 E）")
 
 func _test_lobby_fixes() -> void:
 	var app_node := get_node("/root/App")

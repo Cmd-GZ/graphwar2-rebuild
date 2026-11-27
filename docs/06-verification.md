@@ -19481,3 +19481,213 @@ cargo test --offline --lib captured_samples_are_the_live_wire_bytes
 * 一开始以为聊天按钮点开就有输入焦点；实测**弹窗是全屏透明覆盖层**，
   必须先点 `ChatBox` 才把焦点交给 `ChatLineEdit`（`recovered-src/ChatBox.gd::_gui_input`）。
 * 一开始把 `EndingGame` 当事件找 `{"EndingGame":…}` 帧，白跑一轮才发现它不是事件（§110.5 第 2 条）。
+
+---
+
+## 115. T67 控制器迁回 Rust 第三批：**#3 屏表/切屏 + #5 连接状态机 + #6 LAN 广播流程 + #10 战役关卡表** —— 四份 `.gd` 的**代码行 984 → 901（−83）**、`selftest` **732 → 757**；挖出 **5 处"改前就与真值不符"**（其中 4 处本轮修掉、1 处只登记）+ **2 处屏表不一致**（本轮不改，登记）（2026-11-27，任务 T67 / `task-60`，分支 `agent/controller-batch3`）
+
+> 台账：`fixtures/controller_migration3_ledger.tsv`（**44 行**：`move 20 / partial 3 / keep 21`，单独 commit `7d4368e`）。
+> 判据沿用 T31/T58：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；纯视图/引擎侧/自造策略不搬。
+> 依据：`docs/06` §90 的 C 档清单（"最该先搬的 10 段"里剩下的 #3 / #5 / #6 / #10）。
+> 地址口径 **ELF vaddr**（Ghidra/REA = +`0x100000`）。
+
+### 115.0 一页结论
+
+**判决：这四段都是"Rust 侧早就复原了、GDScript 又写了一遍"，搬完之后 `.gd` 里不再有第二份真相源。**
+但**别把这理解成"行为变好了"**——四段的规则改前大体对，错的只有 5 条边界（见 111.4）；
+搬家的收益是**同一规则只有一个真相源**：以后 Rust 侧改对了，界面自动跟着对。
+
+| # | 段（改前） | 落点（Rust 原版模块） | 改后 |
+|---|---|---|---|
+| 3 | `client/src/app/app.gd`（958 行） | `graphwar_root_node`：`Screen`/`SCREEN_TABLE`（15 个名字带 `.rodata` 地址）、`apply_show_screen`（`0x3af850`）、`Command`（`0x3b0830` 的 12 条） | 屏名/切屏决策/命令键识别 → `GwRootNode`；`.gd` 只把 plan 落到节点上 |
+| 5 | `client/src/net/link.gd`（224 行） | `graphwar_client_connection_handler`：`ConnectionState`（4 个写入点）、`tick_action`（`0x48b488`）、`CONNECT_TIMEOUT_SECS`（`0x48dccc mov w1,#0x1e`） | 状态机判定 → `GwClientLink`；`.gd` 只留 `StreamPeerTCP` 与信号 |
+| 6 | `client/src/net/discovery.gd`（215 行） | `graphwar_lan_broadcaster_v6`：`ingest`（`insert 0x3de638`）、`expire_stale`（`0x3de6e4 cmp x0,#0xa`）、周期闸（`0x3de7c8`）、`Broadcast::parse` | 解析/去重/TTL/周期 → `GwLanV6`；`.gd` 只留 `PacketPeerUDP` 与信号 |
+| 10 | `client/src/app/campaign.gd`（157 行） | `graphwar_campaign_control::LEVEL_INFO`（= 原版 `level_info()` `0x4ad380`，逐位 + 运行时 21/21） | 21 关全参数表 → `GwCampaignControl`；`.gd` 只留自造种子 + 原版布局算法 |
+
+### 115.1 `.gd` 行数：总行数 −68，**代码行 −83**（`app.gd` 反而变长，原因写在下面）
+
+| 文件 | 总行（前 → 后） | 代码行（前 → 后，去注释/空行） | 说明 |
+|---|---|---|---|
+| `app/campaign.gd` | 157 → **89**（−68） | 80 → **37**（−43） | 21 条数据表（`const LEVELS`，46 行）+ `LEVEL_COUNT` + `enum Obstacles` 全搬走 |
+| `net/discovery.gd` | 215 → **169**（−46） | 133 → **76**（−57） | `parse_broadcast`/`is_known_time_mode`/`_ingest`/`_same_row`/`_expire`/`MAX_ROOMS` 全搬走 |
+| `net/link.gd` | 224 → **244**（+20） | 147 → **156**（+9） | 状态机判定搬走，但**读 Rust 返回的字典要拆包**，胶水比原来那 5 条 `if` 长（与 T58 的 `link.gd` +7 同性质） |
+| `app/app.gd` | 958 → **984**（+26） | 624 → **632**（+8） | 同上：切屏决策变成"Rust 给 plan、`.gd` 应用"，应用器比原来那个 `visible = (n == name)` 循环长；其余 +18 是**证据注释**与被登记的不一致说明 |
+| **合计** | 1554 → **1486**（−68） | 984 → **901**（−83） | |
+
+⚠️ **行数不是成绩单**（`AGENTS.md` §0.2）。`app.gd`/`link.gd` 变长的原因必须如实写：
+原版把节点/状态直接握在手里，`.gd` 只是"同一进程里的调用"；我们是**跨语言**，规则搬走之后
+每一次判定都要多一次取值+拆包。真正的收益是 §115.0 那段（单一真相源），不是行数。
+
+### 115.2 四个出口（`src/_scaffold/`，都只在 `gdext-bindings` 下编译）
+
+| 出口 | 文件（行） | 搬的是什么 | 原版里没有这个类（为什么是 scaffold） |
+|---|---|---|---|
+| `GwCampaignControl` | `campaign_control_class.rs`（209） | `LEVEL_INFO` 21 条 → 12 字段字典；`ObstacleMode` 名字表；`parse_level_key`（`0x417ef0`） | 原版 `Campaign` 屏控制器本身就是 Rust，同 crate 直接调 `level_info()`，不需要跨语言出口 |
+| `GwLanV6` | `lan_v6_class.rs`（445） | `ingest`/`expire_stale`/`due_to_broadcast`/`room_count`/`get_game_info`/`broadcast_payload`/`local_address` | 原版 broadcaster **自己持有 socket**（`+0xb8` = fd）；我们 socket 在 Godot 侧，只搬"表 + 时间闸 + 解析" |
+| `GwClientLink` | `client_link_class.rs`（277） | 4 态判别值、`after_connect_attempt`、`step()`（连接线程结束态的等价物）、`tick()`（闩锁+分派）、`is_open/is_busy` | 原版状态机是 `GraphwarClientConnectionHandler` 的字段（`Mutex<u8>`）+ 阻塞线程；我们单线程非阻塞 |
+| `GwRootNode` | `root_node_class.rs`（290） | `base_screen_names()`/`all_screen_names()`/`screen_table()`（名字+`.rodata` 地址+长度立即数）、`show_plan()`（`screen_swap` 决策）、`command_kind()`/`command_keys()`/`command_evidence()` | 原版屏表与命令总线是 `GraphwarRootNode` 的方法（`[+0x1704]`、`0x3b0830`） |
+| — | `_scaffold/mod.rs` **+29 行**（4 条 `pub mod` 说明） | — | 注册 |
+
+### 115.3 五处"改前就与真值不符"（4 处修掉、1 处只登记）
+
+| # | 段 | 改前（我方） | 真值（证据） | 本轮怎么处理 |
+|---|---|---|---|---|
+| 1 | #6 表的键 | `.gd` 用报文里的 **`address` 字段**当房间表的键（`_rooms[info["address"]]`） | 原版 `HashMap<SocketAddr, (GameInfo, Instant)>`，键是**发送方地址**（`insert` 在 `0x3de638`；模块文档 §3.2 明写"换个 host 发同样房名则是两条"） | **修掉**：`GwLanV6.ingest(from, bytes, …)`，键由发送方地址定。可见差异：两个 host 广播同一个 `address` 原版是两行、改前合成一行；同一 host 改 `address` 原版仍一行、改前变两行 |
+| 2 | #6 TTL 边界 | `_clock_ms - last_seen > room_ttl_ms`（**严格大于**） | `secs >= 10` 就删（`0x3de6d4 bl Instant::now` → `0x3de6e0 bl Sub` → `0x3de6e4 cmp x0,#0xa` + `0x3de6e8 b.lo` **保留**） | **修掉**：判据在 `expire_stale`（`>=`）。可见差异：改前每个消失的房间**多留一帧**。自检新增断言钉住 9999 ms 删 0 条 / 10000 ms 删 2 条 |
+| 3 | #6 容量闸 | `MAX_ROOMS := 64`（自己发明的上限） | Rust 的表**没有任何容量比较**（`process`/`ingest` 里没有 `len()` 闸）；键是 SocketAddr ⇒ 一个 sender 只占一条 | **删掉**（`GwLanV6` 不设上限）。原"防洪水"理由不足，且是自造行为 |
+| 4 | #10 关卡键解析 | `int(cmd.substr("level_".length()))` —— **宽容**：`"level_x"` → `0` ⇒ 静默选中**第 0 关** | `0x417ef0` 的等价实现是 `rsplit('_')` 取最后一段 + **严格** `parse::<u32>()`；失败在原版 `get_current_level` 里走 `unwrap` ⇒ **会 panic**（`docs/archive/118-campaign-data.md` §3.1.2 / 附录 A） | **修掉**：`GwCampaignControl.parse_level_key()`，失败返回 `-1` ⇒ 拒绝该命令并报错（不 panic，把"原版会炸"留在文档里） |
+| 5 | #3 屏表成员 | 我方 15 个屏 = 7 基础 + 8 弹窗，其中 `ConfirmPlayExitPopUp` **一个**屏、并多一个 `ChatPopUp` | 原版 `SCREEN_TABLE` 15 槽是 `ConfirmPlay`(**`0x1bdb0d`, 11 B**) + `ExitPopUp`(**`0x1bdb18`, 9 B**) **两个相邻项**（合起来正好 20 B = `0x3b3783` 处长度立即数 `0x14`），且**没有** `ChatPopUp`（全库无对应 `.rodata` 名字/长度立即数） | **只登记**（改它要动 `.tscn` 节点名 ⇒ 像素风险）：`docs/06` 本节 + `app.gd` 的 `POPUPS` 注释 + selftest 断言钉住"原版 15 槽没有 ChatPopUp" |
+
+另外两处**模型/框架差异**（不是错，但必须写清）：
+
+* **弹窗是"叠层"还是"单可见"**：原版 `0x3af850` 对 15 个屏**一视同仁**（命中 `set_visible(true)`、其余
+  `set_visible(false)`，`background` 除外）⇒ 显示 `JoinLevelPopUp` 会把 `Campaign` 也置不可见；
+  我方是"基础屏留着 + 弹窗叠上去"（`open_popup`/`close_popup`）。像素上目前等价（弹窗面板不透明），
+  但**节点 visible 状态不同**。本轮**没改**（要动所有弹窗的进入/退出时序）⇒ 下一步。
+* **30 s 超时怎么判**：原版阻塞在 `TcpStream::connect_timeout` 里（libstd 判），我方单线程必须每帧比
+  `elapsed`。`GwClientLink.step()` 里那条 `elapsed >= 30 ⇒ Failed` 是**等价物**，不是原版的比较指令 ——
+  代码与台账（L07）都这么写。
+
+还有一条**我方的推断被钉在一处**（原样搬，没有新增证据）：`time_mode` 必须是 `Timer<正整数><s|m>`，
+否则整条广播丢弃。依据只是 `docs/115` §5.3 变体 E 的受控实验（"带 `Timers1m` 的被丢弃"），
+**判定发生在哪一层没有观测到**。改前写在 `.gd`，现在在 `GwLanV6::is_known_time_mode`（注释里标 **推断**）。
+
+### 115.4 顺手挖到的一个"解析器证据缺口"（供下一轮修 `_scaffold/protocol.rs` 的人）
+
+`_scaffold/protocol.rs::Broadcast::parse` 是**子串查找**式的：它对 `{"GameInfo":{"game_info":{…9 字段…}}}`
+也能"解析成功"（在嵌套里找到了 `"room_name":`）⇒ 原版**丢弃**的变体 B 会漏过去
+（本轮实测：把 `parse_broadcast` 直接接到它上面，`selftest` 的变体 B 断言当场变红）。
+本轮的处理是在 `GwLanV6` 里补一道 `is_bare_object()`（9 个字段全是标量 ⇒ 裸对象里没有 `{`），
+**没有**去动 `protocol.rs`（它在 t63 的范围里）。⇒ 下一轮应由 `protocol.rs` 的属主把这条闸收进去，
+或者把 `Broadcast::parse` 换成真正的 JSON 解析。⚠️ 这条闸对"房名里带 `{`"会误拒（语料/抓包里没有这种样本，**推断**）。
+
+### 115.5 门槛（本轮实测，全部自己跑）
+
+| 门槛 | 读数 | 复跑命令 |
+|---|---|---|
+| `cargo test --offline` | **1853 passed / 0 failed / 1 ignored** | `cargo test --offline` |
+| `cargo test --features gdext-bindings` | **1983 / 0 / 1** | `cargo test --offline --features gdext-bindings` |
+| `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)`（门槛 732/0/1skip；本轮 **+25 条**新组 `controller_migration`） | 见 §115.6 |
+| headless 14 脚本 | **1978 / 0**（14 份逐个跑，无失败） | 见 §115.6 |
+| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（一位未退） | 见 §115.6 |
+| `coverage_matrix.py --check` | **OK**（生成物已重跑并入库） | `COVERAGE_MATRIX_UPSTREAM=<ws>/.reference/upstream .reference/venv/bin/python tools/coverage_matrix.py --check` |
+| `check_doc_refs.py` | **rc=0**（无死链） | `python3 tools/check_doc_refs.py` |
+
+新增的 25 条 `selftest` 断言（组 `controller_migration`）全部是**反向断言** —— 期望值来自 Rust 侧/二进制，
+不是再抄一遍实现：屏名地址 `PlayScreen = 0x1bd92b`、`background` 条目 visible = −1、
+`ask_exit_play`（不是旧文档的 `exit_ask_play`）、`level_<n>` 严格解析、4 态判别值 `0/1/2/3`、
+超时 29.9 s/30.0 s 边界、LAN 表键 = 发送方地址（同 host 换 address 仍一行 / 不同 host 同 address 两行）、
+TTL 9999 ms/10000 ms 边界、变体 B/E 被丢弃、`ConfirmPlay`+`ExitPopUp` 而**无** `ChatPopUp`。
+
+### 115.6 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t67
+export CARGO_HOME=$WT/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 每棵树自己的 target
+
+# 1) 构建 + 覆盖 .so + import（三件套，少一件就静默跑旧内核）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/libgw2_rebuild.so
+$WT/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client --import
+
+# 2) cargo（两种 feature 各一次）+ 三轴
+cargo test --offline
+cargo test --offline --features gdext-bindings
+SNAP=$WT/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+
+# 3) selftest（四个前置：assets / serve_match / 两份真回放 / 可写 HOME）
+cargo build --offline --example serve_match
+H=$WT/.agent-work/tmp/home
+mkdir -p "$H/.local/share/godot/app_userdata/Graphwar/replays"
+cp $SNAP/{1793897298,1783255495} "$H/.local/share/godot/app_userdata/Graphwar/replays/"
+HOME=$H GW2_NET_SERVER=$CARGO_TARGET_DIR/debug/examples/serve_match bash $WT/client/run.sh selftest
+
+# 4) headless 14 个巡检脚本
+for f in $WT/client/tools/*_check.gd; do n=$(basename $f .gd); \
+  $WT/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client \
+     --script res://tools/$n.gd 2>&1 | grep -E '^[A-Z_]+ [0-9]+ passed'; done
+
+# 5) 文档/矩阵
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream \
+  $WT/.reference/venv/bin/python $WT/tools/coverage_matrix.py --check
+python3 $WT/tools/check_doc_refs.py
+
+### 115.7 像素（两侧串行采集；**没有一个门槛变差**）
+
+复跑（两侧各一次，`--side original` 用 display 81、`--side ours` 用 82；`replay` 必须 `--seed-replays`）：
+
+```bash
+P=$WT/.agent-work/tmp/px; mkdir -p $P
+for flow in static replay match endgame lobby player; do for side in original ours; do
+  dn=81; [ "$side" = ours ] && dn=82
+  extra=""; [ "$flow" = replay ] && extra="--seed-replays"
+  python3 $WT/tools/frame_capture.py --side $side --out $P/${side}_$flow --display-num $dn --flow $flow $extra
+done; done
+# 逐 flow 对拍（屏名按各 flow 的产物）
+python3 $WT/tools/frame_diff.py --orig $P/original_static --mine $P/ours_static --screens campaign,level_popup --out $P/results_static.tsv --blocks-out $P/blocks_static.tsv --json $P/diff_static.json
+python3 $WT/tools/frame_diff.py --orig $P/original_replay --mine $P/ours_replay --screens menu,replay_lobby,replay_play,replay_end --out $P/results_replay.tsv --blocks-out $P/blocks_replay.tsv --json $P/diff_replay.json
+python3 $WT/tools/frame_diff.py --orig $P/original_match  --mine $P/ours_match  --screens match_ready,match_play --out $P/results_match.tsv  --blocks-out $P/blocks_match.tsv  --json $P/diff_match.json
+python3 $WT/tools/frame_diff.py --orig $P/original_endgame --mine $P/ours_endgame --screens match_ready,match_play,endgame_popup --out $P/results_endgame.tsv --blocks-out $P/blocks_endgame.tsv --json $P/diff_endgame.json
+python3 $WT/tools/frame_diff.py --orig $P/original_lobby --mine $P/ours_lobby --screens lan_lobby_local,lan_lobby_global --out $P/results_lobby.tsv --blocks-out $P/blocks_lobby.tsv --json $P/diff_lobby.json
+python3 $WT/tools/frame_diff.py --orig $P/original_player --mine $P/ours_player --screens player_skins,player_faces,player_hats --out $P/results_player.tsv --blocks-out $P/blocks_player.tsv --json $P/diff_player.json
+# 结算框**面板区**（基线口径 (483,235) 956×691）：
+python3 -c "
+import numpy as np; from PIL import Image
+L=lambda p: np.asarray(Image.open(p).convert('RGB')).astype(np.int16)
+for i in (1,2,3):
+    a=L('$P/original_endgame/frames/endgame_popup_%d.png'%i)[235:926,483:1439]
+    b=L('$P/ours_endgame/frames/endgame_popup_%d.png'%i)[235:926,483:1439]
+    print(i, int((np.abs(a-b).max(axis=2)>0).sum()))"
+```
+
+| 屏 | 本轮实测 | 门槛/基线 | 结论 |
+|---|---|---|---|
+| `menu` | **0 px** | 0 px | ✅ |
+| `replay_lobby` | **0 px** | 0 px | ✅ |
+| `player_skins` | **0 px** | 0 px | ✅ |
+| `campaign` | **3 827 px = 0.1718 %** | 0.172 %（master 现值） | ✅ 逐位复现 |
+| `level_popup` | **2 244 px = 0.1008 %** | 0.101 %（master 现值） | ✅ 逐位复现 |
+| `replay_play` / `replay_end` | **1 126 px (0.0506 %) / 856 px (0.0384 %)** | §(T54) 记的同一对：856 / 1 126 px | ✅ 同一对数、L2 0（见下面第 1 条遗留：名字归属相反） |
+| `match_ready` | 两轮 **0.0938 % / 0.0820 %**（2 089 / 1 828 px），L2 0 | 0.081 %（同侧跨轮方差已知 0.012–0.023 pp） | ✅ 在相位噪声带内 |
+| `match_play` | 两轮 **0.4418 % / 0.370 %**，L2 **1** 块（= 基线） | 0.385 % / L2 1 | ✅ 第二轮 0.370 % 直接落回基线；第一轮偏高属**相位**（同一份二进制、同一份剧本） |
+| 结算框**面板区** `(483,235) 956×691` | **0 px（三帧全 0）** | 0 px | ✅ |
+| `lan_lobby_local` | **3 012 px（0.1352 %）**，bbox `231,186..592,237`，L2 0 | 3 012 px、同 bbox（§T20 记录） | ✅ **逐 px 同值** |
+| `lan_lobby_global` | **8 085 px（0.363 %）** | §T20 记录 10 123 px | ✅ 更少（Global 页仍是静态占位，既有残差） |
+| `player_faces` / `player_hats` | **1 176 px（0.0528 %）** 两者相同 | 1 176 px（0.0528 %） | ✅ **逐 px 同值** |
+| `endgame_popup`（整屏） | 44 px（0.002 %，bbox 在底部带 `265,1065..1738,1156`） | — | 面板区 0 px，剩的是底部带既有残差 |
+
+> 采集条件与既有轮一致：私有 Xvfb `1920x1160x24`（TCP）、llvmpipe、`import -window <id>`、每屏 3 帧、
+> 两侧**串行**。噪声地板（同侧 3 帧互相差）原版 0.000 %／我方 0.012–0.164 %，已在表内逐屏列出。
+> ⚠️ 本轮 diff **没有一处改到渲染路径**（四段搬的都是流程/数据/状态判定），像素结论也与此一致。
+
+### 115.8 遗留 / 未做（按"下次该动谁"排）
+
+1. **`replay_play` / `replay_end` 的屏幕名归属在这一轮采集里是反的**：本轮 `replay_play` 拿到
+   1 126 px（0.0506 %）、`replay_end` 拿到 856 px（0.0384 %），而 §(T54) 记的是 `replay_play` 856 /
+   `replay_end` 1 126。**总数与两个数都逐位相同**（1 982 px，L2 0），所以不是回归；但说明
+   `--flow replay` 的两屏"停在第几帧"对采集时机敏感（回放载入即暂停 + `REPLAY_END_WAIT`），
+   下一个改这条流程的人应当把"停在哪一帧"钉成预注册值，而不是靠 `wait`。
+2. **弹窗"叠层 vs 单可见"的模型分叉没改**（§115.3 末段）：原版 `0x3af850` 让 15 个屏**同时只有一个可见**，
+   我方是叠层。改它要动所有弹窗的进入/退出时序 + 8 个弹窗的像素，建议单独一轮做，并先把
+   `background` 这个键的来源（`docs/16` §15.10 未知③）解出来 —— 原版那条分支说明屏表里**还有一个
+   我们没建模的条目**。
+3. **`ChatPopUp` / `ConfirmPlayExitPopUp` 两个屏名没对齐**（§115.3 第 5 条）：要改就得动 `.tscn` 节点名
+   ⇒ 会碰像素与 headless 断言（`_screen("ConfirmPlayExitPopUp")` 之类），单开一轮。
+4. **`_scaffold/protocol.rs` 的 `Broadcast::parse` 仍然是子串式**（§115.4）：本轮在 `GwLanV6` 里补了
+   `is_bare_object` 闸兜住，但正确的修法在 `protocol.rs`（属 t63 范围）。
+5. **`GwLanV6` 的房间表仍然只喂给"Local"页**：原版 `GraphwarLanVBox::process` 每帧从
+   broadcaster + broker 两个源重取（`docs/144` §3），我方 broker 侧的 `GameInfo` 表还没接到
+   `GwLanV6`（那张表在 `client/src/net/broker.gd:110` 自己解析）。⇒ 下一步把 broker 的 `GameInfo`
+   也走 `Broadcast::parse` + 同一张表。
+6. **`GwClientLink.tick()`（闩锁 + 握手时机 + `GameState(7)`）已暴露但没接**：我方的握手在
+   `net/session.gd`（另一段 C 档，§90"候补"清单里的 520 行），接它要先把会话模型搬走。
+   现在 `.gd` 只用了 `step()`/`state_ids()`/`is_open()`/`after_connect_attempt()`。
+7. **`DEFAULT_PORT = 42968` 仍在 `.gd`**（台账 D02）：它不在 Rust 侧（`GraphwarLanBroadcasterV6::new`
+   的端口是入参，常量在 `GraphwarBackend` 的调用点），要搬得先解那条调用点。
+8. **`room_ttl_ms` 属性留着只为自检读数**（`client/tools/truth_fixes_probe.gd:55` 读它）——
+   真正的判据已经在 Rust，`.gd` 里这个值不再参与任何计算。自检工具下次可以改成读
+   `GwLanV6.provenance()`。

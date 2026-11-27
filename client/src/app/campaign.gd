@@ -1,120 +1,58 @@
 extends RefCounted
 class_name GwCampaign
-## 战役：21 关（0..20）——**全部来自二进制的真数据**。
+## 战役：21 关（0..20）—— 数据**全部来自 Rust 内核**，本文件不再存表。
 ##
-## ⚠️ 这张表是**内核同名表的客户端副本**：权威定义在
-## `src/graphwar_campaign_control.rs::LEVEL_INFO`（= 原版 `level_info()`，`0x4ad380`）。
-## 两份由 `cargo test --test campaign_data` 的
-## `client_campaign_table_matches_the_kernel_table` **逐字节**钉住（标题 21、描述 21、
-## 模式 4 项、士兵/目标/Bot 档/回合上限/障碍模式与 `min_count` 全部逐项比对）——
-## 改这里而不改内核，测试会立刻红。21 关数据已全部落地（`docs/118` §7），无占位项。
+## ⚠️ 改前（T67 之前）这里有一张 `const LEVELS`（21 条全参数）—— 那是内核
+## `src/graphwar_campaign_control.rs::LEVEL_INFO`（= 原版 `level_info()`，vaddr `0x4ad380`）
+## 的**第二份拷贝**：改内核不改 `.gd`，界面就显示旧数据，两份只靠一条 `cargo test` 拉着。
+## 现在一律问 `GwCampaignControl`（`src/_scaffold/campaign_control_class.rs`）要，
+## 本文件只剩两样**不属于内核**的东西（台账 `fixtures/controller_migration3_ledger.tsv` C06/C08）：
 ##
-## 数据来源（逐条可核对，详见 `docs/10-campaign.md` §16 与 `docs/archive/118-campaign-data.md`）：
+##   1. `level_seed()` —— **我方自造**的确定性种子（原版由运行时 ChaCha 抽，`docs/102` §1）；
+##   2. `layout_buttons()` —— 原版**视图**算法（真值在 `recovered-src/CampaingLevelsButtons.gd`）。
 ##
-## | 字段 | 来源 | 证据等级 |
-## |---|---|---|
-## | `title` | `docs/118` §4.1：21/21 都是 `Level 0`..`Level 20`（`.rodata` 两种编码） | 逐位 |
-## | `description` | `docs/118` §4.2：`.rodata` 逐字节 21 段（含原版的拼写错误 `writting`） | 逐位 |
-## | `axis/function/turn/time` | `docs/118` §4.3：每关 `mov dword [rsp+0x58], imm32`，4 字节按 `+0x38..+0x3b` 拆分 | 逐位 |
-## | `soldiers / targets / turn_limit / obstacles / obstacle_min` | `docs/118` §7.1 全参数表（`S`=立即数、`C`=闭包预设、`R`=385 份 replay 运行时真值） | 逐位 + 运行时 |
-## | `bot_tier` | `docs/118` §7.1 的 `R` 列 = 运行时 `bot_N` **皮肤号**（0..4） | 逐位 + 运行时 |
-##
-## `time` 恒为 5 ⇒ `GwModes.TimeLimit.INF`（∞）。这**同时解释**了三件事：
-## `join_level_pop_up` 第 4 个按钮用 `turn_inf.svg`、战役对局里 `TimerLabel` 一片空白
-## （观测：`orig_campaign_play.png` 左下角无任何字符）、以及 `docs/118` §4.3 的
-## `byte3 = 0x05` 21/21 恒定。
-##
-## 仍属我们的自定项（原版未观测）：`seed`（每关生成器的随机种子由原版在运行时
-## 用 ChaCha 抽，见 `docs/102` §1；这里取确定性值，只为"同一关每次一样"）。
+## 关卡数据每字段的证据档（`.rodata` 逐字节 / 立即数 / 385 份 replay 运行时三源对照）
+## 在 `graphwar_campaign_control.rs` 的 `LEVEL_INFO` 文档里，21/21 逐项可核。
 
-const LEVEL_COUNT := 21
+## 关卡数：**问内核**（`LEVEL_INFO` 的数组长度），本文件不写 21。
+##
+## ⚠️ 用静态函数而不是 `const`：GDScript 的 `const` 要求**常量表达式**，跨语言调
+## GDExtension 的静态方法不是常量表达式（实测：`const LEVEL_COUNT := GwCampaignControl
+## .level_count()` 会让引用它的脚本在**解析期**报 "Could not resolve external class member"）。
+static func level_count() -> int:
+	return GwCampaignControl.level_count()
 
 ## 8 列 × 4 行（观测公式：`screen_size.x / 8`、`screen_size.y / 4`，
 ## 见 `docs/101` §4.1 的真源码）。21 个按钮按 8 列折行，16:9 下实际 7+7+7。
 const GRID_COLUMNS := 8
 const GRID_ROWS := 4
 
-## 障碍生成模式（`docs/118` §7.2 的公式，常量地址可指认）。
-enum Obstacles { NONE, CENTER, SCATTER }
-
-## 21 关全表。顺序 = `level_0`..`level_20`。
-##
-## 每项：
-##   `axis`     0=NoAxis 1=OnlyMain 2=EveryFive 3=EveryUnit（§7.1 脚注，21/21 与描述同向）
-##   `function` 0=f(x) 1=微分方程
-##   `turn`     0=sequential 1=simultaneous
-##   `time`     恒 5 = INF（= `turn_inf.svg`）
-##   `soldiers` 我方士兵数；`targets` 靶子数；`bot_tier` 敌方 Bot 的 `bot_N` 皮肤号（-1 = 无对手）
-##   `turn_limit` 回合上限，0 = 无上限
-##   `obstacles`/`obstacle_min` 障碍模式与散布式的个数下界 `min_count`
-##              （非散布式一律 0：`CENTER` 的"恰好 1 颗"由生成本体保证，
-##               与 `graphwar_level_generator::ObstacleParams::min_count` 的约定一致）
-##
-## ⚠️ 这里**没有** Bot 的"难度值"（3/25/50/100/250）：那是 `bot_added_event` 载荷里给
-## 电脑玩家管理器用的立即数，只有内核需要（`graphwar_campaign_control::BotOpponent::difficulty`）。
-## 界面只用到皮肤号，所以客户端不多存一份。
-const LEVELS := [
-	{"title": "Level 0", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 0, "obstacles": Obstacles.NONE, "obstacle_min": 0,
-		"description": "Write a function of x to hit the target."},
-	{"title": "Level 1", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.NONE, "obstacle_min": 0,
-		"description": "A constant is always added to your function. You can see it on the bottom right corner of the screen. It makes sure the function is shot by your soldier."},
-	{"title": "Level 2", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.CENTER, "obstacle_min": 0,
-		"description": "There are obstacles in the cartesian plane that don't let your function go through. Try to make a function that goes around them."},
-	{"title": "Level 3", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 2, "targets": 3, "bot_tier": -1, "turn_limit": 10, "obstacles": Obstacles.CENTER, "obstacle_min": 0,
-		"description": "You now have multiple soldiers in your team. At each turn you will shoot from a different one."},
-	{"title": "Level 4", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 10, "obstacles": Obstacles.SCATTER, "obstacle_min": 15,
-		"description": "Try going around a plane with more obstacles."},
-	{"title": "Level 5", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 2, "targets": 0, "bot_tier": 0, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 5,
-		"description": "Play against an opponent that shoots back."},
-	{"title": "Level 6", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 2, "bot_tier": -1, "turn_limit": 6, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "You must hit these targets in a single shot to destroy them."},
-	{"title": "Level 7", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 1, "obstacles": Obstacles.SCATTER, "obstacle_min": 6,
-		"description": "Destroy your target in your first try."},
-	{"title": "Level 8", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 3, "bot_tier": -1, "turn_limit": 6, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "Hit all targets in a single shot to destroy them."},
-	{"title": "Level 9", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 3, "targets": 0, "bot_tier": 2, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 5,
-		"description": "Play against a smarter opponent."},
-	{"title": "Level 10", "axis": 2, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 2, "bot_tier": -1, "turn_limit": 6, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "Hit all targets in a single shot to destroy them. The finer grid lines are gone."},
-	{"title": "Level 11", "axis": 2, "function": 0, "turn": 1, "time": 5, "soldiers": 3, "targets": 0, "bot_tier": 3, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 5,
-		"description": "Play against an opponent on a plane with fewer grid lines. You and the opponent are also firing simultaneously."},
-	{"title": "Level 12", "axis": 1, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.CENTER, "obstacle_min": 0,
-		"description": "Most grid lines are gone. Try hitting a target."},
-	{"title": "Level 13", "axis": 1, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 2, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "Destroy two targets in a single shot."},
-	{"title": "Level 14", "axis": 1, "function": 0, "turn": 1, "time": 5, "soldiers": 4, "targets": 0, "bot_tier": 3, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 5,
-		"description": "Play against an opponent with almost no grids."},
-	{"title": "Level 15", "axis": 0, "function": 0, "turn": 0, "time": 5, "soldiers": 5, "targets": 0, "bot_tier": 4, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "The main axes are gone. The opponent is smarter than ever."},
-	{"title": "Level 16", "axis": 3, "function": 1, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 0, "obstacles": Obstacles.NONE, "obstacle_min": 0,
-		"description": "You are now writting a differential equation instead of a function. Write a differential equation in terms of x and y. Your shot will be the solution to the differential equation using the position of the soldier that shot it as the initial condition."},
-	{"title": "Level 17", "axis": 3, "function": 1, "turn": 0, "time": 5, "soldiers": 1, "targets": 2, "bot_tier": -1, "turn_limit": 6, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "You must hit both targets in a single shot with a differential equation to destroy them."},
-	{"title": "Level 18", "axis": 3, "function": 1, "turn": 0, "time": 5, "soldiers": 3, "targets": 0, "bot_tier": 3, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "Fight an opponent with differential equations."},
-	{"title": "Level 19", "axis": 1, "function": 1, "turn": 0, "time": 5, "soldiers": 4, "targets": 0, "bot_tier": 3, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
-		"description": "Fight an opponent with differential equations with less grid lines."},
-	{"title": "Level 20", "axis": 0, "function": 1, "turn": 0, "time": 5, "soldiers": 5, "targets": 0, "bot_tier": 4, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 15,
-		"description": "Fight an opponent with differential equations and no grid lines."},
-]
 
 ## 关卡生成种子：**我们的自定值**。原版的种子由运行时 ChaCha 抽（`docs/102` §1），
 ## 哪一关用哪个种子拿不到，所以这里只保证"同一关每次一样"。
 static func level_seed(index: int) -> int:
-	return (0x9E3779B9 * (clampi(index, 0, LEVEL_COUNT - 1) + 1)) & 0xFFFFFFFF
+	return (0x9E3779B9 * (clampi(index, 0, level_count() - 1) + 1)) & 0xFFFFFFFF
 
 
+## 一关的全部字段（**内核给的那一份**）+ 本文件补的 `index` / `seed`。
+##
+## 返回的键与改前 `LEVELS` 的行**逐字一致**（调用方零改动）：
+##   `title / description / axis / function / turn / time`（四分模式）
+##   `soldiers / targets / bot_tier / turn_limit / obstacles / obstacle_min`
+##
+## `bot_tier` = 敌方 Bot 的 `bot_N` 皮肤号，`-1` = 该关没有对手（内核是 `Option<BotOpponent>`）；
+## `turn_limit` = 回合上限，`0` = 无上限（内核是 `Option<u32>`）；
+## `obstacles` = 内核 `ObstacleMode` 的判别值（`None=0/Center=1/Scatter=2`，
+## 名字表问 `GwCampaignControl.obstacle_modes()`）。
 static func level(index: int) -> Dictionary:
-	var i := clampi(index, 0, LEVEL_COUNT - 1)
-	var row: Dictionary = LEVELS[i]
-	var out := row.duplicate(true)
+	var i := clampi(index, 0, level_count() - 1)
+	var out: Dictionary = GwCampaignControl.level(i)
+	if out.is_empty():
+		push_error("[gw2] GwCampaignControl.level(%d) 返回空：内核类没注册上？" % i)
+		return {}
 	out["index"] = i
 	out["seed"] = level_seed(i)
 	return out
-
-
-## 解锁规则不再放在这里：现在读**原版的** `user://campaign.save`
-## （`GwStore.is_level_unlocked()`），本文件只保留关卡数据与布局算法。
 
 
 ## 复刻 `CampaingLevelsButtons.gd::place_buttons` 的**布局算法**。
@@ -140,7 +78,7 @@ static func layout_buttons(area: Vector2) -> Array[Dictionary]:
 	var pos_x_increment := area.x / 8.0
 	var pos_y_increment := area.y / 4.0
 	var pos := Vector2(pos_x_increment, pos_y_increment / 2.0)
-	for _i in LEVEL_COUNT:
+	for _i in level_count():
 		var w: float = absf(pos_x_increment)
 		out.append({
 			"font_size": font_size,

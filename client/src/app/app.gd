@@ -19,12 +19,17 @@ signal state_changed
 signal sfx_played(sound: String, slot: String)
 
 ## 7 个"基础界面"：同一时刻只显示一个。
-const BASE_SCREENS := [
-	"MainMenu", "PlayScreen", "Campaign", "LanLobby", "GameSetup", "PlayerScreen", "ReplayLobby",
-]
-## 8 个"弹窗"：叠加在基础界面之上（原版里这 15 个也都是 `ScreensControl` 的子节点，
-## 靠 visible 切换，见 docs/92 §3）。7 + 8 = 15，与原版界面数一致。
-const POPUPS := [
+## **屏名从 Rust 取**（T67 台账 A02）：`graphwar_root_node::Screen` 的 15 个名字带 `.rodata`
+## 地址与长度立即数（逐位）。"基础屏 vs 弹窗"的**划分是我方的**（推断：原版 `0x3af850`
+## 对 15 个屏一视同仁），依据只是名字形状。
+var BASE_SCREENS: Array = GwRootNode.base_screen_names()
+
+## 8 个"弹窗"：叠加在基础界面之上。
+## ⚠️ 与原版 15 槽屏表**两处对不上**（T67 发现，`docs/06` §115.6，本轮不改）：
+## ① 原版是 `ConfirmPlay`(0x1bdb0d,11 B) + `ExitPopUp`(0x1bdb18,9 B) **两个相邻槽**
+## （合起来 = `"ConfirmPlayExitPopUp"` 20 B = `0x3b3783` 的长度立即数 `0x14`），我方当一个屏；
+## ② `ChatPopUp` 原版 15 槽里没有（全库也没有对应 `.rodata` 名字）—— 我方自造。
+var POPUPS := [
 	"ChatPopUp", "JoinIpPopUp", "ConnectingPopUp", "DisconnectedPopUp",
 	"JoinLevelPopUp", "AddBotPopUp", "EndGamePopUp", "ConfirmPlayExitPopUp",
 ]
@@ -137,7 +142,11 @@ func register_screen(screen_name: String, node: Control) -> void:
 func is_popup(screen_name: String) -> bool:
 	return POPUPS.has(screen_name)
 
-## 切到某个基础界面（原版语义：把其它基础界面的 visible 置 0）。
+## 切到某个基础界面。**决策在 Rust**（T67 台账 A04）：原版 `FN_SHOW_SCREEN`（`0x3af850`）
+## 的循环体 = `graphwar_root_node::apply_show_screen`（命中项 `set_visible(true)`、其余 false、
+## `PlayScreen` 进出动广告、`background` 不碰）。`GwRootNode.show_plan` 给每项
+## `{name, visible(-1/0/1), deferred}`，本函数只落到节点上。
+## `ads_slot` 恒 false（我方没有 `AdHolder` 节点；原版只在 `0x3a7bed` 传 true）。
 func show_screen(screen_name: String) -> bool:
 	if not screens.has(screen_name):
 		push_error("[gw2] 未知界面：%s" % screen_name)
@@ -145,12 +154,22 @@ func show_screen(screen_name: String) -> bool:
 	if not BASE_SCREENS.has(screen_name):
 		push_error("[gw2] %s 不是基础界面，用 open_popup()" % screen_name)
 		return false
-	for n in BASE_SCREENS:
-		var node: Control = screens.get(n)
-		if node != null:
-			node.visible = (n == screen_name)
+	var play_node: Control = screens.get("PlayScreen")
+	var plan := GwRootNode.show_plan(screen_name, false, play_node != null and play_node.visible)
+	for item in plan:
+		var node: Control = screens.get(String(item["name"]))
+		if node == null:
+			continue
+		if int(item["visible"]) >= 0:
+			node.visible = int(item["visible"]) == 1
+		if String(item["deferred"]) != "":
+			# 原版把这两条 `call_deferred` 打在 `Ad_holder` 上；我方没有该节点，
+			# 它们只在 `ads_slot = true` 时出现（自检覆盖），真机路径恒为空。
+			call_deferred(String(item["deferred"]))
 	current_screen = screen_name
-	# 换基础界面时把弹窗全关掉（原版行为未逐条观测；这里取"不回叠"的简单语义）
+	# 换基础界面时把弹窗全关掉。⚠️ **模型分叉**（T67 发现，`docs/06` §115.6）：原版是
+	# **单可见**（弹窗也走 `0x3af850` ⇒ 显示弹窗会把基础屏置不可见），我方是叠层。
+	# 像素上目前等价（弹窗面板不透明），但节点 visible 不同；本轮不改，登记为下一步。
 	for p in open_popups.duplicate():
 		close_popup(p)
 	_on_screen_entered(screen_name)
@@ -228,7 +247,14 @@ func command(cmd: String) -> void:
 		_add_bot(int(cmd.substr(GwCommands.ADD_BOT_PREFIX.length())))
 		return
 	if cmd.begins_with(GwCommands.LEVEL_PREFIX):
-		_select_level(int(cmd.substr(GwCommands.LEVEL_PREFIX.length())))
+		# 关卡号解析在 Rust（原版 `0x417ef0` 的 `rsplit('_')` + 严格 `parse::<u32>()`）。
+		# 改前这里用 `int(substr)`: 宽容 —— `"level_x"` 会静默选中第 0 关；真值是**解析失败**
+		# （原版在 `get_current_level` 里直接 `unwrap` ⇒ 会 panic）。见 docs/06 §115.4。
+		var n := GwCampaignControl.parse_level_key(cmd)
+		if n < 0:
+			push_error("[gw2] 关卡命令键解析失败：%s" % cmd)
+			return
+		_select_level(n)
 		return
 	# 键盘：只在 PlayScreen 有意义（原版由 Rust 的 GraphwarFunctionInput 处理）
 	if current_screen == "PlayScreen" and _is_keypad_key(cmd):
@@ -396,7 +422,7 @@ func _refresh(screen_name: String) -> void:
 		node.call("on_enter")
 
 func _select_level(index: int) -> void:
-	campaign_selected_level = clampi(index, 0, GwCampaign.LEVEL_COUNT - 1)
+	campaign_selected_level = clampi(index, 0, GwCampaign.level_count() - 1)
 	open_popup("JoinLevelPopUp")
 
 func _add_bot(tier: int) -> void:

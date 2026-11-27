@@ -121,6 +121,35 @@ pub mod audio_control_class;
 // 线性探测、`%180` 兜底）。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod color_manager_class;
+// 战役关卡表的出口（T67 / `docs/06` §90 C 档第 10 段）：`client/src/app/campaign.gd`（157 行）
+// 改前有 21 条全参数表的**第二份拷贝**（`const LEVELS`）。真值在
+// `graphwar_campaign_control::LEVEL_INFO`（= 原版 `level_info()` `0x4ad380`；描述/标题逐字节、
+// 四模式 21 条 `mov dword [rsp+0x58],imm32`、士兵/靶子/回合上限立即数 + 运行时三源 21/21）。
+// `.gd` 只留"确定性种子（自造）+ 布局算法（原版视图 .gd）"。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod campaign_control_class;
+// LAN 广播流程的出口（T67 / `docs/06` §90 C 档第 6 段）：`client/src/net/discovery.gd`
+// 改前自己实现了整套"解析 9 字段 GameInfo → 按房间去重 → TTL 过期"，而真值在
+// `graphwar_lan_broadcaster_v6`（`ingest` 的 `insert 0x3de638` / `expire_stale` 的
+// `0x3de6e4 cmp x0,#0xa` / 周期闸 `0x3de7c8`）。`.gd` 只留 `PacketPeerUDP` 与信号。
+// 改前两处语义错随本轮修正：表键应为**发送方 SocketAddr**（不是报文 `address` 字段）、
+// TTL 判据应为 `>= 10 s`（改前写 `>` ⇒ 每行多留一帧）。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod lan_v6_class;
+// 连接状态机的出口（T67 / `docs/06` §90 C 档第 5 段）：`client/src/net/link.gd` 改前自己
+// 维护 `idle/connecting/connected/closed/failed` 五态字符串，而真值在
+// `graphwar_client_connection_handler`（`ConnectionState` 4 个写入点、`tick` 闩锁
+// `0x48b488`、超时 `0x48dccc mov w1,#0x1e`）。`.gd` 只留 `StreamPeerTCP` 与信号。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod client_link_class;
+// 屏表 / 切屏决策 / 命令键的出口（T67 / `docs/06` §90 C 档第 3 段）：`client/src/app/app.gd`
+// 改前的 `BASE_SCREENS`、`show_screen()` 可见性循环、命令键识别都是第二份实现；真值在
+// `graphwar_root_node`（`SCREEN_TABLE` 15 项带 `.rodata` 地址、`apply_show_screen`=`0x3af850`、
+// `enum Command` 12 条=`0x3b0830`）。`.gd` 只留"把 plan 落到节点上"与动作分派。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod root_node_class;
 #[cfg(feature = "gdext-bindings")]
 // 播放屏的**流程权威**（`dispatch/54`，`docs/16-client.md` §52）：把原来写在
 // `client/src/game/level_rules.gd`（219 行）与 `turn_driver.gd`（121 行）里的流程搬进 Rust。
