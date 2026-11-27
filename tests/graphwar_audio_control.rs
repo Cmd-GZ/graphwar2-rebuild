@@ -1,9 +1,7 @@
 //! `graphwar_audio_control` 的验收：**哪个事件放哪个音**。
 //!
-//! ⚠️ 这里用 `#[path]` 直接把 `src/graphwar_audio_control.rs` 与 `src/events.rs`
-//! 编进本测试二进制，所以**不需要** `src/lib.rs` 里先加 `pub mod`（那一行不在本分支
-//! 的白名单里）。两份源码都只依赖 `std`，因此这种引法是合法的；父 agent 加上
-//! `pub mod` 之后本文件可以改成 `use gw2_rebuild::graphwar_audio_control::*;` 而不改断言。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 //!
 //! 每条断言指向的证据见 `src/graphwar_audio_control.rs` 的模块文档
 //! （地址一律 vaddr，Ghidra = vaddr + `0x100000`）：
@@ -21,15 +19,10 @@
 //! | `humm_pipeline_constants` | 16000 / 0.1 / 32767 / 1600 | **观测**（`movss` 立即数） |
 #![allow(dead_code)]
 
-#[path = "../src/events.rs"]
-mod events;
+use gw2_rebuild::events;
 
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/graphwar_audio_control.rs"]
-mod graphwar_audio_control;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::graphwar_audio_control;
 
 use graphwar_audio_control::*;
 

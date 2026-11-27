@@ -1,6 +1,7 @@
 //! `graphwar_player_manager` 的验收：**4 个方法（不是 3 个） / `PlayerInfo` 的载荷 / 级联 (6)**。
 //!
-//! ⚠️ 用 `#[path]` 直接编进本测试二进制 ⇒ **不需要** `src/lib.rs` 里先加 `pub mod`。
+//! 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+//! crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
 //!
 //! | 测试 | 钉住的东西 | 证据等级 |
 //! |---|---|---|
@@ -12,15 +13,10 @@
 //! | `tags_match_the_event_table` | 13/6/5/14 与 `events.rs` 一致 | **逐位** |
 #![allow(dead_code)]
 
-#[path = "../src/events.rs"]
-mod events;
+use gw2_rebuild::events;
 
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/graphwar_player_manager.rs"]
-mod graphwar_player_manager;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::graphwar_player_manager;
 
 use graphwar_player_manager::*;
 

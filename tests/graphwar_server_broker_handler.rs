@@ -12,26 +12,13 @@
 //! | `trace_constants` | 三个 Location + 后端槽偏移 | **观测** |
 #![allow(dead_code)]
 
-#[path = "../src/_scaffold/protocol.rs"]
-mod protocol_src;
-#[path = "../src/_scaffold/broker.rs"]
-mod broker_src;
-
-mod _scaffold {
-    pub mod protocol {
-        pub use crate::protocol_src::*;
-    }
-    pub mod broker {
-        pub use crate::broker_src::*;
-    }
-}
-
-#[path = "../src/graphwar_stream_buffer.rs"]
-mod graphwar_stream_buffer;
-#[path = "../src/server_broker_request_connection.rs"]
-mod server_broker_request_connection;
-#[path = "../src/graphwar_server_broker_handler.rs"]
-mod graphwar_server_broker_handler;
+// 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+// crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
+use gw2_rebuild::_scaffold;
+use gw2_rebuild::_scaffold::protocol;
+use gw2_rebuild::graphwar_server_broker_handler;
+use gw2_rebuild::graphwar_stream_buffer;
+use gw2_rebuild::server_broker_request_connection;
 
 use graphwar_server_broker_handler::*;
 use std::net::SocketAddr;
@@ -41,7 +28,7 @@ fn addr(s: &str) -> SocketAddr {
 }
 
 fn info_event(address: &str, name: &str) -> String {
-    _scaffold::broker::game_info_event(&protocol_src::Broadcast {
+    _scaffold::broker::game_info_event(&protocol::Broadcast {
         room_name: name.into(),
         game_state: "Setup".into(),
         current_player_count: 2,

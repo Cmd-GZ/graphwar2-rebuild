@@ -16,35 +16,15 @@
 //! | `no_clock_in_this_layer` | 本层不推进 tick ⇒ 分工 (b) | **观测**（被调者里无时间函数） |
 #![allow(dead_code)]
 
-// `#[path]` 只在**顶层** mod 上可靠（基准目录 = 本文件目录 `tests/`）；
-// 内层 `mod _scaffold { .. }` 会把基准变成 `tests/_scaffold/`（该目录不存在，
-// 中间的 `..` 也就无解），所以这里先平铺编进来再重导出成源码期望的路径。
-#[path = "../src/_scaffold/protocol.rs"]
-mod protocol_src;
-#[path = "../src/_scaffold/replay_inflate.rs"]
-mod inflate_src;
-
-mod _scaffold {
-    pub mod protocol {
-        pub use crate::protocol_src::*;
-    }
-    pub mod replay_inflate {
-        pub use crate::inflate_src::*;
-    }
-}
-#[path = "../src/events.rs"]
-mod events;
-
-// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
-// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
-#[path = "../src/graphwar_event_handler.rs"]
-mod graphwar_event_handler;
-#[path = "../src/turnstate.rs"]
-mod turnstate;
-#[path = "../src/graphwar_game_recorder.rs"]
-mod graphwar_game_recorder;
-#[path = "../src/graphwar_replay_reader.rs"]
-mod graphwar_replay_reader;
+// 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含
+// （以及为满足源码里 `crate::_scaffold::protocol` 路径而搭的重导出 shim）换成真 crate 引用；
+// **断言行一条没动**，只改取源方式。
+use gw2_rebuild::_scaffold;
+use gw2_rebuild::events;
+use gw2_rebuild::graphwar_event_handler;
+use gw2_rebuild::graphwar_game_recorder;
+use gw2_rebuild::graphwar_replay_reader;
+use gw2_rebuild::turnstate;
 
 use graphwar_game_recorder::EventInfo;
 use graphwar_replay_reader::*;

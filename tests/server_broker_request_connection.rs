@@ -11,19 +11,11 @@
 //! | `identity` | 模块路径 / 类型名 / Location / 尺寸比闸 | **观测** |
 #![allow(dead_code)]
 
-#[path = "../src/_scaffold/protocol.rs"]
-mod protocol_src;
-
-mod _scaffold {
-    pub mod protocol {
-        pub use crate::protocol_src::*;
-    }
-}
-
-#[path = "../src/graphwar_stream_buffer.rs"]
-mod graphwar_stream_buffer;
-#[path = "../src/server_broker_request_connection.rs"]
-mod server_broker_request_connection;
+// 取源方式：**真 crate 引用**（`use gw2_rebuild::…`）。T66 把本文件原来的 `#[path]` 包含换成真
+// crate 引用（`src/lib.rs` 的 `pub mod` 早已落地；**断言行一条没动**，只改取源方式）。
+use gw2_rebuild::_scaffold;
+use gw2_rebuild::graphwar_stream_buffer;
+use gw2_rebuild::server_broker_request_connection;
 
 use graphwar_stream_buffer::{GraphwarStreamBuffer, ReadError};
 use server_broker_request_connection::*;
