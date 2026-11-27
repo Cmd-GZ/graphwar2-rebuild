@@ -23878,8 +23878,8 @@ python3 tools/bit_exact_attrib.py --json .agent-work/ev/c.jsonl --check-baseline
 
 | 门槛 | baseline（`master` `85f53a4`，**干净重建**） | 本分支（`3e5b1dc`，同样干净重建） | 判 |
 |---|---|---|---|
-| `cargo test --offline` | **1576 / 0 / 0** | **1585 / 0 / 0**（+9 = 7 条 pin + 2 条 `tests/`） | 只增 ✓ |
-| `cargo test --offline --features gdext-bindings` | **1724 / 0 / 0** | **1733 / 0 / 0** | 只增 ✓ |
+| `cargo test --offline`（两侧各 `cargo clean -p gw2-rebuild` 后跑） | **1579 / 0 / 0**（当前基座；`85f53a4` 时实测 1576） | **1588 / 0 / 0**（+9 = 7 条 pin + 2 条 `tests/`；在 `85f53a4` 上量到 1576→1585，同一基座上**两次都是 +9**） | 只增 ✓ |
+| `cargo test --offline --features gdext-bindings` | **1727 / 0 / 0**（`85f53a4` 时 1724） | **1736 / 0 / 0**（+9） | 只增 ✓ |
 | `coverage_matrix.py --check` | rc=0 | rc=0（**改 src 后先 rc=1，重跑生成物**：`src_fns` 3951→3964、`graphwar_game_recorder.rs` ours_funcs 16→29、`src_tree_sha256` 变） | ✓ |
 | `check_doc_refs.py` | rc=0 | rc=0 | ✓ |
 | 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（`内容命中`：fire 647、batch 647、`batch_conv` 637/1080） | 一位未退 ✓ |
