@@ -1,0 +1,150 @@
+# f3_triage_plan.txt —— T82 **预注册**：F3 缺口 153 条的「度量口径」判据（先提交，后跑）
+#
+# 为什么先写死再跑：本轮要回答的是「F1 277 / F2 97 / F3 153 = 52.6% 这个复原率，分母诚不诚实」。
+# 若 F3 里有一批条目**本来就不该由我们手写**（标准库单态化 / gdext 宏产物 / 编译器生成物），
+# 把它们算进缺口 ⇒ 复原率**虚低**；反过来，若有人把 std 内核的地址写进我们函数的注释，
+# tools/function_coverage.py 的 P2（地址指认）会**虚高**（T71 实测假抬 5 条 F1，见 docs/06 §123.5）。
+# 判据边跑边改，结论就必然是"想让它是多少就是多少"。所以：
+#   **本文件先单独 commit，然后才写 tools/f3_triage.py、才出 fixtures/f3_triage.tsv。**
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#   * 函数范围 = `.eh_frame` FDE 自解（不读 analysis/*.pkl、不读 Ghidra 表）。
+#   * 分母 = fixtures/function_coverage.tsv 里 `判档 == F3` 的行 = **153 条**（全仓分母 527）。
+#   * 名字 = fixtures/function_coverage.tsv 的 `符号名` + `名字来源`（v2 = 符号表真名，hyb = 结构指纹预测名，— = 无名）。
+#   * Location = `panic::Location`（`.data.rel.ro` 的 {file,len,line,col}），本仓库的**硬归属**证据。
+#   * 反汇编 = capstone x86-64（`.reference/venv`），工具 tools/addr_probe.py 的 Ctx/dis_list 复用。
+
+## 1. 五类定义（与任务书 §1 一致）
+
+| 类别 | 定义 | 进不进"诚实缺口" |
+|---|---|---|
+| `real-missing` | **原版有我方没有的业务函数**：函数体承载原版模块自己的语义，能按源码写出来 | **进**（这才是缺口） |
+| `na:std-mono` | **std/core/alloc 的单态化**（如 `core::slice::sort` 实例化）。函数体是标准库的；本模块只贡献被内联进去的比较器/步长 | 不进 |
+| `na:gdext-glue` | **gdext 宏产物**：类注册胶水 / 属性访问器 / `#[func]` 分发壳 / 信号 connect 闭包。源码层无独立 `fn` | 不进 |
+| `na:other` | **其它不该手写的编译器生成物**：drop glue（`drop_in_place`）、panic 展开（`_Unwind_Resume`）、
+  `#[derive]` 生成物、trait 对象/单态化 shim 等 | 不进 |
+| `unknown` | **判不了**：证据不足以判成上面任一类（必须写明"缺什么证据"） | **进**（保守：按缺口算） |
+
+**"不该由我们手写"的判据本质**：原版 Rust 源码里**没有这一行 `fn`**，它的边界来自①标准库泛型实例化 ②宏展开
+③编译器生成。⇒ 我们**写不出**对应的源码函数；强行写一份等于"凭空造一份没有物证的实现"（违反 AGENTS.md §0.3/§2）。
+
+## 2. 机判特征（tools/f3_triage.py 逐条算，全部可从 `.so` 复算）
+
+对每条 F3 行，在 `.eh_frame` 给出的 `[start,end)` 上反汇编，抽取下列特征：
+
+| 代号 | 特征 | 提取法 |
+|---|---|---|
+| `SZ` | FDE 尺寸（字节）/ 指令条数 | `addr_probe.py fde <vaddr>` |
+| `LOC` | 引用的 `panic::Location`（file:line:col，按次数） | `addr_probe.py locs <vaddr>` |
+| `SELF` | 直接自递归次数 = `call` 立即数 == 自身 start 的条数 | 反汇编内 |
+| `STRIDE` | 元素步长乘法：`imul r,r,imm` 的 imm（≥0x20）**或** `shl r,imm` 后接 `lea [a+a*2]` 之类 | 反汇编内 |
+| `CMP` | 浮点比较器：`ucomisd` 条数 + 其后 ≤2 条内的 `jp`（NaN 立刻跳走）+ 该函数引用 Location | 反汇编内 |
+| `BULK` | 整块搬运：`movups/movaps/movdqu` 条数（≥2 记命中） | 反汇编内 |
+| `CMOV` | 选择链：`cmova/cmovb/cmovbe/...` 条数（排序网络的显著特征） | 反汇编内 |
+| `ATOMIC` | `lock cmpxchg dword ptr [rip+disp]`，disp 落在**可写数据段**（`.data/.bss`）= 懒初始化单例 | 反汇编内 |
+| `BORROW` | 借用标记：`mov qword ptr [reg+0x10], 0xffffffffffffffff`（0→-1）+ `inc/dec qword ptr [reg+0x10]` | 反汇编内 |
+| `CALLERS` | `call rel32` 调用点数 + 调用点所在函数 | `addr_probe.py callers <vaddr>` |
+| `SLOTS` | 值等于本函数地址的重定位槽（`.data.rel.ro`/`.got` 表项，= 只经函数指针表被引用） | `addr_probe.py callers <vaddr>` |
+| `CALLER_LOC` | 唯一（或主要）调用者**自己**引用的 Location 数（=0 ⇒ 调用者不是用户代码：std/gdext/引擎侧） | `addr_probe.py locs <caller>` |
+| `CALLEE` | 被调者：排除 panic/alloc/memcpy 后的前几个目标 | 反汇编内 |
+
+## 3. 判决规则（预注册；命中即写入 TSV 的「判据命中」列）
+
+**R-STD ⇒ `na:std-mono`**（必须同时满足一组，不许只靠一条）：
+  A 组 `SELF >= 2`（三段自递归）**且** `STRIDE` 命中（元素步长 `imul ∧≥0x20`）
+  B 组 `CMP` 命中（`ucomisd ≥ 2` **且** `jp ≥ 2` **且** `LOC` 非空）**且** (`BULK ∧≥2` 或 `CMOV ≥ 4`)
+       —— 小数组排序网络的形状
+  C 组 `CMP` 命中 **且** 本函数 FDE 尺寸与**同批另一条 F3 行的 FDE 尺寸逐字节相同**（成对单态化）
+  ⇒ 判 `na:std-mono` 需 A∨B∨C 之一。**A/B/C 全不中 ⇒ 不许判 std**。
+
+**R-GDEXT ⇒ `na:gdext-glue`**（三条形态分别判，至少满足一条 + 一条辅证）：
+  G1 类注册：`ATOMIC` 命中 **且** `CALLERS == 0`（全 `.text` 无调用点，只作为数据表项出现）
+     辅证：`SLOTS >= 1` 或 `LOC` 的行列号 = `#[godot_api]`/`derive` 站点（列 == 1）
+  G2 属性访问器：`BORROW` 命中 **且** `CALLERS <= 1`
+  G3 `#[func]` 分发壳：`CALLERS == 1` **且** 该唯一调用者的 `CALLER_LOC == 0`（调用者是 gdext 的
+     ptrcall/call_func 注册回调，不是用户模块函数）**且** 函数体 ≥0x180 字节（参数解包 + 返回值打包）
+     辅证：与另一条 `na:gdext-glue` 行共享同一个 `panic::Location`（T71 §123.2 证据③）
+  G4 信号/源码闭包：`LOC` 的行列号带**非 1 的列**（闭包体列号 > 1）**且** 父函数在符号表里无真名 ⇒
+     **判 `unknown`（不是 na）**，因为闭包体在源码层**确实存在**（T71 §123.2 第 4 条的选择）；
+     只有能证"父函数是宏生成"时才升级为 `na:gdext-glue`。
+
+**R-OTHER ⇒ `na:other`**：函数体只做这些之一且无其它业务指令：
+  drop glue（只调 `drop_in_place`/`__rust_dealloc`/`free` + 字段析构）、panic 展开
+  （`_Unwind_Resume` / `rust_panic` 无前置业务分支）、`#[derive]` 的 `Debug/Clone/PartialEq` 生成物
+  （循环读写字段 + 调比较/格式化）、纯 `ret` / `xor eax,eax; ret` 的空壳。
+  **要求**：除上述生成物调用外**没有**业务常量/业务串/业务分支。
+
+**R-REAL ⇒ `real-missing`**：上面三组规则**都没命中**，且能给出**该函数做什么**的至少一句可复核描述
+  （来自：被调者 + 常量 + `.rodata` 串 + Location 行号 + 调用者模块）。
+
+**R-UNKNOWN ⇒ `unknown`**：规则都不干净命中，或命中相互冲突，或函数体太大（>0x1000 字节）本轮没读完。
+  必须写「缺什么」——例如"缺 +0xb0 的写入点"、"缺 TypeId 反查"、"缺 1407 条基本块过一遍"。
+
+**纪律**：
+  1. `na:*` 的每一条**至少 2 个独立证据**（机器特征 + 一条人工复核的指令/表项），单条证据 ⇒ `unknown`。
+  2. `real-missing` 必须能写出**语义**；写不出语义但也不像 na ⇒ `unknown`（不许猜）。
+  3. 机器规则只是**候选**；TSV 的「类别」列是**人工裁决结果**，与机器候选不同时必须写明理由。
+
+## 4. 正对照（**先做，全对才继续全量**）
+
+三组已判样本（T71 §123 台账 fixtures/f3_heavy_anchors.tsv，先复核该台账再当标准答案）：
+
+| 组 | 条数 | 地址 | 期望类别 |
+|---|---|---|---|
+| std 单态化 | 12 | `0x41a9d0 0x41ab40 0x41b500 0x41b720 0x41b880 0x41bdf0 0x4600e0 0x4602f0 0x481140 0x481870 0x4825b0 0x482c20` | `na:std-mono` |
+| gdext 宏产物 | **19**（§123 正文写 21，台账逐行只数出 19 —— 见 §8 待核） | `0x3aa6a0 0x3aa820 0x3b56c0 0x3b5910 0x3b5ce0 0x3b6e00 0x3b6ed0 0x3b7020 0x426430 0x433c00 0x4dec00 0x4e3b00 0x4e3c80 0x4e8f80 0x4e91d0 0x4e9380 0x4e9590 0x500070 0x5005b0` | `na:gdext-glue`（`0x4dec00/0x500070/0x5005b0` 按 G4 判 `unknown` 并写明↔§123 已把这三条记为"不落码的源码闭包"，本轮按 G4 记 `unknown`） |
+| 真业务函数 | 2 | `0x3afcf0`（`check_save_level`）`0x3b4ec0`（`request_permissions_result`） | **非 na**（业务语义，`real-missing` 形态；T71 已落码 ⇒ 现已 F1，本轮只验"判法不把它判成 na"） |
+
+**附加负对照**（防"把一切都判 na"）：三条已知 `F1` 真业务函数必须判非 na：
+`0x519630`（`handle_connected_to_server_event`）、`0x519840`（`tick`）、`0x4ee720`（`mutate_fine_tune`）。
+
+**机判自校验**：12 条 std 的 FDE 尺寸必须与台账逐对相同（`0x164/0x158/0x564/0x100/0x721/0x66f`，各 2 条）——
+若工具算出的尺寸与台账不符，先修工具（尺寸口径错则后面全错），修完重跑对照。
+
+**正对照不过怎么办**：只许改**实现**（工具代码里的特征提取），**不许改**本文件的规则与阈值；
+若认为规则本身有洞，**只许在本文件末尾追加 §9「勘误」**（追加式，不许改上文），写明触发样本与改动理由，
+**改完重跑正对照**，全对才进全量。全量跑完后再发现规则有洞 ⇒ 写进 docs/06，**不回改本文件**。
+
+## 5. F2 顺带检查（不进 153 的算术）
+
+任务书要求"F2 97 条顺带看一眼"。同一套规则对 97 条 F2 行跑一遍，命中的登记在
+`fixtures/f3_triage.tsv` 的 `F2-scan` 分节（**单独计数，不进 §1 的 153**）。
+意义：F2 = "有实现但无物证"，若其中也有 std/宏产物，则 M2（F1+F2）同样虚高。
+
+## 6. 三个数字（预注册算法）
+
+记 `n=527`、`F1`、`F2`、`F3=153`、`NA = |na:*|`（`unknown` **不计入** NA，保守）、`REAL = 153 - NA`。
+
+1. **诚实缺口** = F3 里 `real-missing` 的条数 = `REAL_rm`（`unknown` 另计，不进这个数但要说清）。
+2. **两种口径的复原率**：
+   * 口径 A（现行，含 na）：`F1 / 527`  ← 现状 277/527 = 52.6%
+   * 口径 B（不含 na，把 `na:*` 从分母剔除）：`F1 / (527 - NA)`
+   * 口径 C（不含 na，分子含 F2）：`(F1+F2) / (527 - NA)`
+   * 附：口径 B' 若只剔 `na:std-mono`+`na:gdext-glue`（最保守的"确定不该手写"两类），
+        把 `na:other` 留回分母 ⇒ `F1 / (527 - NA_strong)`，作为**区间下界/上界**并列给出。
+3. **给 `tools/function_coverage.py` 的建议**（**本轮不改它**，只提建议）：加 `na:std-mono` / `na:gdext-glue`
+   标记列与"分母修正"统计口径，改之前必须像本文件一样**预注册 + lead 批**。
+
+## 7. 交付物与边界
+
+* 产物：`fixtures/f3_triage.tsv`（153 行 × 6 列 `vaddr|名字|FDE尺寸|判据命中|类别|依据` + F2-scan 分节）、
+  `tools/f3_triage.py`（新脚本，只读 `.so` 与 fixtures，**不改既有计分工具**）、`docs/06` 新节。
+* **不动**：`src/**`（本轮只审计不改码）、`fixtures/function_coverage.tsv`（生成物）、`client/**`、
+  `tools/function_coverage.py`、`fixtures/function_coverage_plan.txt`、门槛/护栏文件。
+* 门槛：`check_doc_refs.py` rc=0、`docsec.py check docs/06` 通过、`cargo test --offline` 全绿
+  （本轮只加工具与夹具，**条数不应变**）。提交作者用仓库配置（Cmd-GZ）。
+
+## 8. 跑前就承认的已知会漏（写在这里，别事后找补）
+
+* **L1** 机器特征是**形态**证据，不是语义证据：一个真业务函数如果恰好是"浮点比较 + 自递归"就会被误判 std。
+  缓解：R-STD 要求 2 条以上特征同时命中；每一条 na 都要人工复核一条具体指令（写进 `依据`）。
+* **L2** "原版源码里没有这一行 fn"本身是**推断**（我们手上没有原版源码）——它由"①标准库/宏/编译器产物
+  ②Location 落在本模块的行列 ③无调用点/只在数据表"三条**间接**证据支撑。`na` 的档位一律写「推断」，
+  不许写成"确定"。
+* **L3** `na:std-mono` 的**归属**只看 Location 指向哪个模块：那 12 条 Location 都指
+  `graphwar_function_evolutionator.rs:169:94 / :273:90` ⇒ 单态化**发生在该模块**，但函数体是标准库的。
+  ⇒ "该模块还要不要写排序代码"的答案是**不要**，但"比较器要不要写"的答案是**要**（T71 已落码）。
+* **L4** `unknown` 会被算进缺口 ⇒ 本轮读数对"缺口"是**偏大**的（保守方向，不会虚报完成度）。
+* **L5** §123 正文的"21 条 gdext"与台账逐行的 **19 条**不符（12 std + 19 gdext + 4 真业务 = 35 才对上）。
+  本轮以**台账逐行**为准，并在报告里点名这处不自洽，**不回改 docs/06 §123**（本轮只追加新节）。
