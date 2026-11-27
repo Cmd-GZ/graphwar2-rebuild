@@ -77,7 +77,7 @@
 | `graphwar_ad_switch.rs` | 6 | 3 | `src/graphwar_ad_switch.rs` | 21 | 观测 |
 | `graphwar_audio_control.rs` | 7 | 16 | `src/graphwar_audio_control.rs` | 21 | 观测 |
 | `graphwar_backend.rs` | 6 | 12 | `src/graphwar_backend.rs` | 6 | 观测 |
-| `graphwar_button.rs` | 6 | 3 | `src/graphwar_button.rs` | 13 | 观测 |
+| `graphwar_button.rs` | 6 | 3 | `src/graphwar_button.rs` | 53 | 观测 |
 | `graphwar_campaign_control.rs` | 1 | 1 | `src/graphwar_campaign_control.rs` | 23 | 观测 |
 | `graphwar_client_connection_handler.rs` | 8 | 16 | `src/graphwar_client_connection_handler.rs` | 44 | 观测 |
 | `graphwar_color_manager.rs` | 4 | 6 | `src/graphwar_color_manager.rs` | 32 | 观测 |
@@ -90,7 +90,7 @@
 | `graphwar_event_handler.rs` | 2 | 4 | `src/graphwar_event_handler.rs` | 9 | 观测 |
 | `graphwar_event_queue.rs` | 0 | 0 | `src/graphwar_event_queue.rs` | 5 | 观测 |
 | `graphwar_function_evolutionator.rs` | 16 | 25 | `src/graphwar_function_evolutionator.rs` | 114 | 观测 |
-| `graphwar_function_input.rs` | 13 | 33 | `src/graphwar_function_input.rs` | 41 | 观测 |
+| `graphwar_function_input.rs` | 13 | 33 | `src/graphwar_function_input.rs` | 78 | 观测 |
 | `graphwar_function_manager.rs` | 7 | 12 | `src/graphwar_function_manager.rs` | 19 | 观测 |
 | `graphwar_game_client.rs` | 36 | 59 | `src/graphwar_game_client.rs` | 31 | 观测 |
 | `graphwar_game_info.rs` | 0 | 0 | `src/graphwar_game_info.rs` | 0 | 观测 |
@@ -99,21 +99,21 @@
 | `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs` | 173 | 逐位 |
 | `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 25 | 观测 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | `src/graphwar_lan_broadcaster_v6.rs` | 20 | 观测 |
-| `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
+| `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 62 | 观测 |
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
 | `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 42 | 观测 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 25 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | `src/graphwar_lobby_control.rs` | 7 | 观测 |
 | `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 22 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | `src/graphwar_logger.rs` | 4 | 观测 |
-| `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
+| `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 35 | 观测 |
 | `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 15 | 观测 |
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
 | `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 17 | 观测 |
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 17 | 观测 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/graphwar_obstacle_manager.rs` | 20 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
-| `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 41 | 观测 |
+| `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 99 | 观测 |
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/graphwar_plane_pos_manager.rs` | 20 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 58 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
@@ -124,7 +124,7 @@
 | `graphwar_replay_control.rs` | 2 | 9 | `src/graphwar_replay_control.rs` | 6 | 观测 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
 | `graphwar_replay_reader.rs` | 0 | 0 | `src/graphwar_replay_reader.rs` | 11 | 观测 |
-| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 57 | 观测 |
+| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 110 | 观测 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | `src/graphwar_server_broker_handler.rs` | 19 | 观测 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/graphwar_server_connection_handler.rs` | 31 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 48 | 观测 |
@@ -144,16 +144,16 @@
 | `axis_drawer.rs` | 6 | 3 | `src/axis_drawer.rs` | 12 | 观测 |
 | `backtracer.rs` | 0 | 0 | `src/backtracer.rs` | 2 | 观测 |
 | `button_manager.rs` | 2 | 3 | `src/button_manager.rs` | 7 | 观测 |
-| `effect_drawer.rs` | 11 | 17 | `src/effect_drawer.rs` | 19 | 观测 |
-| `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 19 | 观测 |
+| `effect_drawer.rs` | 11 | 17 | `src/effect_drawer.rs` | 51 | 观测 |
+| `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 130 | 观测 |
 | `function_button_manager.rs` | 2 | 3 | `src/function_button_manager.rs` | 6 | 观测 |
-| `function_drawer.rs` | 1 | 1 | `src/function_drawer.rs` | 10 | 观测 |
+| `function_drawer.rs` | 1 | 1 | `src/function_drawer.rs` | 32 | 观测 |
 | `function_history_recorder.rs` | 1 | 3 | `src/function_history_recorder.rs` | 20 | 观测 |
 | `function_token.rs` | 0 | 0 | `src/function_token.rs` | 9 | 观测 |
 | `graphwar_texture_loader.rs` | 1 | 1 | `src/graphwar_texture_loader.rs` | 7 | 观测 |
 | `math_function.rs` | 7 | 15 | `src/math_function.rs+src/math_function/to_text.rs` | 54 | 逐位 |
-| `obstacle_drawer.rs` | 2 | 7 | `src/obstacle_drawer.rs` | 4 | 观测 |
-| `player_showcase.rs` | 10 | 18 | `src/player_showcase.rs` | 44 | 观测 |
+| `obstacle_drawer.rs` | 2 | 7 | `src/obstacle_drawer.rs` | 34 | 观测 |
+| `player_showcase.rs` | 10 | 18 | `src/player_showcase.rs` | 82 | 观测 |
 | `polish_notation_converter.rs` | 1 | 2 | `src/polish_notation_converter.rs` | 6 | 逐位 |
 | `server_broker_request_connection.rs` | 0 | 1 | `src/server_broker_request_connection.rs` | 10 | 观测 |
 | `weak_caller.rs` | 39 | 2 | `src/weak_caller.rs` | 8 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（123 个文件、3447 条 `fn`） | `3f8e498775b205cc46c6ee9f9ed1ee7249a2de472f6b2df2e362c3940092c332` |
+| `src/` 树（112 个文件、3447 条 `fn`） | `01d87441278a0c78b47ef7e0233a8cdd9dde515ad55581e6a6254a6f35e00069` |
 

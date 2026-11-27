@@ -17763,3 +17763,179 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
 * `game_client` 的 `connect 0x518320` / `disconnect 0x516370` 也没动（它们就是 `0x45a340` / `0x4592d0`
   的唯一调用者，本条落完后这两条已经**有被调者**了）。
 * `new`（`0x4599f0`）仍是 F2。
+
+## 104. T57：`_scaffold` 第二批语义搬家 —— **11 个 `*_class.rs` 的 gdext 方法体按 `panic::Location` 搬回原版模块**，`_scaffold` 生产函数 **1152 → 750（−402）**；反汇编复核 3 处、我方语义写错 **0 条**，但挖出 4 条**证据口径/结构**问题（2026-11-27，任务 T57 / `task-52`）
+
+> 起点：T36 §86.4 (b) 判出 20 个 `*_class.rs` 共 692 个生产函数是「装着原版模块的方法体」；
+> T49（§97）搬了 4 处 41 个函数，`_scaffold` 1191 → 1150。本轮做**第二批**（T49 §97.7 第 5 条点名的下一批），
+> 判据仍是同一条：**原版把 `#[derive(GodotClass)] struct` 和方法体写在同一个 `graphwar_*.rs` 里**
+> （`panic::Location` 就是证据）⇒ `_class.rs` 只该是 GDExtension 外壳，语义在模块文件。
+
+### 104.0 一句话判决
+
+**11 个 `*_class.rs`（402 个生产函数）整份搬回同名模块**，`_scaffold` 生产函数 **1152 → 750**。
+按 §86.4 (b) 那张表算，**"装着原版模块方法体"的 `*_class.rs` 只剩 2 个**：
+`graphwar_setup_control_class.rs`（50，**本任务禁区**，别的 agent 正在改）与
+`graphwar_ad_switch_class.rs`（7，`GraphwarAdSwitch` 的基类都还没定）；
+表里另外 3 个（`replay_driver_class` 51 / `replay_meta_class` 14 / `axis_drawer_class` 24）本轮判明
+**留原地是对的**（前两个是我方自造的回放驱动/元数据，第三个是手写 C ABI，见 §104.3-4）。
+**反汇编复核 3 处（`GraphwarLongPressAnimation::draw` / `EntityDrawer::ready` / `GraphwarPlane::ready`+`GraphwarButton::ready`），
+我方实现全部逐条对上 ⇒ 本轮"写错的语义"是 0 条**；但挖出 **4 条证据口径/结构问题**（见 §104.3）——
+其中 1 条（`GraphwarButton` 的 `ready`/`process` 一直记的是**体内地址**、没有函数起点）和
+1 条（我方自造的纯意图结构**与原版类同名**、搬回来时撞名）都是**以前没人写下来、现在会误导后来人**的。
+
+### 104.1 台账（预注册，先出台账再搬）
+
+[`fixtures/scaffold_migration2_plan.tsv`](../fixtures/scaffold_migration2_plan.tsv)（单独 commit `cee52ab`）：
+38 行 = **搬 37（M）/ 待拆 1（D）/ 留原地 0（A）**，列为
+`id | scaffold_loc | what_it_does | orig_module | orig_func_vaddr | evidence | decision | callers_kept_by | note`。
+判据与 T49 同一套（能指到**原版函数名 + ELF vaddr** 且判的是游戏语义 ⇒ 搬），
+但加了一条本轮特有的处置：**同一个 `impl` 块/同一个文件里的东西与它同生共死**
+（`#[func]` 验收钩子、私有 helper、`#[cfg(test)] mod tests` 一律跟着类搬；它们是 1978 条 headless 断言的读取口，
+删一条就掉门槛）。
+
+台账里逐条登记了**取证方式**：`fixtures/name_to_addr_v2.tsv` 的真名（v2 三向匹配）+ 本轮
+`tools/addr_probe.py locs <vaddr>` 自己复核的 `panic::Location`。26 个 vaddr 里 **22 条 Location 落在目标模块文件**；
+3 条**无 Location 锚**（`GraphwarButton::ready 0x4e4040` / `process 0x4e42a0`、`AxisDrawer` 若干）
+已如实登记为"归 module 靠名字夹具 + arm64 `.symtab` 序，**不靠** Location"。
+
+### 104.2 11 处逐一（原位置 → 新落点 → 原版地址 → 调用方怎么保持）
+
+| # | 原位置（`src/_scaffold/`） | 生产 fn | 新落点（原版模块） | 原版函数 + vaddr | 调用方保持方式 |
+|---|---|---|---|---|---|
+| 1 | `entity_drawer_class.rs` | **97** | `src/entity_drawer.rs` | `draw 0x4b2890` / `ready 0x4b4130` / `process 0x4b4b60` / `update_sprite 0x4b9530` / `get_entity_skin_sprite 0x4bb6b0` / `get_entity_face_sprite 0x4bb0a0` / `get_entity_hat_sprite 0x4b9e70` / `get_entity_name_label 0x4ba4a0` | `pub use node_class::*` ⇒ `crate::entity_drawer::EntityDrawer` 与原版同路径；类名/`#[func]` 名一个没变 |
+| 2 | `graphwar_plane_class.rs` | **50** | `src/graphwar_plane.rs` | `init 0x4b7380` / `ready 0x4b7a70` / `process 0x4b83f0` / `draw 0x4b5df0` / `obstacle_partial_update_event 0x4be3e0` | 同上；`root_node_class` 的跨引用改成 `crate::graphwar_plane::GraphwarPlane` |
+| 3 | `graphwar_root_node_class.rs` | **48** | `src/graphwar_root_node.rs` | `process 0x3a5760`（20288 B，56 锚）/ `ready 0x3a2e10` / `purchase_confirmed 0x3afe90` / `purchase_denied 0x3afb00` / `process_button_pressed 0x3b0830` | 同上；`module_slot_status()` 的返回字符串（`assemble_check.gd` + `TIER_TALLY` 钉死的对外契约）**一个字没改** |
+| 4 | `graphwar_button_class.rs` | **34** | `src/graphwar_button.rs` | `ready 0x4e3f20..0x4e429d`（0x37d）/ `process 0x4e42a0..0x4e4400`（0x160）**（本轮首次量出函数起点，见 §104.3-1）** | 同上 |
+| 5 | `graphwar_function_input_class.rs` | **32** | `src/graphwar_function_input.rs` | `ready 0x4fd1b0` / `process 0x4fd4a0` / `gui_input 0x4fedc0` / `force_update_cb 0x4f2200` / `move_caret_{left,right} 0x4f3210/0x4f3910` / `delete_token_{at,after}_caret 0x4f44c0/0x4f4a60` | 同上 |
+| 6 | `player_showcase_class.rs` | **31** | `src/player_showcase.rs` | `ready 0x4e6480` / `process 0x4e68f0` / `draw 0x4e5400` / `on_text_change 0x4efd70` | 同上 |
+| 7 | `obstacle_drawer_class.rs` | **26** | `src/obstacle_drawer.rs` | `update 0x3ee190` | 同上；`graphwar_plane_class` 的 `use super::obstacle_drawer_class::ObstacleDrawer` → `crate::obstacle_drawer::ObstacleDrawer` |
+| 8 | `effect_drawer_class.rs` | **25** | `src/effect_drawer.rs` | `draw 0x4e1520` / `ready 0x4e25b0` / `ready::{{closure}} 0x4e2a30` / `process 0x4e2f80` | 同上 |
+| 9 | `graphwar_lan_vbox_class.rs` | **23** | `src/graphwar_lan_vbox.rs` | `process 0x4f90b0`（27 锚） | 同上 |
+| 10 | `long_press_animation_class.rs` | **18** | `src/graphwar_long_press_animation.rs` | `draw 0x4d8100` / `_::__init::__inner_init 0x4bd430` | 同上 |
+| 11 | `function_drawer_class.rs` | **18** | `src/function_drawer.rs` | `update_function 0x498c70`（唯一锚；`init` 内联在 `GraphwarPlane::init` 里） | 同上；`graphwar_plane_class` 的跨引用改 `crate::function_drawer::FunctionDrawer` |
+
+**合计搬了 402 个生产函数**（= `audit_src.py scaffold` 口径下 11 个文件的 `prod` 之和）。
+
+**唯一的运行形态变化（诚实登记）**：每个目标模块文件末尾新增一段
+`#[cfg(feature = "gdext-bindings")] mod node_class { … }` + `pub use node_class::*;`。
+理由：**原版整个 crate 都是 gdext 扩展，不需要 `cfg`**；本仓 `cargo test`（不带 `gdext-bindings`，
+零依赖、1826 条）必须能编 ⇒ 这一层必须 gate。`pub use node_class::*` 把对外路径抬平，
+所以 `crate::entity_drawer::EntityDrawer`、`crate::graphwar_plane::GraphwarPlane` 这些路径**与原版一致**。
+每个 block 的 `//!` 头都写了该类的 Location 证据与本条差异。
+
+**`_scaffold/mod.rs`**：11 条 `#[cfg(feature = "gdext-bindings")] pub mod <x>_class;` 连同它们的说明注释换成
+`// T57：`<x>_class` 的 gdext 节点类已搬回 `src/<module>.rs` —— 原版把 `#[derive(GodotClass)]` struct 与方法体
+写在同一个 `<module>.rs` 里（`panic::Location` 为证）。`
+
+### 104.3 反汇编复核**抓到的 4 条**（都不是"我方语义写错"，但都会误导后来人）
+
+> 本轮按 T49 的套路先 `fde` 后 `dis` 逐条核对。**语义写错 0 条**；下面 4 条是**证据口径/结构**层面的纠正。
+
+| # | 位置 | 我方原状（错在哪） | 正确是什么 | 证据 |
+|---|---|---|---|---|
+| 1 | `GraphwarButton::{ready, process}` | 我方台账与 scaffold 注释只记**体内地址**（`0x4e410d/0x4e3f4e/0x4e3fc7/0x4e4040` 当"ready"、`0x4e42a0` 当"process"），**从来没有函数起点** ⇒ 拿 `0x4e4040` 去 `fde` 会得到 `NOT an FDE function start` + `errcode`，`callers 0x4e4040` 更会漏掉整条函数 | `GraphwarButton::ready` = **`0x4e3f20..0x4e429d`（0x37d = 893 B）**；`process` = **`0x4e42a0..0x4e4400`（0x160 = 352 B）** | `addr_probe.py fde 0x4e3f20` → `eh_frame 0x4e3f20..0x4e429d`；`fde 0x4e42a0` → `0x4e42a0..0x4e4400`；`fde 0x4e4040` → `NOT an FDE function start` |
+| 2 | `GraphwarPlane::init 0x4b7380` 的**模块归属** | 若按 `panic::Location` 投票，`init` 的唯一锚落 **`src/obstacle_drawer.rs:37:97`** ⇒ 会判"`init` 属于 `obstacle_drawer`" | 那是**内联进来的 `ObstacleDrawer::new` 的锚**，不是本模块的锚；`init` 归 `graphwar_plane` 靠 **funcstart 边界 + arm64 `.symtab` 名字**双证据 | `addr_probe.py locs 0x4b7380` → 只有 `src/obstacle_drawer.rs x1 (37:97)`；`fixtures/name_to_addr_v2.tsv` 有 `graphwar_plane/GraphwarPlane/init/0x4b7380` 这行 |
+| 3 | `src/graphwar_plane.rs:486` 的 `GraphwarPlane` | 我方自造的**纯意图结构**（`function_drawers`/`obstacle_drawers`/`partial_updates`/`ready` 四个字段）**占用了原版类的名字**。原版里 `GraphwarPlane` **就是那个 `Control` 类**（Location 落本文件）⇒ 方法体搬回来必然撞名（编译报"两份 `GraphwarPlane`"） | 纯意图结构改名 **`PlaneIntent`**（它只是原版字段布局的纯数据模型，**原版没有这个类型**），`GraphwarPlane` 这个名字让给原版类。3 处调用方同步改（本文件测试 1 处 + `tests/graphwar_plane.rs` 3 处），**断言一条没改** | `grep -n "pub struct GraphwarPlane\|pub struct PlaneIntent" src/graphwar_plane.rs`；编译期撞名证据 = 本轮第一次 `cargo build --features gdext-bindings` 的 `E0277 GraphwarPlane: GodotClass is not implemented`（14 条） |
+| 4 | `src/_scaffold/axis_drawer_class.rs`（台账 `ax-00` 预注册 **D**） | 台账按 T36 的 (b) 分类把它记成"装着 `AxisDrawer::{draw,ready,process}` 方法体"⇒ 预注册成待拆（只搬方法体） | **实判 A（整份留原地）**：24 个生产函数**没有一个游戏语义** —— `register_axis_drawer_class`/`add_method`/`add_property`/`ctor`/`read_i64`/`write_int`/`instance_mut`/`sym`/`sn` 是**手写 C ABI**（原版是 `#[derive(GodotClass)]` + `#[gdextension]`，**没有手写层**）、其余是计数器与两个薄 helper；`line_primitive_count` 已经把规则**委托**给 `axis_drawer::axis_primitives`（规则本体只有一份） | `grep -n "^\s*\(pub \)\?\(unsafe \)\?fn \|^pub struct " src/_scaffold/axis_drawer_class.rs`（24 条全是 ABI/计数/helper）；`line_primitive_count` 体里 `axis_drawer::axis_primitives(mode, BOARD_SIZE)` |
+
+> 台账的 `decision` 列**不回填**（预注册纪律）⇒ 第 4 条的更正写在这里，不写回 TSV。
+
+### 104.4 反汇编**确认**的 3 条（我方本来就对，本轮第一次把指令地址写全）
+
+| # | 函数 | 关键指令 | 结论 |
+|---|---|---|---|
+| 1 | `GraphwarLongPressAnimation::draw 0x4d8100` | `0x4d83fb divsd xmm6,[0x19eff8]`（槽 = `0x41cdcd6500000000` = **1e9**，纳秒→秒）→ `0x4d8407/0x4d840b addsd xmm6,xmm6` **×2**（×4）→ `0x4d840f mulsd xmm6,[0x19fdc8]`（槽 = `0x400921fb54442d18` = **π**）⇒ `angle = elapsed_secs × 4π`；`0x4d8503 ucomisd xmm0,[0x19fab8]`（槽 = `0x401921fb54442d18` = **2π**）+ `0x4d850b jbe`（≤2π 直接返回）、否则 `0x4d850d mov dword [rbx+0x20],0x3b9aca00`（写回 1e9 哨兵 = 动画结束）⇒ **`>2π` 结束 ⇒ 一圈 0.5 s**；两次 `draw_arc`：`0x4d8485`（`rdx=0x19cf70` = 黑 `(0,0,0,1)`）、`0x4d84ed`（`rdx=0x19ed00` = 白 `(1,1,1,1)`），两次都 `esi=0x1e`（**30 折点**）、`ecx=0`（**关抗锯齿**） | 与 `graphwar_long_press_animation::draw_plan` 的常量**逐条一致**（4π / 2π / 30 / 黑白 / 关 AA） |
+| 2 | `EntityDrawer::ready 0x4b4130` | `0x4b419b lea rsi,@0x1c2a8e` + `0x4b41a7 edx=7` = `"resized"` → `0x4b41af call 0x3a0fb0`（`connect`）；随后从 `@0x1c2a95` len `0xe` = `"pos_info_event"` 起**共 6 条** `subscribe_to_event`（都经 `slot 0x9bb030 → 0x514b40`） | 我方 `ready` **只连 `resized`、6 个事件未接**是**已知缺口**（文件头"与原版的差别"表里写着"事件订阅**未做**"），不是写错；缺的是 `GraphwarBackend` 这层对象图 |
+| 3 | `GraphwarPlane::ready 0x4b7a70` + `GraphwarButton::ready 0x4e3f20` | plane：`0x4b7af8 call 0x3a0fb0`（`"resized"`，`@0x1c2a8e` len 7）+ `0x4b7cb1`（`"add_obstacle_event"`，`@0x1c2b32` len `0x12`=18）；button：三次 connect 依次 `"pressed"`（`0x1c4258` len 7）→ `"button_up"`（`0x1c425f` len 9）→ `"button_down"`（`0x1c4268` len 11），**地址首尾相接** | 与 `graphwar_plane::READY_EVENTS`（三条）与 `graphwar_button::SIGNAL_LINKS`（三条，顺序 pressed→button_up→button_down，vaddr/len 逐条相同）**完全对得上** |
+
+### 104.5 门槛读数（每批都跑；命令见 §104.6）
+
+| 门槛 | 基线（本工作树 `6b5f925`） | 本轮 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | 1826 / 0 | **1826 / 0** | 一致 |
+| `cargo test --offline --features gdext-bindings` | 1956 / 0 / 1ignored | **1956 / 0 / 1ignored** | 一致 |
+| `coverage_matrix.py --check` | OK | **OK**（527 / 逐位 89 / 观测 435 / 推断 3；生成物已重跑：`docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md` 的 `ours_funcs` 列随搬家更新，`src_files` 123 → 112） | 一致 |
+| `check_doc_refs.py` | rc=0 | **rc=0**（✓ 无死链） | 一致 |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **内容命中 647 / 647 / 637**（文件 286、读失败 117、结算批 1080 三轴同；`batch_conv` 种类序列 1075/1080） | 一位没退 |
+| `boundary_audit.py --check` | match 441 / mismatch 0 / multi 86 | **match 441 / mismatch 0 / multi 86** | 一致 |
+| `client/run.sh selftest` | 717 / 0 / 1skip（missing=0 silent=0） | **717 / 0 / 1skip，`@@SELFTEST_COVERAGE groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)`** | 一致（改过 `_scaffold` ⇒ 已 build gdext → `cp .so` → `--import` 三步） |
+| headless 14 脚本 | ≥1978 / 0 | **1978 / 0**（`assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 378 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 97 / play_flow 234 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike_class 27`） | 一致 |
+
+### 104.6 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t57
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cd $WT
+
+# ① 两个 cargo 档
+cargo test --offline                                     # 1826 / 0
+cargo test --offline --features gdext-bindings           # 1956 / 0 / 1ignored
+
+# ② 台账/文档/边界三件
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $MAIN/.reference/venv/bin/python tools/coverage_matrix.py --check
+$MAIN/.reference/venv/bin/python tools/check_doc_refs.py
+$MAIN/.reference/venv/bin/python tools/boundary_audit.py --check
+
+# ③ 三轴（冻结快照 403 份，只读；三轴必须分开跑、分开报）
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+
+# ④ 客户端两档（改过 _scaffold ⇒ **必须**重编 + cp + import）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+cargo build --offline --example serve_match               # ⚠️ 不建它 selftest 少跑 76 条（net_real_server 36 + play_online 40）
+$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --import
+# ⚠️ 本机 Godot 用 $HOME/.local/share 找 user://（不吃 run.sh 导出的 XDG_DATA_HOME）⇒ **必须**用假 HOME：
+H=$WT/.fakehome
+mkdir -p "$H/.local/share/godot/app_userdata/Graphwar/replays"
+cp $SNAP/{1793897298,1783255495} "$H/.local/share/godot/app_userdata/Graphwar/replays/"
+env -u XDG_DATA_HOME -u XDG_CACHE_HOME -u XDG_CONFIG_HOME HOME=$H bash client/run.sh selftest   # 717 / 0 / 1skip（missing=0 silent=0）
+for f in client/tools/*_check.gd; do
+  env -u XDG_DATA_HOME -u XDG_CACHE_HOME -u XDG_CONFIG_HOME HOME=$H \
+    $MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --script "res://tools/$(basename $f)"
+done                                                     # 14 份合计 1978 / 0
+
+# ⑤ 本轮的反汇编复核（每条都可单独重跑）
+$MAIN/.reference/venv/bin/python tools/addr_probe.py fde 0x4e3f20     # GraphwarButton::ready 真边界 0x37d
+$MAIN/.reference/venv/bin/python tools/addr_probe.py fde 0x4e4040     # NOT an FDE function start（旧口径）
+$MAIN/.reference/venv/bin/python tools/addr_probe.py dis 0x4d8100     # 4π / 2π / 1e9 哨兵 / 30 折点 / 黑白两弧
+$MAIN/.reference/venv/bin/python tools/addr_probe.py locs 0x4b7380    # init 的锚落 obstacle_drawer.rs（内联 callee）
+```
+
+### 104.7 遗留（哪些没搬/没做、缺什么）
+
+1. **`_scaffold` 还剩 750 个生产函数**。本轮没碰的大块（按条数）：`play_flow_class.rs` 90、
+   `replaydiff.rs` 84、`replay_driver_class.rs` 51、`graphwar_setup_control_class.rs` 50（**别的 agent 的禁区**）、
+   `replay_driver.rs` 41、`net_events_class.rs` 40。其中 `play_flow_class` / `replay_*` / `replaydiff`
+   属 **我方自造的驱动/复刻层**（原版没有对应物）⇒ 按 §86.4(a) **留原地是对的**；
+   下一批真正该搬的是 `graphwar_ad_switch_class.rs`(7) 与 `graphwar_setup_control_class.rs`(50，需先解除禁区)。
+2. **T36 §86.3 的"5 个真名无同名实现"只解决了一半**：方法体位置对了，但 `entity_drawer` 里
+   `get_entity_{skin,face,hat}_sprite` / `get_entity_name_label` / `update_sprite` / `update_name_label`
+   在我方仍叫 `texture_for` / `apply_look` / `relayout`（台账 `ed-02` 写"搬的同时按真名补薄函数"，
+   **本轮没做**，如实登记）。补法是加厚 1 行的转发函数（语义不变），下一任可一次做完。
+3. **原版 `process` 的 4 次 `HashMap::retain` 清理判据仍未知**（`entity_drawer::UNKNOWNS` 第 2 条），
+   我方 `relayout` 每帧全量重摆 ⇒ 行为差异仍在（不是本轮引入）。
+4. **`clamp_mode` 两份**：`_scaffold/axis_drawer_class.rs:228` 与 `_scaffold/gdext_mod.rs` 各有一份
+   "i64 → u8 收窄"规则（同一个原版判别值的两份实现）。合并需要先定"手写 ABI 层准不准引用 `gdext_mod`"，
+   留登记（C 档小项）。
+5. **`GraphwarRootNode::process 0x3a5760`（20288 B）主体仍刻意未猜**（T36 §86 已记）；本轮只把它
+   那 48 个生产函数的**位置**搬对了，语义覆盖度没变。
+6. **范围偏差（需 lead 知悉）**：`tests/last_five.rs` 里 `function_drawer` / `obstacle_drawer`
+   两个模块的**取源方式**从 `#[path]` 包含改成真 crate 引用 —— 原因：这两个文件现在含
+   `#[cfg(feature = "gdext-bindings")]` 的类层，会引用 crate 内的 `plane` / `_scaffold`，
+   用 `#[path]` 编进测试二进制时那些 `crate::` 路径不存在（`--features gdext-bindings` 编不过）。
+   另 3 个模块保持 `#[path]` 不变。**断言一条没动、条数不变（1826 / 1956 逐档复现）**。
+7. **文档里还有 111 处指向已删文件的路径**（`grep -rn "_scaffold/[a-z_]*_class\.rs"`）：`docs/16-client.md` 51、
+   `docs/06` 30（含本节按"原位置"引用的历史路径）、`docs/archive/156-client-rounds.md` 15、
+   `client/**` 8（`scenes/main.tscn` 1 + `src/**` 6 + `tools/plane_on_screen.*` 2 —— **本任务禁区，没动**）、
+   `tools/audit_client.py` 7、`tools/check_doc_refs.py` 1（白名单条目）。其中绝大多数是**历史轮次记录**
+   （"本轮新增 677 行"这类），不是"代码现在在哪"的断言 ⇒ 没有批量改（改了会把历史记录改错）。
+   需要 lead 另派一条做"路径口径收口"：`docs/16` 里少数"当前实现位置"的表述要指到 `src/<module>.rs`，
+   `client/**` 里那 8 处要等 client 侧任务解禁。
+8. **章节号**：本节编号用 **104**（任务书指定）；本工作树里 `docs/06` 最后一节是 `## 102.`（T52），
+   **103 不存在**（应是并行任务预留）⇒ 本节与 102 之间有一个空号，不是漏记。

@@ -2083,7 +2083,7 @@ pub struct KernelBus {
     /// 原版 `EntityDrawer::draw` 的 `V` 就是 `get_fractional_tick()`（x86 `0x519530` 的返回值）。
     /// 本层那个 tick handler 的基准是 `(0, 0)`（= epoch，见 `assemble_demo` ①），
     /// 于是 `V` 会是"从 1970 年到现在"那个量级 —— 画出来的角度是垃圾。
-    /// 这个"摆时钟"的口子与 [`crate::_scaffold::graphwar_plane_class`] 的
+    /// 这个"摆时钟"的口子与 [`crate::graphwar_plane`] 的
     /// `set_fractional_tick` 是同一种**我方接线口**：只摆时钟、不碰数据。
     clock_override: Option<f64>,
 }
@@ -2332,7 +2332,7 @@ impl KernelBus {
 pub use crate::graphwar_event_handler::dispatch_name;
 
 thread_local! {
-    /// 本线程那条事件通道（节点层 [`crate::_scaffold::entity_drawer_class`] 用它）。
+    /// 本线程那条事件通道（节点层 [`crate::entity_drawer`] 用它）。
     static KERNEL_BUS: RefCell<Option<Rc<RefCell<KernelBus>>>> = const { RefCell::new(None) };
 }
 
@@ -3347,7 +3347,7 @@ mod tests {
 // **这不是原版的东西。** 原版的驱动者是一个节点：引擎 `_process(delta)` →
 // `GraphwarRootNode::process`（x86 `0x3a5760`）→ `GraphwarBackend::process`（`0x515dc0`）
 // → `GraphwarGameClient::process`（`0x518400`）。本层没有那条节点对象图（节点壳在
-// `graphwar_root_node_class.rs`，播放屏在 `client/src/**` = 禁区），所以这里只做一个
+// `graphwar_root_node.rs`，播放屏在 `client/src/**` = 禁区），所以这里只做一个
 // **验收用的最小外壳**：让 headless 脚本能按帧把 [`KernelBus::drive_frame`] 推起来，
 // 并读回"转了几圈 / 泵了几次 / 投递了哪些事件"。
 //
