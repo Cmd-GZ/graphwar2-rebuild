@@ -164,6 +164,9 @@
 //!
 //! ## 6. 其余 19 个函数：只能分类，不能说语义（**观测 + 未知**）
 //!
+//! ⚠️ **本节是 T38/T52 时的状态，T62 已过时**：那 19 条现在都有函数体，逐条语义见 §12，
+//! 本节保留原文以便对照历史（`AGENTS.md` §0 第 6 条）。
+//!
 //! 见 [`ORIG_FUNCS`] 的 `class` / `role` 与 [`ENTRY_POINTS`] 的调用者。分档口径：
 //!
 //! * 有**具体证据**（键字面量 / 事件判别值 / 唯一调用者模块）支撑的，写一行结论；
@@ -171,13 +174,21 @@
 //!
 //! ## 7. 本文件**没有**做的事（诚实清单）
 //!
+//! ### 7.1 T62（2026-11-27）：本模块 19 条 F3 **已全部落成独立函数**，见 §12
+//!
+//! `fixtures/function_coverage.tsv` 里本模块曾有 **19 条** `F3 / register-only`；T62 按
+//! `tools/addr_probe.py fde/dis` 逐指令读完后全部落码（本模块 F3 缺口 **19 → 0**），
+//! 每条的真名/FDE/语义/被调者/档位在 §12 各自条目里，台账在 `fixtures/game_client_anchors.tsv`。
+//! **下表保留原文以便对照历史**，已解的行用删除线标出。
+//!
 //! | 缺口 | 缺什么证据 |
 //! |---|---|
-//! | `0x516510` / `0x516ad0` / `0x516fd0` 的语义 | 函数体未逐指令读完；`0x516510` 调了 `turn_manager` 一族（`0x46b740`/`0x46c430`/`0x46b460`/`0x463340`）并 push 一条 `Event`，但判别值走的是 `lea`+`add` 编码，未定位 |
-//! | `0x515590` / `0x5159a0` / `0x5175b0` 的语义 | 只观测到「构造 `Event` #22 `game_name_request_event`」与「调用 `graphwar_backend.rs`」 |
-//! | `0x516450` / `0x5164b0` / `0x5172d0` / `0x517490` / `0x516970` | 都是「取 `+0x40` 句柄 → 递增引用 → 调内层一次 → 递减」，内层 `0x46aa50`/`0x46aea0`/`0x46b180` 未解 |
+//! | ~~`0x516510` / `0x516ad0` / `0x516fd0` 的语义~~ **已解，见 §12.6/§12.7** | 判别值不是没定位，而是走 `add r12,0x21` / `add r13,0x23`（不是 `movabs`）：`0x516510` = `fire_function`（tag 32）、`0x516ad0` = `update_function`（tag 34）、`0x516fd0` = `wait_for_players`（`process` + 1 ms `sleep` 的阻塞轮询） |
+//! | ~~`0x515590` / `0x5159a0` / `0x5175b0` 的语义~~ **已解，见 §12.8/§12.3** | 两条是 8 步/6 步串行编排（`0x517690` 装配 → `0x518320` connect → `0x514d80` resubscribe），local 版额外发 `GameNameRequest`(22)。**仍有 5 跳身份未定**（`0x44f2b0`/`0x3d5260`/`0x469c70`/`0x5215a0`/`0x906630`），见 `docs/06` §111.9 |
+//! | ~~`0x516450` / `0x5164b0` / `0x5172d0` / `0x517490`~~ **已解，见 §12.2/§12.5/§12.4** | 内层是 `get_module::<T>` 的两个单态化（`0x46aa50`=TickHandler、`0x46aea0`=GameRecorder、`0x46b180`=ClientConnectionHandler、`0x46be70`=GameStateManager，`docs/02` §22.3 表）⇒ 这两条**不是**「状态查询」，`ORIG_FUNCS.class` 里那个 `StateQuery` 已过时（`tests/` 写死不改） |
 //! | ~~`0x518240` / `0x518400`~~ **已解，见 §8** | 上面那一行只描述了这两个函数**前 8 条指令**（取句柄 → `get_module`）。真实主体：`0x518240` = **`GraphwarGameClient::tick`**（推进一个 tick）、`0x518400` = **`GraphwarGameClient::process`**（每帧进来一次、里面按 1/60 s **定步追赶**、每圈**先 tick 后泵**）。逐指令读法在 `docs/16-client.md` §48.3，落地在本文 §8。`ORIG_FUNCS` 里这两条的 `class` **仍记 `StateQuery`**（`tests/graphwar_game_client.rs` 把 4 条那个划分写死了，本任务不许改 `tests/`），但 `role` 已改成 `Role::Tick` / `Role::ProcessLoop` |
-//! | `0x3d6080` / `0x3d7380` / `0x3d7630` | 同时引用本模块与 `graphwar_replay_player.rs` 的 Location（contested），归属本身有歧义 |
+//! | `0x3d7380` / `0x3dcbb0` | 同时引用本模块与别模块的 Location（contested）⇒ 判据只能给 F2。`0x3d7380` = `GraphwarReplayPlayer::process`；`0x3dcbb0` 的落点是本文 §8 的 `process`（跨模块自由函数同名） |
+//! | ~~`0x3d6080` / `0x3d7630`~~ **已解，见 §12.9** | `GraphwarReplayPlayer::{toggle_pause,is_paused}`：切 TickHandler 的 `now` 覆盖值（`+0x20`/`+0x28`，其中 `+0x28` 的 `1e9` 是「没设」哨兵）。落点在本文件 `impl ReplayPlayer`（panic 主锚在本文件，`also_in` 才记 `graphwar_replay_player.rs`）|
 //! | 屏名表 / 命令总线的 12 条键 | **不在本模块**：那些在 `graphwar_root_node.rs`（`docs/16` §15.6/§15.10）。本模块只拿到总线**兜底转发**的两条键（§2）与 `add_bot_N` 六条（§4） |
 
 use crate::events::Event;
@@ -1249,5 +1260,1200 @@ mod conn_facade_tests {
     fn connection_handler_getter_address_matches_the_module_table() {
         assert_eq!(FN_GET_CONNECTION_HANDLER, 0x46_b180);
         assert_eq!(FN_GAMECLIENT_CONNECT - FN_GAMECLIENT_DISCONNECT, 0x1f_b0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. F3 落码（T62，2026-11-27）：19 条「只有地址登记、没有函数体」的原版函数
+// ---------------------------------------------------------------------------
+//
+// 起点是 T38/T55 的函数级审计（`fixtures/function_coverage.tsv`）：本模块 36 行里 **19 条**
+// 判 `F3 / register-only`（"地址有登记（注释里写了）但没有贴到任何函数体"）。
+// 本节按 `tools/addr_probe.py fde/dis` 的**逐指令**读法把它们落成**独立的 `fn`**，
+// 每条的真名、FDE 范围、证据档写在它自己的 doc 里。
+//
+// 判据只有两类：
+//
+// * **观测** —— 指令能逐条读出来（`movabs` 立即数 tag / 调用目标 / 结构偏移 / 分支）；
+// * **推断** —— 只能读到形状，语义靠命名与上下文，**缺什么写在条目里**。
+//
+// 事件载荷（tag + 字段形状）有**两条独立来源**相交，这是本节最硬的一层证据：
+// ① 本节反汇编里 `movabs $0x80000000000000NN` 的立即数；
+// ② `src/_scaffold/protocol.rs` 的 `WIRE_SPEC`（线上真字节的字段表，`docs/07-protocol.md` §3.3;
+//    其中 6 类还在 T53 的官服抓包里拿到过真帧）。
+//
+// ⚠️ 原版这些函数**不是**自由函数：除两条 `get_module` 单态化外都是
+// `impl GraphwarGameClient`（或 `impl GraphwarReplayPlayer`）上的方法，`self` 在 `rdi`
+// （`connect`/`disconnect` 是 `0x517490`/`0x5172d0` 那几条也一样）。
+// 本节的接缝 trait（`*Env` / `ModuleGetter` / `EventQueue`）是**我方接线**：原版没有它们，
+// 它们只把"函数体真正依赖的几件事"抽出来，好让语义单独可验。
+
+use crate::graphwar_game_recorder::GraphwarGameRecorder;
+use crate::graphwar_replay_player::ReplayPlayer;
+use crate::graphwar_tick_handler::GraphwarTickHandler;
+
+/// 一条 `Event` 记录（原版 `Vec<Event>` 的元素，固定 **0x48** 字节，见 [`EVENT_RECORD_SIZE`]）
+/// 的**载荷**部分（`+0x08` 起）。
+///
+/// 形状全部来自本节各函数体内的 `mov`/`movups` 落位：
+///
+/// | 变体 | 出现处 | 记录里的字节 |
+/// |---|---|---|
+/// | [`EventPayload::Id`] | 16 个请求构造器、`FunctionFireRequest` | `+0x08` 一个 i32 |
+/// | [`EventPayload::Lock`] | `LockRequest` | `+0x08` 一个 bool |
+/// | [`EventPayload::Name`] | `GameNameRequest` | `+0x08` 一个 `String`（24 B） |
+/// | [`EventPayload::TextAndId`] | `FunctionUpdateRequest` / `ChatMessageRequest` | `+0x08` `String`（24 B）+ `+0x20` i64 |
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventPayload {
+    /// 一个 i32（原版 `mov %eax,0x8(%rsp)` / `mov %dword,%dword ptr [%rsp+0x18]`）。
+    Id(i32),
+    /// 一个 bool（`LockRequest`：`xor %al,1` 后 `mov %al,dword ptr [%rsp+0x18]`）。
+    Lock(bool),
+    /// 一个 `String`（`GameNameRequest`）。
+    Name(String),
+    /// `String` + i64 id（`FunctionUpdateRequest` / `ChatMessageRequest`）。
+    TextAndId { text: String, id: i64 },
+}
+
+impl EventPayload {
+    /// 载荷占记录的多少字节（`TextAndId` = 24 + 8 = 32）。
+    pub fn record_bytes(&self) -> usize {
+        match self {
+            EventPayload::Id(_) => 4,
+            EventPayload::Lock(_) => 1,
+            EventPayload::Name(_) => 24,
+            EventPayload::TextAndId { .. } => 32,
+        }
+    }
+}
+
+/// 一条**已经落进发送队列**的 `Event` 记录。
+///
+/// tag word = `0x8000_0000_0000_0000 | 判别值`（[`EVENT_TAG_BASE`]，`docs/07` §7.3.1）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedEvent {
+    pub event: Event,
+    pub payload: EventPayload,
+}
+
+impl QueuedEvent {
+    /// 记录 `+0x00` 的 tag word。
+    pub fn tag_word(&self) -> u64 {
+        EVENT_TAG_BASE | self.event.wire_tag() as u64
+    }
+}
+
+/// 发送队列的接缝（原版 = 客户端状态 `[[self]+0x18]` 那个 `Vec<Event>`；
+/// 每一处 push 都是 `call *0x9bac80`，槽值 `0x3d3530` = `Vec::push`）。
+pub trait EventQueue {
+    fn push(&mut self, ev: QueuedEvent);
+}
+
+/// 取模块的接缝：`borrow()` → `get::<T>()` → `unwrap()` → 结束那次 `borrow`。
+///
+/// 原版两处（`0x516450` / `0x5164b0`）都是这个 8 条指令的形状：
+/// `mov rbx,[rdi+0x40]`（模块容器）→ 借用计数上界检查（`0x516459` 的 `movabs
+/// $0x7fffffffffffffff`）→ `inc`/`dec` → `lea rdi,[rbx+0x18]` → **`call` 一个 `get`** →
+/// `test rax,rax; je` + `unwrap` panic 槽 `0x9ba870`。
+pub trait ModuleGetter<T> {
+    /// 取模块；容器里没有 ⇒ panic（原版 `0x516490`/`0x5164f0` 的 `unwrap` 臂）。
+    fn get_module(&mut self) -> T;
+}
+
+// ---------------------------------------------------------------------------
+// 12.1 7 条「实例化 B」请求构造器（`0x4d8a00` 那一组）
+// ---------------------------------------------------------------------------
+//
+// 8 种请求各有**两份实例化**（A 组 `0x4c5b50…` 已在 §3 落码，B 组这 7 条是 F3；
+// 第 8 条 `0x4d96e0` 早就是 F1）。两份的 panic 锚行号**完全相同**
+// （`fixtures/boundary_audit.tsv`：190/194/198/202/206/210/214/218 列 26）⇒ 同一个源函数
+// 的两个单态化。B 组比 A 组多一次 `decq (%rcx)` 与一次 `0x525f60` 调用（收尾 drop 路径不同）。
+//
+// B 组的统一形状（以 `0x4d8a00` 为例，全部 7 条同形）：
+//
+// ```text
+// 4d8a07  mov  r14,(%rdi)                  ; self.0 = 绑定单元（Rc）
+// 4d8a0a  mov  eax,0x8(%rdi)               ; self.1 = i32（请求参数）
+// 4d8a28  mov  rbx,0x1f8(%r14)             ; 内层单元
+// 4d8a2f  test rbx,rbx ; je 0x4d8a85        ; 内层为空 ⇒ 只做引用计数收尾，不 push
+// 4d8a4b  movabs rax,0x80000000000000NN     ; ⇒ 判别值 NN
+// 4d8a5f  call *0x9bac80                    ; = 0x3d3530 = Vec::push
+// ```
+
+/// `0x4d8a00` —— `remove_soldier_request_event` 的**实例化 B**（FDE `0x4d8a00..0x4d8af4`，0xf4）。
+///
+/// `0x4d8a4b movabs $0x8000000000000011` ⇒ 判别值 **17** = `RemoveSoldierRequest`
+/// （`src/events.rs`；`docs/07` §7.2）。档位：**观测**。
+pub fn remove_soldier_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::RemoveSoldier, arg)
+}
+
+/// `0x4d8d30` —— `change_team_request_event` 的实例化 B（FDE `0x4d8d30..0x4d8e24`，0xf4）。
+///
+/// `0x4d8d7b movabs $0x800000000000000b` ⇒ 判别值 **11** = `ChangeTeamRequest`。档位：**观测**。
+pub fn change_team_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::ChangeTeam, arg)
+}
+
+/// `0x4d8ff0` —— `turn_mode_change_request_event` 的实例化 B（FDE `0x4d8ff0..0x4d90e0`，0xf0）。
+///
+/// `0x4d903b movabs $0x8000000000000014` ⇒ 判别值 **20** = `TurnModeChangeRequest`。档位：**观测**。
+pub fn turn_mode_change_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::TurnMode, arg)
+}
+
+/// `0x4d9270` —— `add_soldier_request_event` 的实例化 B（FDE `0x4d9270..0x4d9364`，0xf4）。
+///
+/// `0x4d92bb movabs $0x8000000000000010` ⇒ 判别值 **16** = `AddSoldierRequest`。档位：**观测**。
+pub fn add_soldier_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::AddSoldier, arg)
+}
+
+/// `0x4d9370` —— `remove_player_request_event` 的实例化 B（FDE `0x4d9370..0x4d9464`，0xf4）。
+///
+/// `0x4d93bb movabs $0x800000000000000c` ⇒ 判别值 **12** = `RemovePlayerRequest`。档位：**观测**。
+pub fn remove_player_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::RemovePlayer, arg)
+}
+
+/// `0x4d9500` —— `time_mode_change_request_event` 的实例化 B（FDE `0x4d9500..0x4d95f0`，0xf0）。
+///
+/// `0x4d954b movabs $0x8000000000000015` ⇒ 判别值 **21** = `TimeModeChangeRequest`。档位：**观测**。
+pub fn time_mode_change_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::TimeMode, arg)
+}
+
+/// `0x4d95f0` —— `axis_mode_change_request_event` 的实例化 B（FDE `0x4d95f0..0x4d96e0`，0xf0）。
+///
+/// `0x4d963b movabs $0x8000000000000012` ⇒ 判别值 **18** = `AxisModeChangeRequest`。档位：**观测**。
+pub fn axis_mode_change_request_event_b(arg: i32) -> RequestEvent {
+    request_event(RequestKind::AxisMode, arg)
+}
+
+// ---------------------------------------------------------------------------
+// 12.2 两条 `get_module` 单态化（`0x516450` / `0x5164b0`）
+// ---------------------------------------------------------------------------
+//
+// 这两条就是 §5 里 `0x517690` 装配 manager 时用的那句 `get::<T>()` 的**方法版**：
+// 形状与 `connect`/`disconnect` 的取模块段**逐项同形**（同 `+0x40` 容器、同借用计数检查、
+// 同 `unwrap` panic 槽 `0x9ba870`），唯一差别是收尾少一次 `borrow_mut`，多一条 `ret`。
+//
+// ```text
+// 516450  mov  rbx,[rdi+0x40]          ; 模块容器
+// 516455  borrow 计数上界检查（0x7fffffffffffffff）
+// 516468  inc rax / 51646b mov [rbx+0x10],rax
+// 51646f  lea  rdi,[rbx+0x18] ; call 0x46aa50     ; get::<GraphwarTickHandler>()
+// 51647b  je 0x516490 → unwrap panic（槽 0x9ba870 = 0x925410）
+// 51647d  dec [rbx+0x10]                            ; 结束 borrow
+// 516482  ret                                       ; 返回句柄
+// ```
+
+/// 取模块的 `get` 目标之一（`0x51646f` 的 `call 0x46aa50`）。
+///
+/// `docs/02-module-map.md` §22.3 的 25 模块表：`0x46aa50` = `get_module::<GraphwarTickHandler>`。
+pub const FN_GET_TICK_HANDLER: u32 = 0x46_aa50;
+
+/// 取模块的 `get` 目标之二（`0x5164d3` 的 `call 0x46aea0`）。
+///
+/// 同上表：`0x46aea0` = `get_module::<GraphwarGameRecorder>`。
+pub const FN_GET_GAME_RECORDER: u32 = 0x46_ae_a0;
+
+
+
+// ---------------------------------------------------------------------------
+// 12.3 `request_game_name_change`（`0x5175b0`）
+// ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// 12.4 `request_lock_change`（`0x517490`）
+// ---------------------------------------------------------------------------
+
+/// `0x517490` 需要的两件事。
+pub trait LockChangeEnv {
+    /// `GraphwarGameStateManager` 的 **`+0x136`** 那个字节
+    /// （`0x5174f0 movzx %eax,byte ptr [%rbx+0x136]`；`rbx` = `0x46be70` 取到的
+    /// `get_module::<GraphwarGameStateManager>()` 句柄，字段在 `+0x18` 之后 ⇒ 对象内 `+0x11e`）。
+    ///
+    /// ⚠️ **推断**：字段的**含义**（是否"房间已锁"）没有单独证据，只能读到
+    /// "一个 bool，被取反后当 `LockRequest` 的载荷发出去"。缺的证据：`+0x136` 的写入者。
+    fn locked_flag(&self) -> bool;
+    fn push_event(&mut self, ev: QueuedEvent);
+}
+
+
+// ---------------------------------------------------------------------------
+// 12.5 `send_chat_message`（`0x5172d0`）
+// ---------------------------------------------------------------------------
+
+/// `0x5172d0` 需要的三件事。
+pub trait ChatEnv {
+    /// 连接模块的 **`+0x18`** 那个字节（`0x517337 cmp byte ptr [%r14+0x18],0`；
+    /// `r14` = `0x46b180` 取到的 `get_module::<GraphwarClientConnectionHandler>()` 句柄）。
+    ///
+    /// ⚠️ **推断**：语义按"是否已连接"读（`wait_for_players` 的 `0x51706c` 是同一个字段、
+    /// 同一个用法）。缺的证据：该字节的写入点。
+    fn is_connected(&self) -> bool;
+    /// 连接模块的 **`+0x1c`** 那个 i32（`0x51734c mov %eax,dword ptr [%r14+0x1c]`）。
+    ///
+    /// 同一个值在 `0x51708a`（`wait_for_players`）里被当成"本地 player id"去 player_manager
+    /// 里查；在这里它当 `ChatMessageRequest.entity_id` 发出去 ⇒ **两个用法互相印证**。
+    fn local_entity_id(&self) -> i64;
+    fn push_event(&mut self, ev: QueuedEvent);
+}
+
+
+// ---------------------------------------------------------------------------
+// 12.6 `update_function`（`0x516ad0`）/ `fire_function`（`0x516510`）
+// ---------------------------------------------------------------------------
+//
+// 这两条是**同一个模板的两份**，都按「当前回合的玩家列表」逐人发一条请求，
+// 且都**跳过电脑玩家**（电脑玩家自己会开火 / 自己更新函数）：
+//
+// ```text
+// 516b15 / 516553  call 0x46b740           ; get_module::<GraphwarTurnManager>()
+// 516b5f / 51659d  call 0x46c430           ; get_module::<GraphwarLocalPlayerManager>()
+// 516b91 / 5165cf  call 0x46b460           ; get_module::<GraphwarComputerPlayerManager>()
+// 516bc2 / 5165f6  call 0x463340           ; turn_manager.get_current_turn_players()
+// 516c84 / 5166b1  cmp  [%r15+0x48],0      ; 电脑玩家表空 ⇒ 直接发
+// 516c99 / 5166c6  call 0x47dec0           ; hashbrown 探针（元素 0x78 字节）
+// 516cf0 / 51671d  je   →  命中 ⇒ **跳过这个玩家**
+// ```
+
+/// `0x516ad0` / `0x516510` 需要的四件事。
+pub trait TurnPlayerEnv {
+    /// `GraphwarTurnManager::get_current_turn_players`（**`0x463340`**）的返回值
+    /// （`docs/02` §22 表：`get_current_turn_players` → `graphwar_turn_manager.rs`）。
+    fn current_turn_players(&mut self) -> Vec<i32>;
+    /// 这个 player id 在 **`GraphwarComputerPlayerManager`** 的那张表里有没有
+    /// （`0x516b91` 取句柄、`0x516c99` 探针、`0x516cf0 je` 命中 ⇒ 跳过）。
+    fn is_computer_player(&mut self, player_id: i32) -> bool;
+    fn push_event(&mut self, ev: QueuedEvent);
+}
+
+
+/// `fire_function` 的两段结果（**我方观测值**；原版没有返回值）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FireOutcome {
+    /// 先转发给 `update_function` 的那一条链 push 了几条（`0x51652e call *0x9ba888`）。
+    pub updated: usize,
+    /// 本函数自己 push 的 `FunctionFireRequest` 有几条（`0x5167b8` 的 `Vec::push`）。
+    pub fired: usize,
+}
+
+
+// ---------------------------------------------------------------------------
+// 12.7 `wait_for_players`（`0x516fd0`）
+// ---------------------------------------------------------------------------
+
+/// `wait_for_players` 需要的三件事。
+pub trait WaitForPlayersHost {
+    /// "本地 player 已经在 player_manager 里了"：
+    /// `0x517040` 取 `get_module::<GraphwarClientConnectionHandler>()` →
+    /// `0x51706c` 判 `+0x18` 那个"已连接"字节 →
+    /// `0x517099` 取 `get_module::<GraphwarPlayerManager>()`（`0x46a490`）→
+    /// `0x51708a` 取本地 id（`+0x1c`）→ `0x517118 call 0x3bf230` 查一张 `HashMap` →
+    /// **`0x517155 test %r15,%r15; jne 0x5171ac`（非空 ⇒ 退出等待）**。
+    fn local_player_present(&mut self) -> bool;
+    /// `GraphwarGameClient::process`（**`0x518400`**；`0x517189 call rbp`，`rbp = [GOT 0x9bc468]`）。
+    fn process_frame(&mut self);
+    /// `0x51718d mov $0xf4240,%esi` + `0x517192 call r15`（`r15 = [GOT 0x9bbcf8] = 0x906f70`）
+    /// = `sleep(0 s + 1_000_000 ns)` ⇒ **1 ms**（`%edi = 0` 是 `Duration` 的 secs 位）。
+    fn sleep_one_millisecond(&mut self);
+}
+
+
+// ---------------------------------------------------------------------------
+// 12.8 两条「起客户端」门面（`0x515590` / `0x5159a0`）
+// ---------------------------------------------------------------------------
+//
+// 这两条是**串行编排**函数：8–10 步，每步一个 `call`。两条的**共尾**完全一样：
+// 装配事件（`0x517690`）→ 重置事件处理器（`0x3d5260`）→ 建 recorder（`0x469c70`）→
+// 连接（`0x518320`）→ 把装配结果写进 `self+0x1e0` → `GraphwarBackend::resubscribe_to_events`
+// （`0x514d80`，`docs/02` 表）。差别只有两条：**local 版**多两步
+// （`0x51559c`/`0x5155ad` 的状态守卫 `0x44f2b0`；`0x5157d3` 再发一条 `GameNameRequest`）。
+
+/// `0x515590` / `0x5159a0` 的编排步骤。顺序 = 二进制里的 `call` 顺序（**观测**）。
+pub trait BackendStartSteps {
+    /// `0x51559c cmp dword [%rdi+0x60],4` + `0x5155ad call 0x44f2b0`（**只有 local 版**）。
+    ///
+    /// ⚠️ **推断**：`+0x60` 是个 4 值的状态枚举、`0x44f2b0` 返回 bool 的"还能不能起"；
+    /// 两个语义都没有独立证据。缺的证据：`+0x60` 的写入点、`0x44f2b0` 的函数体。
+    fn start_precondition(&mut self) -> bool;
+    /// `0x51560b` / `0x5159c2` —— `call *0x9bc458` = **`0x517690`**（本模块 §5 的事件装配）。
+    fn assemble_event_wiring(&mut self);
+    /// `0x51564c` / `0x515a03` —— `call 0x3d5260`（`graphwar_event_handler.rs` 一族）。
+    fn reset_event_handler(&mut self);
+    /// `0x515658` / `0x515a0f` —— `call 0x469c70` = `GraphwarGameRecorder` 的 `add`（`docs/02` 表）。
+    fn create_game_recorder(&mut self);
+    /// `0x515666` / `0x515a1d` —— `call *0x9bc460` = **`0x518320`**（本模块 [`GraphwarGameClient::connect`]）。
+    fn connect(&mut self);
+    /// `0x5156be` / `0x515a73` —— 把装配出来的那块 0x40 字节写进 `self+0x1e0`（先 drop 旧值）。
+    fn install_assembled(&mut self);
+    /// `0x5156eb` / `0x515aa5` —— `call 0x514d80` = `GraphwarBackend::resubscribe_to_events`。
+    fn resubscribe_to_events(&mut self);
+    /// `0x5157d3 movabs $0x8000000000000016` + `0x5157e4 call *0x9bac80`（**只有 local 版**）
+    /// ⇒ 再 push 一条 `GameNameRequest`（判别值 22）。
+    fn request_game_name(&mut self, game_name: &str);
+}
+
+/// `0x515590` —— `GraphwarBackend::start_client_to_local_server`（真名 `hyb:高置信`）
+/// （FDE `0x515590..0x5159a0`，0x410）。
+///
+/// 调用者：`0x3b2b84` / `0x3b363a`（root_node 命令总线，JoinLevelPopUp 路径先收串再进来）。
+/// 返回 `false` = 被 `0x51559c`/`0x5155ad` 那道前置条件挡住（**推断**：两道守卫的语义未证）。
+/// 档位：**观测**（步骤顺序与每一跳的地址）。
+pub fn start_client_to_local_server<S>(steps: &mut S, game_name: &str) -> bool
+where
+    S: BackendStartSteps + ?Sized,
+{
+    // 0x515590 本函数起点；FDE 0x515590..0x5159a0
+    if !steps.start_precondition() {
+        // 0x5155b4 je 0x5157f3
+        return false;
+    }
+    steps.assemble_event_wiring(); // 0x51560b → 0x517690
+    steps.reset_event_handler(); // 0x51564c → 0x3d5260
+    steps.create_game_recorder(); // 0x515658 → 0x469c70
+    steps.connect(); // 0x515666 → 0x518320
+    steps.install_assembled(); // 0x5156be → self+0x1e0
+    steps.resubscribe_to_events(); // 0x5156eb → graphwar_backend 的 resubscribe_to_events
+    steps.request_game_name(game_name); // 0x5157d3 → tag 22
+    true
+}
+
+/// `0x5159a0` —— `GraphwarBackend::start_client_to_remote_server`（`hyb:高置信` 真名）
+/// （FDE `0x5159a0..0x515b30`，0x190）。
+///
+/// 与 [`start_client_to_local_server`] 的**共尾**逐条相同，少掉两道前置守卫与那条
+/// `GameNameRequest`（`0x515aaa` 之后直接收尾）。调用者：`0x3b3333`（命令总线）、`0x4f923c`
+/// （`graphwar_lan_vbox`）。档位：**观测**。
+pub fn start_client_to_remote_server<S>(steps: &mut S)
+where
+    S: BackendStartSteps + ?Sized,
+{
+    // 0x5159a0 本函数起点；FDE 0x5159a0..0x515b30
+    steps.assemble_event_wiring(); // 0x5159c2 → 0x517690
+    steps.reset_event_handler(); // 0x515a03 → 0x3d5260
+    steps.create_game_recorder(); // 0x515a0f → 0x469c70
+    steps.connect(); // 0x515a1d → 0x518320
+    steps.install_assembled(); // 0x515a73 → self+0x1e0
+    steps.resubscribe_to_events(); // 0x515aa5 → 同上一跳
+}
+
+// ---------------------------------------------------------------------------
+// 12.9 回放时钟的两个门面（`0x3d6080` / `0x3d7630`）
+// ---------------------------------------------------------------------------
+//
+// 这两条在 `fixtures/boundary_audit.tsv` 里记的是 `ours_file = src/graphwar_game_client.rs`
+// （panic 主锚 `152:22`/`152:49` **在本文件**），另各引用一次
+// `src/graphwar_replay_player.rs` 的 Location ⇒ 归属 contested（模块文档 §7 已记）。
+// 真名来自 v2 符号锚：`GraphwarReplayPlayer::{toggle_pause,is_paused}`。
+//
+// 两条都**只**操作 `GraphwarTickHandler` 的 `+0x20`/`+0x28` 那一对字段
+// （我方 [`GraphwarTickHandler::frozen_now`]；`+0x28 == 1e9` = "没设"哨兵）：
+//
+// ```text
+// 3d60ad / 3d7659  call 0x46aa50                 ; get_module::<GraphwarTickHandler>()
+// 3d60d9           mov  ebp,dword [rbx+0x40]      ; T+0x28 = frozen nanos
+// 3d60dc           cmp  ebp,0x3b9aca00 ; jne …    ; == 1e9 ⇒ **没冻**（正在走）
+// 3d60e4           call *0x9ba8f8 = clock ; 3d611b mov [rbx+0x38],rax / 3d611f mov [rbx+0x40],edx
+//                                                 ⇒ 把 (secs,nanos) 写成 **now** = 冻结
+// 3d60ec  （已冻分支）r14 = [rbx+0x38]；clock；(0x90cdd0) now−frozen = Duration；
+//                     (0x90c180) 把这段 Duration **加到 base**（`lea rdi,[rbx+0x18]`）；
+//                     3d6116 mov edx,0x3b9aca00 ⇒ 写回哨兵 = **解冻**
+// 3d7674           mov  ebp,dword [rbx+0x40]
+// 3d7685           cmp  ebp,0x3b9aca00 ; setne al  ⇒ **返回 (nanos != 1e9)**
+// ```
+//
+// ⇒ 这是一对**暂停/恢复**：`is_paused()` = 覆盖值已设；`toggle_pause()` 在
+// "没冻 ⇒ 冻成 now" 与 "已冻 ⇒ base += (now − frozen) 后解冻" 之间切。
+// **顺带回答了一个旧 `未知`**：`src/graphwar_tick_handler.rs` 的模块文档写着
+// "没有观测到原版哪个函数把 `+0x20`/`+0x28` 设成真时间" —— 那个写入者就是 `0x3d6080`
+// 的 `0x3d611b`/`0x3d611f` 这两条 `mov`。
+//
+// ⚠️ `self` **不在** `rdi`：两条都从 **`rsi+0x40`** 取模块容器（`0x3d6087` / `0x3d7641`），
+// `rdi` 全程未读。⇒ 真实签名至少是"第一个参数 + `&…`"，第一个参数在函数体里**没用到**。
+// 缺的证据：调用点 `0x3b157c` / `0x3b15f7` 的实参形态（那两个也在 root_node 命令总线里）。
+
+/// 两个 `(secs, nanos)` 时刻之差（纳秒）；`later < earlier` 时夹成 0。
+///
+/// 原版这段在 `0x3d6100 call *0x9baf28`（`0x90cdd0`）里，**含下溢 panic 路径**
+/// （`Duration::checked_sub` 失败时那条 `0x94b340` 收尾前的分支）；这里夹成 0 是**我方选择**。
+pub fn nanos_between(later: (u64, u32), earlier: (u64, u32)) -> u64 {
+    let l = later.0 as u128 * 1_000_000_000 + later.1 as u128;
+    let e = earlier.0 as u128 * 1_000_000_000 + earlier.1 as u128;
+    l.saturating_sub(e).min(u64::MAX as u128) as u64
+}
+
+/// `(secs, nanos)` 加一个纳秒数（原版 `0x3d6110 call *0x9baf30` = `0x90c180(&T+0x0, dur)`）。
+pub fn add_nanos(base: (u64, u32), d: u64) -> (u64, u32) {
+    let t = base.0 as u128 * 1_000_000_000 + base.1 as u128 + d as u128;
+    ((t / 1_000_000_000) as u64, (t % 1_000_000_000) as u32)
+}
+
+
+
+
+/// `GraphwarGameClient` 上的 8 条方法（T62 按真名/真类型落回来）。
+///
+/// 原版这 8 条都是 `impl GraphwarGameClient` 上的方法；本节把它们放回**类型下面**，
+/// 这样函数边界与类型归属同时对上（`tools/function_coverage.py` 的 P1 要求「同名 + 同 impl 类型」）。
+impl GraphwarGameClient {
+    /// `0x516450` —— `GraphwarGameClient::get_module`（真名来自 v2 符号锚，`hyb:推断`）
+    /// 的 **`GraphwarTickHandler` 单态化**（FDE `0x516450..0x5164ab`，0x5b）。
+    ///
+    /// 体：`borrow()` 容器 → `get::<GraphwarTickHandler>()` → **`unwrap()`** → 结束 `borrow` →
+    /// 返回句柄。档位：**观测**（4 条指令序列 + 借用/panic 偏移 + 被调者 `0x46aa50`）。
+    ///
+    /// 唯一的调用者：`0x3b1c93`（root_node 命令总线，靠近 `save_clip` 分支）。
+    pub fn get_module_tick_handler<G>(modules: &mut G) -> GraphwarTickHandler
+    where
+        G: ModuleGetter<GraphwarTickHandler> + ?Sized,
+    {
+        // 0x516450 本函数起点；FDE 0x516450..0x5164ab
+        // 0x516473 call 0x46aa50 = get_module::<GraphwarTickHandler>()
+        // 0x51647b/0x516490 = Option::unwrap 的 None 臂（panic 槽 0x9ba870）
+        modules.get_module()
+    }
+
+    /// `0x5164b0` —— `GraphwarGameClient::get_module` 的 **`GraphwarGameRecorder` 单态化**
+    /// （FDE `0x5164b0..0x51650b`，0x5b）。
+    ///
+    /// 与 [`get_module_tick_handler`] **逐条同形**，只差 `0x5164d3` 的被调者
+    /// （`0x46aa50` ↔ `0x46aea0`）。档位：**观测**。
+    ///
+    /// 调用者：`0x3a707a`（root_node `0x3a5760` 一族）、`0x3b3f6c`。
+    pub fn get_module_game_recorder<G>(modules: &mut G) -> GraphwarGameRecorder
+    where
+        G: ModuleGetter<GraphwarGameRecorder> + ?Sized,
+    {
+        // 0x5164b0 本函数起点；FDE 0x5164b0..0x51650b
+        // 0x5164d3 call 0x46aea0 = get_module::<GraphwarGameRecorder>()
+        modules.get_module()
+    }
+
+    /// `0x5175b0` —— `GraphwarGameClient::request_game_name_change`（真名来自 v2 符号锚）
+    /// （FDE `0x5175b0..0x517684`，0xd4 = 212 B）。
+    ///
+    /// ```text
+    /// 5175be  mov  rbp,(%rdi)                ; self.0 = 客户端状态（Rc）
+    /// 5175c1  cmp  [rbp+0x10],0 ; jne 51766b ; RefCell::borrow_mut 冲突臂（槽 0x9ba6d0）
+    /// 5175cf  mov  [rbp+0x10],-1             ; borrow_mut
+    /// 5175db  test rdx,rdx ; jns 5175f1      ; name.len() < 0 ⇒ alloc 错误臂（0x91dd8c）
+    /// 5175f6  call *0x9ba628 = __rust_alloc   ; 51760a call *0x9ba630 = alloc(1, len)
+    /// 517621  call *0x9ba638 = memcpy        ; 把 (rsi, rdx) 复制成 String
+    /// 51763e  movabs $0x8000000000000016      ; ⇒ tag 22 = GameNameRequest
+    /// 517652  call *0x9bac80                  ; = Vec::push（队列在 [rbp+0x18]）
+    /// 517658  inc  [rbp+0x10]                 ; 解除 borrow_mut
+    /// ```
+    ///
+    /// 档位：**观测**（tag、alloc/memcpy、push、借用序列全部逐条可指）。
+    /// 线格式 `{"GameNameRequest":{"game_name":"…"}}` 与 `WIRE_SPEC` 一致（`docs/07` §3.3，tag 22）。
+    pub fn request_game_name_change<Q>(queue: &mut Q, game_name: &str)
+    where
+        Q: EventQueue + ?Sized,
+    {
+        // 0x5175b0 本函数起点；FDE 0x5175b0..0x517684
+        // 0x5175cf = borrow_mut；0x51763e = tag 22；0x517652 = Vec::push
+        queue.push(QueuedEvent {
+            event: Event::GameNameRequest,
+            payload: EventPayload::Name(game_name.to_string()),
+        });
+    }
+
+    /// `0x517490` —— `GraphwarGameClient::request_lock_change`（FDE `0x517490..0x5175ac`，0x11c）。
+    ///
+    /// ```text
+    /// 5174a5  mov  r12,[rdi+0x40]              ; 模块容器
+    /// 5174c7  call 0x46be70                    ; get_module::<GraphwarGameStateManager>()
+    /// 5174d4  dec  [r12+0x10]                  ; 结束容器 borrow
+    /// 5174de  cmp  [rbx+0x10],0 ; jne panic    ; 句柄自己的 RefCell（槽 0x9ba6d0）
+    /// 5174e5  mov  r12,(%r14)                  ; self.0 = 客户端状态
+    /// 5174f0  movzx eax,byte [rbx+0x136]       ; ← 读那个 bool
+    /// 5174f7  mov  [r12+0x10],-1               ; borrow_mut
+    /// 517505  xor  al,1                        ; ⇒ **取反**
+    /// 51750b  add  r15,0x45                    ; r15 = 0x7fff…ffff ⇒ tag 0x8000000000000044 = **68**
+    /// 517519  call *0x9bac80                   ; = Vec::push（记录 {tag, bool}）
+    /// 51751f  inc  [r12+0x10]                  ; 解除 borrow_mut
+    /// ```
+    ///
+    /// 档位：**观测**（tag 68 / 取反 / 字段偏移）。线格式 `{"LockRequest":{"lock":bool}}`
+    /// （`WIRE_SPEC`，`docs/07` §3.3；T53 官服抓包拿到 2 帧真 `LockRequest`）。
+    ///
+    /// 调用者：**只从虚表槽 `0x9bc160`** 被调用（`graphwar_setup_control` 的两处）。
+    pub fn request_lock_change<E>(env: &mut E)
+    where
+        E: LockChangeEnv + ?Sized,
+    {
+        // 0x517490 本函数起点；FDE 0x517490..0x5175ac
+        let lock = !env.locked_flag(); // 0x5174f0 读 + 0x517505 xor al,1
+        env.push_event(QueuedEvent {
+            event: Event::LockRequest,
+            payload: EventPayload::Lock(lock),
+        });
+    }
+
+    /// `0x5172d0` —— `GraphwarGameClient::send_chat_message`（FDE `0x5172d0..0x51748d`，0x1bd）。
+    ///
+    /// ```text
+    /// 5172de  mov  rbx,rsi                     ; rsi = &ChatMessage（24 B，复制走）
+    /// 51730a  call 0x46b180                    ; get_module::<GraphwarClientConnectionHandler>()
+    /// 51732f  mov  [r14+0x10],-1               ; 句柄 borrow_mut
+    /// 517337  cmp  byte [r14+0x18],0 ; je 51739d   ; **没连接 ⇒ 什么都不发，直接收尾**
+    /// 51734c  mov  eax,dword [r14+0x1c]        ; entity_id
+    /// 517350  mov  [r13+0x10],-1               ; 客户端状态 borrow_mut
+    /// 51735c/517365  movups [rbx] → [rsp+0x18] ; String（24 B）落位
+    /// 51736d  mov  [rsp+0x30],eax              ; entity_id 落 +0x20
+    /// 517371  add  r12,0x47                    ; r12 = 0x7fff…ffff ⇒ tag 0x8000000000000046 = **70**
+    /// 51737f  call *0x9bac80                   ; = Vec::push
+    /// ```
+    ///
+    /// ⇒ **没连接时一条事件都不发**（`0x51733c je 0x51739d`）。档位：**观测**。
+    /// 线格式 `{"ChatMessageRequest":{"entity_id":i64,"message":"…"}}`（`WIRE_SPEC`，tag 70；
+    /// T53 官服抓包 1 帧真样本）。
+    pub fn send_chat_message<E>(env: &mut E, message: &str) -> bool
+    where
+        E: ChatEnv + ?Sized,
+    {
+        // 0x5172d0 本函数起点；FDE 0x5172d0..0x51748d
+        if !env.is_connected() {
+            // 0x51733c je 0x51739d ⇒ 只做引用计数收尾，不 push
+            return false;
+        }
+        let id = env.local_entity_id(); // 0x51734c
+        env.push_event(QueuedEvent {
+            // 0x517371 add r12,0x47 ⇒ tag 70 = ChatMessageRequest
+            event: Event::ChatMessageRequest,
+            payload: EventPayload::TextAndId {
+                text: message.to_string(),
+                id,
+            },
+        });
+        true
+    }
+
+    /// `0x516ad0` —— `GraphwarGameClient::update_function`（FDE `0x516ad0..0x516fd0`，0x500）。
+    ///
+    /// 对**当前回合里的每个非电脑玩家** push 一条 `FunctionUpdateRequest`
+    /// （`0x516df6 add r13,0x23` ⇒ tag `0x8000000000000022` = **34**），载荷 = `String` + `player_id`。
+    /// 返回 push 了几条（**我方观测值**；原版没有返回值）。
+    ///
+    /// 档位：**观测**（tag 34、载荷落位、跳过分支）。线格式
+    /// `{"FunctionUpdateRequest":{"player_id":i64,"function":"…"}}`（`WIRE_SPEC`，tag 34）。
+    pub fn update_function<E>(env: &mut E, function: &str) -> usize
+    where
+        E: TurnPlayerEnv + ?Sized,
+    {
+        // 0x516ad0 本函数起点；FDE 0x516ad0..0x516fd0
+        let mut pushed = 0;
+        for player in env.current_turn_players() {
+            // 0x516bc2 call 0x463340 得列表；0x516c84..0x516d13 逐人查电脑玩家表
+            if env.is_computer_player(player) {
+                continue; // 0x516cf0 je 0x516d30 ⇒ 命中即跳过
+            }
+            env.push_event(QueuedEvent {
+                // 0x516df6 add r13,0x23 ⇒ tag 34 = FunctionUpdateRequest
+                event: Event::FunctionUpdateRequest,
+                payload: EventPayload::TextAndId {
+                    text: function.to_string(),
+                    id: player as i64,
+                },
+            });
+            pushed += 1;
+        }
+        pushed
+    }
+
+    /// `0x516510` —— `GraphwarGameClient::fire_function`（FDE `0x516510..0x51696e`，0x45e）。
+    ///
+    /// **先**把函数文本转给 `0x516ad0`（`0x51652e call *0x9ba888`，槽里是 `0x516ad0`），
+    /// **再**对当前回合里的每个非电脑玩家 push 一条 `FunctionFireRequest`
+    /// （`0x5167a5 add r12,0x21` ⇒ tag `0x8000000000000020` = **32**，载荷只有一个 player id）。
+    ///
+    /// 档位：**观测**（两次取玩家列表 + 同一个跳过分支 + tag 32/34）。
+    /// 线格式 `{"FunctionFireRequest":{"player_id":i64}}`（`WIRE_SPEC`，tag 32）。
+    ///
+    /// 调用者：`0x514acd`（命令入口 `0x514a10` 的 `fire` 臂）。
+    pub fn fire_function<E>(env: &mut E, function: &str) -> FireOutcome
+    where
+        E: TurnPlayerEnv + ?Sized,
+    {
+        // 0x516510 本函数起点；FDE 0x516510..0x51696e
+        // 0x51652e call *0x9ba888 ⇒ 0x516ad0（先把函数文本更新一条出去）
+        let updated = Self::update_function(env, function);
+        let mut fired = 0;
+        for player in env.current_turn_players() {
+            // 0x5165f6 call 0x463340（本条函数自己的第二次取列表）
+            if env.is_computer_player(player) {
+                continue; // 0x51671d je 0x516760 ⇒ 命中即跳过
+            }
+            env.push_event(QueuedEvent {
+                // 0x5167a5 add r12,0x21 ⇒ tag 32 = FunctionFireRequest
+                event: Event::FunctionFireRequest,
+                payload: EventPayload::Id(player),
+            });
+            fired += 1;
+        }
+        FireOutcome { updated, fired }
+    }
+
+    /// `0x516fd0` —— `GraphwarGameClient::wait_for_players`（FDE `0x516fd0..0x5172c5`，0x2f5）。
+    ///
+    /// ```text
+    /// 517020  <循环头>  取模块容器 → get conn_handler
+    /// 51706c  cmp byte [rbx+0x18],0 ; je 0x517180     ; 没连接 ⇒ 这一圈只 process+sleep
+    /// 517099  get_module::<GraphwarPlayerManager>()   ; 0x46a490
+    /// 51708a  r12d = [conn_handler+0x1c]              ; 本地 player id
+    /// 517118  call 0x3bf230                           ; 用 id 查 player 表
+    /// 517155  test r15,r15 ; jne 0x5171ac              ; 查到了 ⇒ **返回**
+    /// 517189  call rbp = 0x518400                      ; GraphwarGameClient::process
+    /// 51718d  mov $0xf4240,%esi ; 517192 call r15      ; sleep 1 ms
+    /// 5171a7  jmp 0x517020                              ; 回到循环头
+    /// ```
+    ///
+    /// 档位：**观测**（三步的顺序、1 ms 立即数、`process` 的 GOT 槽）。语义一句话：
+    /// **没等到人就地睡 1 ms，边睡边跑 `process` 一帧**（原版是**阻塞**式等待，不是异步）。
+    /// 返回转了几圈（**我方观测值**；原版没有返回值）。
+    pub fn wait_for_players<H>(host: &mut H) -> u32
+    where
+        H: WaitForPlayersHost + ?Sized,
+    {
+        // 0x516fd0 本函数起点；FDE 0x516fd0..0x5172c5
+        let mut rounds = 0;
+        loop {
+            // 0x517020 循环头 → 0x517040 … 0x517118 查本地 player
+            if host.local_player_present() {
+                return rounds; // 0x517155 jne 0x5171ac ⇒ 返回
+            }
+            host.process_frame(); // 0x517189 call rbp = 0x518400
+            host.sleep_one_millisecond(); // 0x51718d esi=0xf4240 → 0x517192 call 0x906f70
+            rounds += 1;
+        }
+    }
+}
+
+/// `ReplayPlayer` 上的 2 条方法（`0x3d6080` / `0x3d7630`）。
+///
+/// ⚠️ **类型被改名**：原版真名是 `GraphwarReplayPlayer::toggle_pause` / `::is_paused`
+/// （v2 符号锚），我方 `src/graphwar_replay_player.rs` 的类型叫 `ReplayPlayer`。
+/// 这两条的 `panic::Location` 主锚落在**本文件**（`152:22` / `152:49`，与 `connect`/`disconnect`
+/// 共用同一对辅助函数），`also_in` 才记 `graphwar_replay_player.rs` ⇒ 归属 contested，
+/// 按 `fixtures/boundary_audit.tsv` 的 `ours_file` 落在本文件。
+impl ReplayPlayer {
+    /// `0x3d7630` —— `GraphwarReplayPlayer::is_paused`（FDE `0x3d7630..0x3d76ef`，0xbf）。
+    ///
+    /// `0x3d7685 cmp %ebp,0x3b9aca00` + `0x3d768b setne %al` ⇒
+    /// 返回 **`frozen_now` 是否已设**。档位：**观测**。
+    pub fn is_paused(handler: &GraphwarTickHandler) -> bool {
+        // 0x3d7630 本函数起点；FDE 0x3d7630..0x3d76ef（0xbf）
+        // 0x3d7659 call 0x46aa50 = get_module::<GraphwarTickHandler>()
+        // 0x3d7674 mov ebp,dword [rbx+0x40] = T+0x28（frozen nanos）
+        // 0x3d7685 cmp ebp,0x3b9aca00 ; 0x3d768b setne al
+        handler.frozen_now.is_some()
+    }
+
+    /// `0x3d6080` —— `GraphwarReplayPlayer::toggle_pause`（FDE `0x3d6080..0x3d619e`，0x11e）。
+    ///
+    /// 切换 `GraphwarTickHandler` 的"`now` 覆盖值"，返回**切换后**是否处于暂停（**我方观测值**；
+    /// 原版没有返回值 —— 它只改字段）。`now` 这一参数对应 `0x3d60e4`/`0x3d60f0`
+    /// 那条 `call *0x9ba8f8`（原版取系统时钟；本层把它显式化以便可测）。
+    /// 档位：**观测**（两条分支、`+0x38`/`+0x40` 落位、0x1e9 哨兵、base 偏移 `+0x18`）。
+    pub fn toggle_pause(handler: &mut GraphwarTickHandler, now: (u64, u32)) -> bool {
+        // 0x3d6080 本函数起点；FDE 0x3d6080..0x3d619e（0x11e）
+        match handler.frozen_now {
+            // 0x3d60dc cmp ebp,0x3b9aca00 ⇒ 没冻：把覆盖值写成 now（0x3d611b/0x3d611f）
+            None => {
+                handler.set_now(now.0, now.1);
+                true
+            }
+            // 已冻：base += (now − frozen)，再写回哨兵 1e9 解冻（0x3d6100 → 0x3d6110 → 0x3d6116）
+            Some(frozen) => {
+                let paused_ns = nanos_between(now, frozen); // 0x90cdd0
+                let base = add_nanos((handler.base_secs, handler.base_nanos), paused_ns); // 0x90c180
+                handler.base_secs = base.0;
+                handler.base_nanos = base.1;
+                handler.clear_now(); // 0x3d6116 mov edx,0x3b9aca00
+                false
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 13. 单测（期望值全部来自 §12 各条反汇编里的立即数/分支，不来自实现本身）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod f3_landing_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// 记录 push 顺序的假队列。
+    #[derive(Default)]
+    struct Recorder {
+        events: Vec<QueuedEvent>,
+    }
+
+    impl EventQueue for Recorder {
+        fn push(&mut self, ev: QueuedEvent) {
+            self.events.push(ev);
+        }
+    }
+
+    // -- 12.1 7 条实例化 B ---------------------------------------------------
+
+    /// 7 条的 tag 都是**指令里的立即数**（`0x4d8a4b` 那一族的 `movabs`）。
+    #[test]
+    fn instance_b_constructors_carry_the_immediate_tag() {
+        let got = [
+            (remove_soldier_request_event_b(7).event, Event::RemoveSoldierRequest, 0x11),
+            (change_team_request_event_b(7).event, Event::ChangeTeamRequest, 0x0b),
+            (turn_mode_change_request_event_b(7).event, Event::TurnModeChangeRequest, 0x14),
+            (add_soldier_request_event_b(7).event, Event::AddSoldierRequest, 0x10),
+            (remove_player_request_event_b(7).event, Event::RemovePlayerRequest, 0x0c),
+            (time_mode_change_request_event_b(7).event, Event::TimeModeChangeRequest, 0x15),
+            (axis_mode_change_request_event_b(7).event, Event::AxisModeChangeRequest, 0x12),
+        ];
+        for (ev, want, imm) in got {
+            assert_eq!(ev, want);
+            assert_eq!(ev.wire_tag(), imm, "{want:?} 的判别值必须是立即数 {imm:#x}");
+        }
+        // 参数原样落在 +0x08（`mov 0x8(%rdi),%eax`）
+        assert_eq!(remove_soldier_request_event_b(-9).arg, -9);
+        assert_eq!(remove_soldier_request_event_b(-9).tag_word(), 0x8000_0000_0000_0011);
+    }
+
+    /// B 组 7 条与 A 组 7 条是**同一源函数的两份实例化**：判别值必须逐条相同。
+    #[test]
+    fn instance_b_matches_instance_a_tag_for_tag() {
+        let pairs = [
+            (RequestKind::RemoveSoldier, remove_soldier_request_event_b(0).event),
+            (RequestKind::ChangeTeam, change_team_request_event_b(0).event),
+            (RequestKind::TurnMode, turn_mode_change_request_event_b(0).event),
+            (RequestKind::AddSoldier, add_soldier_request_event_b(0).event),
+            (RequestKind::RemovePlayer, remove_player_request_event_b(0).event),
+            (RequestKind::TimeMode, time_mode_change_request_event_b(0).event),
+            (RequestKind::AxisMode, axis_mode_change_request_event_b(0).event),
+        ];
+        for (kind, got) in pairs {
+            assert_eq!(got, kind.event(), "{kind:?}");
+        }
+    }
+
+    // -- 12.2 两条 get_module 单态化 -----------------------------------------
+
+    /// 假模块容器：两条 `get` 各自返回不同模块，取错一个就红。
+    struct FakeContainer {
+        tick: Option<GraphwarTickHandler>,
+        recorder: Option<GraphwarGameRecorder>,
+        tick_calls: Cell<u32>,
+        recorder_calls: Cell<u32>,
+    }
+
+    impl ModuleGetter<GraphwarTickHandler> for FakeContainer {
+        fn get_module(&mut self) -> GraphwarTickHandler {
+            self.tick_calls.set(self.tick_calls.get() + 1);
+            self.tick
+                .take()
+                .unwrap_or_else(|| panic!("{MSG_OPTION_UNWRAP}"))
+        }
+    }
+
+    impl ModuleGetter<GraphwarGameRecorder> for FakeContainer {
+        fn get_module(&mut self) -> GraphwarGameRecorder {
+            self.recorder_calls.set(self.recorder_calls.get() + 1);
+            self.recorder
+                .take()
+                .unwrap_or_else(|| panic!("{MSG_OPTION_UNWRAP}"))
+        }
+    }
+
+    /// 两条单态化各取**自己的**模块（`0x516473 call 0x46aa50` ↔ `0x5164d3 call 0x46aea0`）。
+    #[test]
+    fn two_get_module_monomorphizations_take_different_modules() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        h.current_tick = 41;
+        let mut r = GraphwarGameRecorder::new();
+        r.saves = 3;
+        let mut c = FakeContainer {
+            tick: Some(h),
+            recorder: Some(r),
+            tick_calls: Cell::new(0),
+            recorder_calls: Cell::new(0),
+        };
+        assert_eq!(GraphwarGameClient::get_module_tick_handler(&mut c).current_tick, 41);
+        assert_eq!(GraphwarGameClient::get_module_game_recorder(&mut c).saves, 3);
+        assert_eq!(c.tick_calls.get(), 1);
+        assert_eq!(c.recorder_calls.get(), 1);
+    }
+
+    /// 容器里没有 ⇒ panic（`0x51647b je 0x516490` 的 unwrap 臂）。
+    #[test]
+    #[should_panic(expected = "None")]
+    fn missing_module_panics_like_the_original_unwrap() {
+        let mut c = FakeContainer {
+            tick: None,
+            recorder: None,
+            tick_calls: Cell::new(0),
+            recorder_calls: Cell::new(0),
+        };
+        let _ = GraphwarGameClient::get_module_tick_handler(&mut c);
+    }
+
+    // -- 12.3 request_game_name_change --------------------------------------
+
+    /// tag 22 + 载荷是那个串本身（`0x51763e` 的立即数 / `0x517621` 的 memcpy）。
+    #[test]
+    fn game_name_request_carries_the_name_and_tag_22() {
+        let mut q = Recorder::default();
+        GraphwarGameClient::request_game_name_change(&mut q, "US Room 1");
+        assert_eq!(q.events.len(), 1);
+        assert_eq!(q.events[0].event, Event::GameNameRequest);
+        assert_eq!(q.events[0].tag_word(), 0x8000_0000_0000_0016);
+        assert_eq!(q.events[0].payload, EventPayload::Name("US Room 1".into()));
+        assert_eq!(q.events[0].payload.record_bytes(), 24);
+    }
+
+    // -- 12.4 request_lock_change -------------------------------------------
+
+    struct FakeLockEnv {
+        flag: bool,
+        events: Vec<QueuedEvent>,
+    }
+
+    impl LockChangeEnv for FakeLockEnv {
+        fn locked_flag(&self) -> bool {
+            self.flag
+        }
+        fn push_event(&mut self, ev: QueuedEvent) {
+            self.events.push(ev);
+        }
+    }
+
+    /// `0x517505 xor %al,1`：载荷 = 那个字节的**取反**；tag 68（`0x51750b add r15,0x45`）。
+    #[test]
+    fn lock_request_negates_the_flag_and_uses_tag_68() {
+        for (flag, want) in [(false, true), (true, false)] {
+            let mut env = FakeLockEnv {
+                flag,
+                events: Vec::new(),
+            };
+            GraphwarGameClient::request_lock_change(&mut env);
+            assert_eq!(env.events.len(), 1);
+            assert_eq!(env.events[0].event, Event::LockRequest);
+            assert_eq!(env.events[0].tag_word(), 0x8000_0000_0000_0044);
+            assert_eq!(env.events[0].payload, EventPayload::Lock(want));
+        }
+    }
+
+    // -- 12.5 send_chat_message ---------------------------------------------
+
+    struct FakeChatEnv {
+        connected: bool,
+        entity_id: i64,
+        events: Vec<QueuedEvent>,
+    }
+
+    impl ChatEnv for FakeChatEnv {
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+        fn local_entity_id(&self) -> i64 {
+            self.entity_id
+        }
+        fn push_event(&mut self, ev: QueuedEvent) {
+            self.events.push(ev);
+        }
+    }
+
+    /// 已连接：发一条 tag 70，`entity_id` 来自连接模块 `+0x1c`。
+    #[test]
+    fn chat_message_sends_one_event_with_local_entity_id() {
+        let mut env = FakeChatEnv {
+            connected: true,
+            entity_id: 232,
+            events: Vec::new(),
+        };
+        assert!(GraphwarGameClient::send_chat_message(&mut env, "hi"));
+        assert_eq!(env.events.len(), 1);
+        assert_eq!(env.events[0].event, Event::ChatMessageRequest);
+        assert_eq!(env.events[0].tag_word(), 0x8000_0000_0000_0046);
+        assert_eq!(
+            env.events[0].payload,
+            EventPayload::TextAndId {
+                text: "hi".into(),
+                id: 232
+            }
+        );
+    }
+
+    /// **没连接 ⇒ 一条都不发**（`0x51733c je 0x51739d`）。
+    #[test]
+    fn chat_message_sends_nothing_when_not_connected() {
+        let mut env = FakeChatEnv {
+            connected: false,
+            entity_id: 232,
+            events: Vec::new(),
+        };
+        assert!(!GraphwarGameClient::send_chat_message(&mut env, "hi"));
+        assert!(env.events.is_empty());
+    }
+
+    // -- 12.6 update_function / fire_function -------------------------------
+
+    struct FakeTurnEnv {
+        players: Vec<i32>,
+        computers: Vec<i32>,
+        events: Vec<QueuedEvent>,
+    }
+
+    impl TurnPlayerEnv for FakeTurnEnv {
+        fn current_turn_players(&mut self) -> Vec<i32> {
+            self.players.clone()
+        }
+        fn is_computer_player(&mut self, player_id: i32) -> bool {
+            self.computers.contains(&player_id)
+        }
+        fn push_event(&mut self, ev: QueuedEvent) {
+            self.events.push(ev);
+        }
+    }
+
+    /// 电脑玩家被**跳过**（`0x516cf0 je`），tag 34，载荷 = 串 + player_id。
+    #[test]
+    fn update_function_skips_computer_players_and_uses_tag_34() {
+        let mut env = FakeTurnEnv {
+            players: vec![3, 5, 7],
+            computers: vec![5],
+            events: Vec::new(),
+        };
+        assert_eq!(GraphwarGameClient::update_function(&mut env, "sin(x)"), 2);
+        let ids: Vec<i64> = env
+            .events
+            .iter()
+            .map(|e| match &e.payload {
+                EventPayload::TextAndId { id, .. } => *id,
+                other => panic!("载荷形状不对：{other:?}"),
+            })
+            .collect();
+        assert_eq!(ids, vec![3, 7], "5 是电脑玩家 ⇒ 跳过");
+        for e in &env.events {
+            assert_eq!(e.event, Event::FunctionUpdateRequest);
+            assert_eq!(e.tag_word(), 0x8000_0000_0000_0022);
+        }
+    }
+
+    /// `fire_function` = **先** update（tag 34）**再** fire（tag 32），两条链各自跳过电脑玩家。
+    #[test]
+    fn fire_function_updates_first_then_fires_tag_32() {
+        let mut env = FakeTurnEnv {
+            players: vec![3, 5],
+            computers: vec![5],
+            events: Vec::new(),
+        };
+        let out = GraphwarGameClient::fire_function(&mut env, "x");
+        assert_eq!(out, FireOutcome { updated: 1, fired: 1 });
+        let tags: Vec<u64> = env.events.iter().map(|e| e.tag_word()).collect();
+        assert_eq!(
+            tags,
+            vec![0x8000_0000_0000_0022, 0x8000_0000_0000_0020],
+            "先 FunctionUpdateRequest(34) 再 FunctionFireRequest(32)"
+        );
+        assert_eq!(env.events[1].payload, EventPayload::Id(3));
+    }
+
+    // -- 12.7 wait_for_players ---------------------------------------------
+
+    /// 假宿主：`queries` 记"问了几次"，第 `present_after` 次之后就算"人到了"。
+    struct FakeWait {
+        /// 问过几次之后才"到"（0 = 第一次问就到了）。
+        present_after: u32,
+        queries: u32,
+        trace: Vec<char>,
+    }
+
+    impl WaitForPlayersHost for FakeWait {
+        fn local_player_present(&mut self) -> bool {
+            self.trace.push('Q');
+            let seen = self.queries;
+            self.queries += 1;
+            seen >= self.present_after
+        }
+        fn process_frame(&mut self) {
+            self.trace.push('P');
+        }
+        fn sleep_one_millisecond(&mut self) {
+            self.trace.push('S');
+        }
+    }
+
+    /// 顺序是 **查 → process → sleep**（`0x517118` → `0x517189` → `0x517192`），
+    /// 且查到人那一圈**不**再 process/sleep（`0x517155 jne 0x5171ac` 直接返回）。
+    #[test]
+    fn wait_for_players_polls_process_and_sleeps_one_ms() {
+        // 前两圈没到 ⇒ Q P S | Q P S | 第三圈到 ⇒ Q 然后返回
+        let mut w = FakeWait {
+            present_after: 2,
+            queries: 0,
+            trace: Vec::new(),
+        };
+        assert_eq!(GraphwarGameClient::wait_for_players(&mut w), 2);
+        assert_eq!(w.trace, vec!['Q', 'P', 'S', 'Q', 'P', 'S', 'Q']);
+        // 一开始就有人 ⇒ 一圈都不转
+        let mut w0 = FakeWait {
+            present_after: 0,
+            queries: 0,
+            trace: Vec::new(),
+        };
+        assert_eq!(GraphwarGameClient::wait_for_players(&mut w0), 0);
+        assert_eq!(w0.trace, vec!['Q']);
+    }
+
+    /// 没人来的话会一直转；这里只验"转 3 圈 = 3 次 process + 3 次 1 ms 睡"。
+    #[test]
+    fn wait_for_players_sleeps_once_per_round() {
+        struct ThreeTimes(u32, Vec<char>);
+        impl WaitForPlayersHost for ThreeTimes {
+            fn local_player_present(&mut self) -> bool {
+                self.1.push('Q');
+                self.0 >= 3
+            }
+            fn process_frame(&mut self) {
+                self.1.push('P');
+                self.0 += 1;
+            }
+            fn sleep_one_millisecond(&mut self) {
+                self.1.push('S');
+            }
+        }
+        let mut t = ThreeTimes(0, Vec::new());
+        assert_eq!(GraphwarGameClient::wait_for_players(&mut t), 3);
+        assert_eq!(t.1.iter().filter(|c| **c == 'S').count(), 3);
+        assert_eq!(t.1.iter().filter(|c| **c == 'P').count(), 3);
+    }
+
+    // -- 12.8 两条起客户端门面 ---------------------------------------------
+
+    #[derive(Default)]
+    struct FakeStart {
+        log: Vec<&'static str>,
+        precondition: bool,
+    }
+
+    impl BackendStartSteps for FakeStart {
+        fn start_precondition(&mut self) -> bool {
+            self.log.push("precondition");
+            self.precondition
+        }
+        fn assemble_event_wiring(&mut self) {
+            self.log.push("assemble");
+        }
+        fn reset_event_handler(&mut self) {
+            self.log.push("reset");
+        }
+        fn create_game_recorder(&mut self) {
+            self.log.push("recorder");
+        }
+        fn connect(&mut self) {
+            self.log.push("connect");
+        }
+        fn install_assembled(&mut self) {
+            self.log.push("install");
+        }
+        fn resubscribe_to_events(&mut self) {
+            self.log.push("resubscribe");
+        }
+        fn request_game_name(&mut self, _name: &str) {
+            self.log.push("game_name");
+        }
+    }
+
+    /// local 版：precondition → 装配 → 重置 → recorder → connect → install → resubscribe →
+    /// GameNameRequest。顺序就是二进制里的 `call` 顺序。
+    #[test]
+    fn start_local_server_runs_the_calls_in_binary_order() {
+        let mut s = FakeStart {
+            log: Vec::new(),
+            precondition: true,
+        };
+        assert!(start_client_to_local_server(&mut s, "room"));
+        assert_eq!(
+            s.log,
+            vec![
+                "precondition",
+                "assemble",
+                "reset",
+                "recorder",
+                "connect",
+                "install",
+                "resubscribe",
+                "game_name"
+            ]
+        );
+    }
+
+    /// 前置条件挡住 ⇒ **一步都不走**（`0x5155b4 je 0x5157f3`）。
+    #[test]
+    fn start_local_server_stops_when_precondition_fails() {
+        let mut s = FakeStart {
+            log: Vec::new(),
+            precondition: false,
+        };
+        assert!(!start_client_to_local_server(&mut s, "room"));
+        assert_eq!(s.log, vec!["precondition"]);
+    }
+
+    /// remote 版：没有前置守卫、没有 GameNameRequest，其余同序（`0x515aaa` 直接收尾）。
+    #[test]
+    fn start_remote_server_skips_the_local_only_steps() {
+        let mut s = FakeStart {
+            log: Vec::new(),
+            precondition: true,
+        };
+        start_client_to_remote_server(&mut s);
+        assert_eq!(
+            s.log,
+            vec!["assemble", "reset", "recorder", "connect", "install", "resubscribe"]
+        );
+    }
+
+    // -- 12.9 回放时钟 ------------------------------------------------------
+
+    /// 哨兵/取反：新建的 handler `frozen_now == None` ⇒ `is_paused` 假
+    /// （`0x3d7685 cmp …0x3b9aca00` 的 `setne`）。
+    #[test]
+    fn is_paused_is_exactly_frozen_now_is_some() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        assert!(!ReplayPlayer::is_paused(&h));
+        h.set_now(1_000, 5);
+        assert!(ReplayPlayer::is_paused(&h));
+        h.clear_now();
+        assert!(!ReplayPlayer::is_paused(&h));
+    }
+
+    /// 第一次 `toggle_pause` = **冻结**到 now，base 不动；
+    /// 第二次 = **解冻**，base 前进"暂停了多久"（`0x3d6100` → `0x3d6110`）。
+    #[test]
+    fn toggle_pause_freezes_then_shifts_the_base_by_the_pause_duration() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        h.base_secs = 100;
+        h.base_nanos = 0;
+        assert!(ReplayPlayer::toggle_pause(&mut h, (1_000, 250)), "切换后是暂停");
+        assert_eq!(h.frozen_now, Some((1_000, 250)));
+        assert_eq!((h.base_secs, h.base_nanos), (100, 0), "冻结不动 base");
+        // 冻结在 (1000, 250)，现在 (1003, 1000) ⇒ 暂停了 3 s + 750 ns
+        assert!(!ReplayPlayer::toggle_pause(&mut h, (1_003, 1_000)), "切换后是播放");
+        assert_eq!(h.frozen_now, None, "解冻写回的是 1e9 哨兵");
+        assert_eq!((h.base_secs, h.base_nanos), (103, 750), "base 前进暂停时长");
+    }
+
+    /// 纳秒进位的边界（`0x90cdd0` / `0x90c180` 这两跳的算术）。
+    #[test]
+    fn nanosecond_helpers_carry_properly() {
+        assert_eq!(nanos_between((2, 0), (1, 0)), 1_000_000_000);
+        assert_eq!(nanos_between((1, 5), (1, 9)), 0, "反序夹成 0");
+        assert_eq!(add_nanos((1, 999_999_999), 1), (2, 0));
+        assert_eq!(add_nanos((0, 0), 1_500_000_000), (1, 500_000_000));
     }
 }

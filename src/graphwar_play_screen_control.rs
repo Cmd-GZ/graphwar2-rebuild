@@ -1374,3 +1374,212 @@ mod lifecycle_tests {
         assert_eq!(bot_aim_expression((0.0, 0.0, 0), &[(0.0, 9.0, 1, true)]), "0");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 10. F3 落码（T62）：`enable_replay_buttons` / `disable_replay_buttons`
+// ---------------------------------------------------------------------------
+//
+// `fixtures/function_coverage.tsv` 里本模块 10 行有 **6 条 F3**（全是 `register-only`：
+// "地址有登记（注释里写了）但没有贴到任何函数体"）。本节把其中**两条能逐指令读完的**落成
+// 独立 `fn`，其余 4 条（`0x3db3e0` / `0x3dc470` / `0x3dc630` / `0x522070`）没落，
+// 缺什么写在 `docs/06` §111 的遗留清单里。
+//
+// 这一对孪生函数（`0x3d9b50` / `0x3d9e40`）的形状**已经在本文件 §2 建立**：
+// 5 个节点名、取节点的调用链、`(0,0,0,1,1)` 与 `(1,1,1,0,0)` 两组布尔值、逐条指令地址
+// 全在 [`UiMode`] 的文档里。§2 缺的只是**函数体**，本节补上：
+//
+// ```text
+// 3d9b50 / 3d9e40  两个函数逐条同形，各 5 个块；每块 4 跳：
+//   4068f0  clone 自身节点（`lea rsi,"clone",5`）
+//   3ab190  按 (节点名池, 名长) 取子节点 → Result（3d9bae 判 1 / 3d9c30 判 0）
+//   4066c0  上抛（`lea rsi,"upcast_ref",0xa`）
+//   8ab200  call *0x9ba978（收一个 bool）
+// ```
+
+/// `0x3d9b50` / `0x3d9e40` 需要的三跳。原版没有这个 trait（**我方接缝**）。
+///
+/// 判据（全部**观测**，地址在 [`UiMode`] 的文档表里）：
+/// * `0x4068f0` 收 `("clone", 5)`；
+/// * `0x3ab190` / `0x3ab290` 收 `(节点名池地址, 名字长度)`，返回带判别值的 `Result`
+///   （判别值 1 与 0 各有一条 `unwrap` panic 臂：`0x3d9dfc` / `0x3d9e09`）；
+/// * `0x4066c0` 收 `("upcast_ref", 10)`；
+/// * `call *0x9ba978` 收 `esi` = 布尔。
+pub trait WidgetSink {
+    /// 节点句柄（原版是 `Gd<…>`；本层只要可复制）。
+    type Node: Copy;
+
+    /// `0x3ab190`：按节点名取子节点。`None` ⇒ 原版在那个 `unwrap` 臂上 panic。
+    fn get_node(&mut self, name: &str) -> Option<Self::Node>;
+
+    /// `0x4066c0`：`upcast_ref`（字面量 10 字节，`0x3d9bc3`）。
+    fn upcast_ref(&mut self, node: Self::Node) -> Self::Node;
+
+    /// `call *0x9ba978`（`0x3d9be4` 等 5 处）：那个收 `bool` 的引擎方法。
+    ///
+    /// ⚠️ **推断**：成员名（`set_visible` / `set_disabled` …）**没有**从二进制确认
+    /// —— 见本文 §2 的说明。本层只保证"作用于刚取到的节点 + 收一个 bool"。
+    fn set_flag(&mut self, node: Self::Node, value: bool);
+}
+
+/// `enable_replay_buttons` / `disable_replay_buttons` 共用的 5 步。
+///
+/// 顺序与二进制里的调用顺序一致（[`UiMode::widgets`] 的数组顺序就是它）。
+/// 返回实际置了几次（**我方观测值**；原版没有返回值）。
+fn apply_widget_flags<S>(sink: &mut S, mode: UiMode) -> usize
+where
+    S: WidgetSink + ?Sized,
+{
+    let mut n = 0;
+    for (name, value) in mode.widgets() {
+        // 0x3ab190 一族：取节点；缺失 ⇒ 原版 unwrap panic
+        let node = sink.get_node(name).unwrap_or_else(|| panic!("{MSG_NO_NODE}"));
+        // 0x4066c0：upcast_ref
+        let node = sink.upcast_ref(node);
+        // call *0x9ba978
+        sink.set_flag(node, value);
+        n += 1;
+    }
+    n
+}
+
+/// 取节点失败时原版走的那条 `unwrap` 臂（`0x3d9dfc` / `0x3d9e09`）的 std 文案。
+pub const MSG_NO_NODE: &str = "called `Option::unwrap()` on a `None` value";
+
+/// 原版这个"对局界面控制器"类型的**标记**。
+///
+/// 原版是 gdext 类 `GraphwarPlayScreenControl`（`docs/02` 的模块表）；本文件只放
+/// **已被反汇编证据支持**的那部分逻辑，节点/引擎侧一律走 [`WidgetSink`]。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphwarPlayScreenControl;
+
+impl GraphwarPlayScreenControl {
+    /// `0x3d9b50` —— `GraphwarPlayScreenControl::enable_replay_buttons`
+    /// （真名 `v2唯一锚`；FDE `0x3d9b50..0x3d9e40`，0x2f0）。
+    ///
+    /// 把 5 个节点置成 `(0,0,0,1,1)`：三个对局控件（`LeftButtonGrid` / `RightButtonGrid` /
+    /// `FireContainer`）关掉、两个回放控件（`LeftReplaysButtonsGrid` /
+    /// `RightReplaysButtonsGrid`）打开 ⇒ **进回放视图**。
+    ///
+    /// 逐条指令：`0x3d9be2`/`0x3d9c64`/`0x3d9ce6` 是 `xor %esi,%esi`（false），
+    /// `0x3d9d65`/`0x3d9de3` 是 `mov $0x1,%esi`（true）。档位：**观测**。
+    pub fn enable_replay_buttons<S>(sink: &mut S) -> usize
+    where
+        S: WidgetSink + ?Sized,
+    {
+        // 0x3d9b50 本函数起点；FDE 0x3d9b50..0x3d9e40
+        apply_widget_flags(sink, UiMode::Replay)
+    }
+
+    /// `0x3d9e40` —— `GraphwarPlayScreenControl::disable_replay_buttons`（真名 `v2唯一锚`；
+    /// 体长 0x2f0）。
+    ///
+    /// 与 [`Self::enable_replay_buttons`] **逐条同形**、布尔值**恰好互补**：`(1,1,1,0,0)`
+    /// （`0x3d9ecf`/`0x3d9f51`/`0x3d9fd3` 是 `mov $0x1,%esi`；`0x3da008`/`0x3da0d3` 是 `xor`）
+    /// ⇒ **回对局视图**。档位：**观测**。
+    pub fn disable_replay_buttons<S>(sink: &mut S) -> usize
+    where
+        S: WidgetSink + ?Sized,
+    {
+        // 0x3d9e40 本函数起点；体长 0x2f0
+        apply_widget_flags(sink, UiMode::Play)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 11. 单测（期望值来自 §2 表里的**指令地址**与 §10 的调用顺序，不来自实现本身）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod f3_landing_tests {
+    use super::*;
+
+    /// 记下 `(节点名, 上抛次数, 布尔)` 的假 sink。
+    #[derive(Default)]
+    struct FakeSink {
+        nodes: Vec<&'static str>,
+        upcasts: usize,
+        flags: Vec<(usize, bool)>,
+    }
+
+    impl WidgetSink for FakeSink {
+        type Node = usize;
+
+        fn get_node(&mut self, name: &str) -> Option<usize> {
+            // 5 个动作节点都在 `PLAY_WIDGET_NODES` / `REPLAY_WIDGET_NODES` 里；
+            // 名字必须是 `'static`，测试里只放这 5 个，别的一律 None。
+            let all = [
+                PLAY_WIDGET_NODES[0],
+                PLAY_WIDGET_NODES[1],
+                PLAY_WIDGET_NODES[2],
+                REPLAY_WIDGET_NODES[0],
+                REPLAY_WIDGET_NODES[1],
+            ];
+            let idx = all.iter().position(|n| *n == name)?;
+            self.nodes.push(all[idx]);
+            Some(idx)
+        }
+
+        fn upcast_ref(&mut self, node: usize) -> usize {
+            self.upcasts += 1;
+            node
+        }
+
+        fn set_flag(&mut self, node: usize, value: bool) {
+            self.flags.push((node, value));
+        }
+    }
+
+    /// `0x3d9b50` 的 5 个 `esi`：`(0,0,0,1,1)`，节点顺序 = 二进制里的调用顺序。
+    #[test]
+    fn enable_replay_buttons_sets_the_five_flags_in_order() {
+        let mut s = FakeSink::default();
+        assert_eq!(GraphwarPlayScreenControl::enable_replay_buttons(&mut s), 5);
+        assert_eq!(
+            s.flags,
+            vec![(0, false), (1, false), (2, false), (3, true), (4, true)]
+        );
+        assert_eq!(s.upcasts, 5, "每个节点各上抛一次（0x4066c0）");
+        assert_eq!(
+            s.nodes,
+            vec![
+                "LeftButtonGrid",
+                "RightButtonGrid",
+                "FireContainer",
+                "LeftReplaysButtonsGrid",
+                "RightReplaysButtonsGrid"
+            ]
+        );
+    }
+
+    /// `0x3d9e40` 与上一条**逐项互补**（同一个模板的两份实例化）。
+    #[test]
+    fn disable_replay_buttons_is_the_exact_complement() {
+        let mut a = FakeSink::default();
+        let mut b = FakeSink::default();
+        GraphwarPlayScreenControl::enable_replay_buttons(&mut a);
+        GraphwarPlayScreenControl::disable_replay_buttons(&mut b);
+        assert_eq!(a.nodes, b.nodes, "取节点顺序必须一样");
+        assert_eq!(b.flags, vec![(0, true), (1, true), (2, true), (3, false), (4, false)]);
+        for ((_, va), (_, vb)) in a.flags.iter().zip(b.flags.iter()) {
+            assert_eq!(va, &!*vb, "同一节点上两份的布尔必须相反");
+        }
+    }
+
+    /// 节点缺失 ⇒ 原版在 `0x3d9dfc` / `0x3d9e09` 的 `unwrap` 臂上 panic。
+    #[test]
+    #[should_panic(expected = "None")]
+    fn missing_node_panics_like_the_original_unwrap() {
+        struct Empty;
+        impl WidgetSink for Empty {
+            type Node = usize;
+            fn get_node(&mut self, _name: &str) -> Option<usize> {
+                None
+            }
+            fn upcast_ref(&mut self, node: usize) -> usize {
+                node
+            }
+            fn set_flag(&mut self, _node: usize, _value: bool) {}
+        }
+        GraphwarPlayScreenControl::enable_replay_buttons(&mut Empty);
+    }
+}
