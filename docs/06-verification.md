@@ -21915,8 +21915,11 @@ join -t$'\t' /tmp/old /tmp/new | awk -F'\t' '$2!=$4'      # ⇒ 35 行，全部 
 join -t$'\t' /tmp/old /tmp/new | awk -F'\t' '$2!=$4' | wc -l   # 35
 ```
 
-**没有**任何别的行改档（F2 97 一条没动、F4 仍 0）。指认方式全部是 **P2（地址引用贴到 fn）**：
-判法要求"地址出现在注释里，且该注释能贴到一个 fn"（`tools/function_coverage.py::attach_addr`），
+**没有**任何别的行改档（F2 97 一条没动、F4 仍 0）。指认方式：**33 条 = P2（地址引用贴到 fn）**
++ **2 条 = P1 name-soft**（`0x4f44c0` / `0x4f4a60`：我方同名方法 `Buffer::delete_token_at_caret` /
+`_after_caret` 先被名字命中，而原版这两个方法在 `GraphwarFunctionInput` 上 ⇒
+`type_check=renamed`、TSV 的"缺什么"列写明类型边界不同）。
+P2 的判法要求"地址出现在注释里，且该注释能贴到一个 fn"（`tools/function_coverage.py::attach_addr`），
 所以每个落码 fn 的**文档注释第一行就是 vaddr**，函数体内再写关键指令地址。
 
 ### 122.6 新增单测（**25 条**，期望值全部来自反汇编立即数/分支）
