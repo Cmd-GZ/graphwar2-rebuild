@@ -89,7 +89,7 @@
 | `graphwar_event.rs` | 0 | 0 | `src/events.rs` | 2 | 观测 |
 | `graphwar_event_handler.rs` | 2 | 4 | `src/graphwar_event_handler.rs` | 9 | 观测 |
 | `graphwar_event_queue.rs` | 0 | 0 | `src/graphwar_event_queue.rs` | 5 | 观测 |
-| `graphwar_function_evolutionator.rs` | 16 | 25 | `src/graphwar_function_evolutionator.rs` | 116 | 观测 |
+| `graphwar_function_evolutionator.rs` | 16 | 25 | `src/graphwar_function_evolutionator.rs` | 121 | 观测 |
 | `graphwar_function_input.rs` | 13 | 33 | `src/graphwar_function_input.rs` | 78 | 观测 |
 | `graphwar_function_manager.rs` | 7 | 12 | `src/graphwar_function_manager.rs` | 19 | 观测 |
 | `graphwar_game_client.rs` | 36 | 59 | `src/graphwar_game_client.rs` | 136 | 观测 |
@@ -124,7 +124,7 @@
 | `graphwar_replay_control.rs` | 2 | 9 | `src/graphwar_replay_control.rs` | 6 | 观测 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
 | `graphwar_replay_reader.rs` | 0 | 0 | `src/graphwar_replay_reader.rs` | 11 | 观测 |
-| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 110 | 观测 |
+| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 119 | 观测 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | `src/graphwar_server_broker_handler.rs` | 19 | 观测 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/graphwar_server_connection_handler.rs` | 31 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 173 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（119 个文件、3787 条 `fn`） | `bc255c82bbd24aaf93e5f6811cfe20a6de48897ef553201e9969f90500191b58` |
+| `src/` 树（119 个文件、3801 条 `fn`） | `040d1ddb286610287235a2a19b0b09059254ef87bea1f76ea50fbc965240a810` |
 

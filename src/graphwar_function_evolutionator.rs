@@ -1171,6 +1171,56 @@ impl<'a> SoldierEvolver<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// 评分排序的比较器（原版 `graphwar_function_evolutionator.rs:169:94` / `:273:90`）
+// ---------------------------------------------------------------------------
+//
+// 本模块的 12 个「匿名单态化」函数（`fixtures/function_coverage.tsv` 里
+// graphwar_function_evolutionator.rs 那批 F3 noname）**不是本模块的函数体**，
+// 而是 **std `core::slice::sort` 的单态化**：元素步长 + 三段自递归 + 归并/搬移，
+// 本模块的代码只是被**内联进去的比较器**。证据（`tools/addr_probe.py dis`，
+// 逐块见 `fixtures/f3_heavy_anchors.tsv`）：
+//
+// * 6 个函数尺寸成对出现（FDE 尺寸逐对相同），两条的 `panic::Location` 分别是本文件
+//   **`:169:94`** 与 **`:273:90`** ⇒ 同一批 std 内核 × 两个比较器站点；
+// * 比较器本体是「元素 **+0x18** 处的 f64 做 `ucomisd`，`jp` 命中就 panic」
+//   ⇒ `partial_cmp().unwrap()`（`None` = 有 NaN ⇒ 立刻 panic，**没有**退化成某个默认序）；
+// * 调用侧交叉证据：`169:94` 那一族只被变体 A `calculate_functions` 调用、
+//   `273:90` 那一族只被变体 B `calculate_functions_old` 调用。
+//
+// ⚠️ **本注刻意不写那 12 个 vaddr**：`tools/function_coverage.py` 的 P2 判据是
+// 「地址出现在注释里且能贴到一个 fn 上 ⇒ 有实现」，把 std 内核的地址写在这个比较器的
+// doc 里会被机判成"那 12 条有实现了"——本轮实测过，确实会假抬 5 条 F1（T71 已回退）。
+// 逐条地址见 `fixtures/f3_heavy_anchors.tsv`（那份表不是 fn 的 doc，不进机判）。
+//
+// ⇒ 源码层能落的**只有比较器**；排序本体是标准库的（`slice::sort_by`），
+// **不重写**（重写 std 的排序等于凭空造一份没有物证的实现）。
+//
+// ⚠️ 档位：**观测**（比较器形状 + NaN ⇒ panic + 两个 Location + 调用侧配对）。
+// ⚠️ **推断**：①两处（169 / 273）在机器码层面**看不出差别** ⇒ 是否同一个源码比较器**未证**
+// （缺：两处闭包/函数的捕获集合差异）；②排序方向（升序）是**推断** —— 依据是
+// `partial_cmp(a,b)` 配 `sort_by` 的自然写法，缺的证据是能区分 `cmp(a,b)` 与 `cmp(b,a)`
+// 的寄存器序（`ucomisd` 的操作数序在被内联的版本里被优化掉了）。
+
+/// 原版 `graphwar_function_evolutionator.rs:169:94` / `:273:90` 的评分比较器。
+///
+/// 语义：按两个评分（f64）的**全序**比较；**任何一个是 NaN ⇒ panic**
+/// （原版就是 `.unwrap()`：`ucomisd` 后紧跟 `jp → panic`，见上）。
+pub fn score_ordering(a: f64, b: f64) -> core::cmp::Ordering {
+    // 反汇编形状：`ucomisd` + `jp <panic>`（NaN 就炸），其余走 `cmpltsd`/`xorpd` 合成
+    // `Less/Greater/Equal` —— 与 `f64::partial_cmp` 的内联结果一致。
+    // 原版就是 `.unwrap()`（`Option::unwrap` 的 panic 消息逐位一致）⇒ 这里也用 `.unwrap()`，
+    // **不**换成带自定义消息的 `expect`（那会改掉 panic 文本）。
+    a.partial_cmp(&b).unwrap()
+}
+
+/// 按 [`score_ordering`] 升序排一组评分（= 原版那两处 `sort_by` 的比较器用法）。
+///
+/// 只在**没有 NaN** 时成立；有 NaN 时和原版一样 panic。
+pub fn sort_scores(scores: &mut [f64]) {
+    scores.sort_by(|a, b| score_ordering(*a, *b));
+}
+
+// ---------------------------------------------------------------------------
 // 适应度（docs/74 的公式，接上路径采样与命中判定）
 // ---------------------------------------------------------------------------
 
@@ -2509,5 +2559,37 @@ mod tests {
         }
         assert_eq!(slots.len(), 3);
         assert_eq!(slots.soldier_ids().collect::<Vec<_>>(), vec![7444, 7445, 7446]);
+    }
+
+    // ===================================================================
+    // T71：评分比较器（期望值来自反汇编：NaN ⇒ panic、否则全序）
+    // ===================================================================
+
+    /// 非 NaN 输入：与 `f64::partial_cmp` 逐条相同（含 -0.0/+0.0、±inf）。
+    #[test]
+    fn score_ordering_matches_partial_cmp() {
+        let vals = [f64::NEG_INFINITY, -1.0, -0.0, 0.0, 1.0, f64::INFINITY];
+        for a in vals {
+            for b in vals {
+                assert_eq!(score_ordering(a, b), a.partial_cmp(&b).unwrap(), "{a} vs {b}");
+            }
+        }
+        // `-0.0 == 0.0` ⇒ Equal（partial_cmp 的口径，原版没有把 -0.0 单独处理）
+        assert_eq!(score_ordering(-0.0, 0.0), core::cmp::Ordering::Equal);
+    }
+
+    /// NaN ⇒ panic（原版 `ucomisd; jp → panic` 的那条路）。
+    #[test]
+    #[should_panic(expected = "Option::unwrap")]
+    fn score_ordering_panics_on_nan() {
+        let _ = score_ordering(f64::NAN, 1.0);
+    }
+
+    /// 升序排 + 稳定性无关（`sort_by` 稳定，但这里只比数值序列）。
+    #[test]
+    fn sort_scores_is_ascending() {
+        let mut v = [3.0, 0.5, 2.0, 0.5, -1.0];
+        sort_scores(&mut v);
+        assert_eq!(v, [-1.0, 0.5, 0.5, 2.0, 3.0]);
     }
 }
