@@ -1,0 +1,393 @@
+# doc_cite_check_docs3.tsv —— docs/144–docs/162 的「地址 + 指令」引文全量机核（387 条；由 tools/doc_cite_check_docs3.py 生成，**不要手改**）
+# 生成：审计员 t70 / 2026-11-27，分支 agent/docs-audit3；判定含义见工具头与 docs/06 §114.5
+# 复跑：.reference/venv/bin/python tools/doc_cite_check_docs3.py --tsv fixtures/doc_cite_check_docs3.tsv
+# x86 = .reference/game/libgraphwarrust.so（md5 b156c315693f3cf69bc1282225c3c1a0）；arm64 = .reference/steam/android-2.0.60/libgraphwarrust.so
+# 工具判 OPS-DIFF/ADDR-OFF/SKIP 的 25 条已人工逐条看过：13 条引文级真错 + 12 条写法/伪码口径差异，清单见 docs/06 §114.5
+doc	line	addr	arch	doc_ops	verdict	text
+docs/147-ai-behaviour.md	20	0x51ae4c	x86	dec 	ADDR-OFF(+0x5)	| 有没有"友军惩罚" | **有**。[`docs/archive/AI.md`](archive/AI.md) §4 说"友军项恒为 0、是死代码"**是错的**（`0x51ae4c dec` / `0x51ae5d inc` 两支都在） | **观测**（本文更正） |
+docs/147-ai-behaviour.md	20	0x51ae5d	x86	inc 	ADDR-OFF(+0x5)	| 有没有"友军惩罚" | **有**。[`docs/archive/AI.md`](archive/AI.md) §4 说"友军项恒为 0、是死代码"**是错的**（`0x51ae4c dec` / `0x51ae5d inc` 两支都在） | **观测**（本文更正） |
+docs/147-ai-behaviour.md	86	0x3e3d75	x86	mov ebp,[rbx+0xc]	MATCH	3e3d75  mov  ebp,[rbx+0xc]      ; 载荷 b（player/team id）
+docs/147-ai-behaviour.md	87	0x3e3d78	x86	mov r14d,[rbx+0x10]	MATCH	3e3d78  mov  r14d,[rbx+0x10]    ; ★ 难度值
+docs/147-ai-behaviour.md	88	0x3e3d7f	x86	call 0x46c5a0	MATCH	3e3d7f  call 0x46c5a0           ; 取模块
+docs/147-ai-behaviour.md	89	0x3e3d95	x86	mov ecx,0xa	MATCH	3e3d95  mov  ecx,0xa             ; s = 10
+docs/147-ai-behaviour.md	90	0x3e3d9a	x86	mov r9d,0x5	MATCH	3e3d9a  mov  r9d,0x5             ; limit = 5
+docs/147-ai-behaviour.md	91	0x3e3da0	x86	cmp r14d,0x4	MATCH	3e3da0  cmp  r14d,0x4
+docs/147-ai-behaviour.md	92	0x3e3da4	x86	jb 0x3e45a8	MATCH	3e3da4  jb   0x3e45a8            ; d < 4    ⇒ (s=10, limit=5)
+docs/147-ai-behaviour.md	93	0x3e3daa	x86	mov ecx,0x14	MATCH	3e3daa  mov  ecx,0x14            ; s = 20
+docs/147-ai-behaviour.md	94	0x3e3daf	x86	cmp r14d,0xb	MATCH	3e3daf  cmp  r14d,0xb
+docs/147-ai-behaviour.md	95	0x3e3db3	x86	jb 0x3e45a8	MATCH	3e3db3  jb   0x3e45a8            ; d < 11   ⇒ (s=20, limit=5)
+docs/147-ai-behaviour.md	96	0x3e3db9	x86	cmp r14d,0x1a	MATCH	3e3db9  cmp  r14d,0x1a
+docs/147-ai-behaviour.md	97	0x3e3dbd	x86	jae 0x3e456d	MATCH	3e3dbd  jae  0x3e456d            ; d >= 26  ⇒ 下一段
+docs/147-ai-behaviour.md	98	0x3e3dc3	x86	mov ecx,0x1e	MATCH	3e3dc3  mov  ecx,0x1e            ; s = 30
+docs/147-ai-behaviour.md	99	0x3e3dc8	x86	mov r9d,0xa	MATCH	3e3dc8  mov  r9d,0xa             ; limit = 10
+docs/147-ai-behaviour.md	100	0x3e456d	x86	cmp r14d,0x65	MATCH	3e456d  cmp  r14d,0x65
+docs/147-ai-behaviour.md	101	0x3e4571	x86	jae 0x3e458d	MATCH	3e4571  jae  0x3e458d            ; d >= 101
+docs/147-ai-behaviour.md	102	0x3e4573	x86	mov ecx,0x28	MATCH	3e4573  mov  ecx,0x28            ; s = 40
+docs/147-ai-behaviour.md	103	0x3e4578	x86	mov r9d,0xf	MATCH	3e4578  mov  r9d,0xf             ; limit = 15
+docs/147-ai-behaviour.md	104	0x3e458d	x86	cmp r14d,0xfb	MATCH	3e458d  cmp  r14d,0xfb
+docs/147-ai-behaviour.md	105	0x3e4594	x86	mov eax,0x19	MATCH	3e4594  mov  eax,0x19            ; 25
+docs/147-ai-behaviour.md	106	0x3e4599	x86	mov r9d,0xc8	MATCH	3e4599  mov  r9d,0xc8            ; 200
+docs/147-ai-behaviour.md	107	0x3e459f	x86	cmovb r9d,eax	MATCH	3e459f  cmovb r9d,eax            ; d < 251 ⇒ limit = 25，否则 200
+docs/147-ai-behaviour.md	108	0x3e45a3	x86	mov ecx,0x32	MATCH	3e45a3  mov  ecx,0x32            ; s = 50
+docs/147-ai-behaviour.md	110	0x3e45c2	x86	mov esi,ebp	MATCH	3e45c2  mov  esi,ebp             ; 第 2 参 = key
+docs/147-ai-behaviour.md	111	0x3e45c4	x86	mov edx,r14d	MATCH	3e45c4  mov  edx,r14d            ; ★ 第 3 参 = 难度值本身
+docs/147-ai-behaviour.md	112	0x3e45c7	x86	mov r8d,0x5	MATCH	3e45c7  mov  r8d,0x5             ; 每槽个体数恒为 5
+docs/147-ai-behaviour.md	113	0x3e45cd	x86	call 0x478fc0	MATCH	3e45cd  call 0x478fc0            ; (self, key, 难度, s, 5, limit)
+docs/147-ai-behaviour.md	117	0x4790a0	x86	call 0x440890	MATCH	`0x4790a0 call 0x440890` 插表）：
+docs/147-ai-behaviour.md	124	0x479b0b	x86	movdqu xmm0,[r14-0x10]	MATCH	驱动侧的证据链闭合得很干净：`0x479b0b movdqu xmm0,[r14-0x10]` 从那张表旁边搬出 16 字节 →
+docs/147-ai-behaviour.md	125	0x479ce5	x86	movdqu [payload+0x70],xmm0	OPS-DIFF	`0x479ce5 movdqu [payload+0x70],xmm0` → `0x438780` 从 `cfg+0x70/+0x74/+0x78` 取出
+docs/147-ai-behaviour.md	189	0x51b079	x86	movsd xmm0,[0x19f6d8]	MATCH	51b079  movsd xmm0,[0x19f6d8]     ; 100.0
+docs/147-ai-behaviour.md	190	0x51b085	x86	test eax,eax / jle 51b0a5	MATCH	51b085  test  eax,eax / jle 51b0a5; 净击杀 <= 0 ⇒ 跳过"掩膜项"
+docs/147-ai-behaviour.md	191	0x51b08f	x86	mulsd xmm3,xmm0	MATCH	51b08f  mulsd xmm3,xmm0            ; step × 100
+docs/147-ai-behaviour.md	192	0x51b09d	x86	mulsd xmm1,xmm3	MATCH	51b09d  mulsd xmm1,xmm3            ; sret+0x14 × step × 100
+docs/147-ai-behaviour.md	193	0x51b0a1	x86	subsd xmm2,xmm1	MATCH	51b0a1  subsd xmm2,xmm1            ; 减掉
+docs/147-ai-behaviour.md	194	0x51b0ad	x86	cvtsi2sd xmm1,eax	MATCH	51b0ad  cvtsi2sd xmm1,eax          ; 净击杀
+docs/147-ai-behaviour.md	195	0x51b0b1	x86	mulsd xmm1,[0x19fc00]	MATCH	51b0b1  mulsd xmm1,[0x19fc00]      ; × 2e6
+docs/147-ai-behaviour.md	196	0x51b0b9	x86	addsd xmm1,xmm2	MATCH	51b0b9  addsd xmm1,xmm2
+docs/147-ai-behaviour.md	197	0x51b0c0	x86	imul rcx,rdx	MATCH	51b0c0  imul  rcx,rdx              ; V²（整数）
+docs/147-ai-behaviour.md	198	0x51b0d9	x86	subsd xmm1,[rsp+0x8]	MATCH	51b0d9  subsd xmm1,[rsp+0x8]       ; − 距离项
+docs/147-ai-behaviour.md	199	0x51b0eb	x86	divsd xmm3,xmm0	MATCH	51b0eb  divsd xmm3,xmm0            ; V²/100
+docs/147-ai-behaviour.md	200	0x51b0ef	x86	subsd xmm1,xmm3	MATCH	51b0ef  subsd xmm1,xmm3
+docs/147-ai-behaviour.md	201	0x51b0f3	x86	mov ecx,[ctx+0x58]	OPS-DIFF	51b0f3  mov   ecx,[ctx+0x58]       ; limit
+docs/147-ai-behaviour.md	202	0x51b0fb	x86	cmp rdx,rcx / jbe	MATCH	51b0fb  cmp   rdx,rcx / jbe        ; V <= limit 跳过
+docs/147-ai-behaviour.md	203	0x51b100	x86	addsd xmm1,[0x19f478]	MATCH	51b100  addsd xmm1,[0x19f478]      ; + (−5e7)
+docs/147-ai-behaviour.md	204	0x51b10d	x86	movsd [sret+0x00],xmm1	OPS-DIFF	51b10d  movsd [sret+0x00],xmm1     ; score
+docs/147-ai-behaviour.md	205	0x51b111	x86	mov [sret+0x10],eax	MATCH	51b111  mov   [sret+0x10],eax      ; 净击杀
+docs/147-ai-behaviour.md	206	0x51b114	x86	mov [sret+0x14],esi	MATCH	51b114  mov   [sret+0x14],esi      ; 那个累加器
+docs/147-ai-behaviour.md	207	0x51b11d	x86	movsd [sret+0x08],xmm0	MATCH	51b11d  movsd [sret+0x08],xmm0     ; 距离项
+docs/147-ai-behaviour.md	226	0x51ae4c	x86	dec 	ADDR-OFF(+0x5)	每命中一个实体都要查一次队伍表。[`docs/archive/97`](archive/97-two-phase-scoring.md) §3.1 的记法（`0x51ae4c dec` / `0x51ae5d inc`）
+docs/147-ai-behaviour.md	226	0x51ae5d	x86	inc 	ADDR-OFF(+0x5)	每命中一个实体都要查一次队伍表。[`docs/archive/97`](archive/97-two-phase-scoring.md) §3.1 的记法（`0x51ae4c dec` / `0x51ae5d inc`）
+docs/147-ai-behaviour.md	229	0x51b075	x86	cmove 	MATCH	（`0x51b06b cmovle` / `0x51b075 cmove`）。`docs/archive/ai/74` 把它记成"掩膜扫描累加器、
+docs/147-ai-behaviour.md	260	0x4717f7	x86	movabs 0x3f847ae147ae147b	MATCH	| `0x471825` | **真开火**：config 在栈上现搭（`0x4717f7 movabs 0x3f847ae147ae147b` = 0.01 写入 config+0x00；`0x4717ef` config+0x38 = 1；`0x471806` config+0x39 = function_mode；`0x47180e` config+0x3a = 1） |
+docs/147-ai-behaviour.md	329	0x4ee2c0	x86	cmp r12d,0x2a	MATCH	| 补齐 | `rand%50`：<25 常数、25..41 `x`、42..49 模式变量 | `0x4ee2c0 cmp r12d,0x2a` | 观测 |
+docs/147-ai-behaviour.md	346	0x51b7cf	x86	cmp $0x19	MATCH	[`docs/archive/93`](archive/93-ai-time-budget.md) 已逐条读死，本轮复核了指令（`0x51b7cf cmp $0x19`、`0x51b7d5 test %edx,%edx`、
+docs/147-ai-behaviour.md	346	0x51b7d5	x86	test %edx,%edx	MATCH	[`docs/archive/93`](archive/93-ai-time-budget.md) 已逐条读死，本轮复核了指令（`0x51b7cf cmp $0x19`、`0x51b7d5 test %edx,%edx`、
+docs/147-ai-behaviour.md	347	0x51cc60	x86	jmp 0x51cbaf	MATCH	`0x51cc60 jmp 0x51cbaf` 与 `0x51cb6d jmp 0x51cbaf` 汇合）：
+docs/147-ai-behaviour.md	347	0x51cb6d	x86	jmp 0x51cbaf	MATCH	`0x51cc60 jmp 0x51cbaf` 与 `0x51cb6d jmp 0x51cbaf` 汇合）：
+docs/150-win-rule.md	70	0x46f31e	x86	mov ebp,esi	MATCH	46f31e  mov    ebp,esi                  ; ① 第 2 个参数 = team
+docs/150-win-rule.md	71	0x46f323	x86	add r14,0xe0	MATCH	46f323  add    r14,0xe0                 ; 管理器注册表
+docs/150-win-rule.md	72	0x46f32a	x86	call 46ee00	ADDR-OFF(+0x3)	46f32a  call   46ee00                   ;   取 target_manager（集合在 +0x30）
+docs/150-win-rule.md	73	0x46f389	x86	xadd [0x9c10c0],ebx	MATCH	46f389  lock xadd [0x9c10c0],ebx        ; ② 全局原子计数器 ⇒ 新实体 id
+docs/150-win-rule.md	74	0x46f398	x86	call 43e390	MATCH	46f398  call   43e390                   ; ③ 把 id 插进 target 集合
+docs/150-win-rule.md	75	0x46f3ad	x86	movabs r15,0x8000000000000017	MATCH	46f3ad  movabs r15,0x8000000000000017   ; ④ tag 23 = TargetInfo
+docs/150-win-rule.md	76	0x46f413	x86	movzx edx,bpl	MATCH	46f413  movzx  edx,bpl                  ; ⑤ team（就是入参！）
+docs/150-win-rule.md	77	0x46f419	x86	call 3c17d0	MATCH	46f419  call   3c17d0                   ;   ⑥ TeamInfo{id, team}
+docs/150-win-rule.md	78	0x46f463	x86	mov DWORD PTR [rax],0x67726174	MATCH	46f463  mov    DWORD PTR [rax],0x67726174  ; 'targ'
+docs/150-win-rule.md	79	0x46f45d	x86	mov WORD  PTR [rax+4],0x7465	MATCH	46f45d  mov    WORD  PTR [rax+4],0x7465    ; 'et'
+docs/150-win-rule.md	80	0x46f487	x86	call 468c70	MATCH	46f487  call   468c70                   ; ⑦ SkinGraphicsInfo{id, "target"}
+docs/150-win-rule.md	81	0x46f4ca	x86	mov BYTE PTR [rsp+0x2c],0x2	MATCH	46f4ca  mov    BYTE PTR [rsp+0x2c],0x2  ; ⑧ effect = 2 (SparkEffect)
+docs/150-win-rule.md	82	0x46f4dd	x86	call [0x9bac80]	MATCH	46f4dd  call   [0x9bac80]               ;   EntityEffectInfo{id, 2}
+docs/150-win-rule.md	114	0x47353b	x86	call 46e7a0	MATCH	47353b  call 46e7a0        ; 取 team_manager
+docs/150-win-rule.md	115	0x473551	x86	call 46d6a0	MATCH	473551  call 46d6a0        ; 取 life_manager
+docs/150-win-rule.md	116	0x473591	x86	call 453c60	MATCH	473591  call 453c60        ; → 生命表里**全部实体 id** 的快照（Vec<u32>，元素宽 4）
+docs/150-win-rule.md	117	0x4735b7	x86	shl rbx,2	MATCH	4735b7  shl rbx,2          ; 循环 n 个 id
+docs/150-win-rule.md	118	0x473605	x86	mov r12d,[r14+r15]	MATCH	473605  mov r12d,[r14+r15] ;   id
+docs/150-win-rule.md	119	0x473617	x86	call 454950	MATCH	473617  call 454950        ;   is_alive(life_mgr, id)  → al
+docs/150-win-rule.md	120	0x47361c	x86	test al,1	MATCH	47361c  test al,1 ; je 跳过 ;  不是"活"就跳过（缺省返回 2 = 查不到，也跳过）
+docs/150-win-rule.md	121	0x47364a	x86	call 3c2120	MATCH	47364a  call 3c2120        ;   team_of(team_mgr, id) → 0/1/2
+docs/150-win-rule.md	122	0x47364f	x86	test al,al	MATCH	47364f  test al,al   ; je  → [rsp]   = 1    ; 值 0 = Team1 有活实体
+docs/150-win-rule.md	123	0x47365a	x86	cmp eax,0x2	MATCH	47365a  cmp  eax,0x2 ; je  跳过              ; 值 2 = 无队伍（玩家实体就是这样）
+docs/150-win-rule.md	125	0x4736c3	x86	mov eax,[rsp]	MATCH	4736c3  mov eax,[rsp] ; mov edx,[rsp+4]      ; 返回 (Team1 有活人, Team2 有活人)
+docs/150-win-rule.md	139	0x4759fe	x86	inc DWORD [rsi+0x118]	ADDR-OFF(+0x7)	4759fe  inc DWORD [rsi+0x118]         ; turn_count += 1
+docs/150-win-rule.md	140	0x475a42	x86	add rax,0x3b	MATCH	475a42  add rax,0x3b ; push           ; tag 58 = TurnCountInfo
+docs/150-win-rule.md	141	0x475a5e	x86	mov ebp,[rbx+0xc8]	MATCH	475a5e  mov ebp,[rbx+0xc8]            ; 上限"有没有设过"（0x472400 写的那个 dword）
+docs/150-win-rule.md	142	0x475a64	x86	cmp r15d,[rbx+0xcc]	MATCH	475a64  cmp r15d,[rbx+0xcc]           ; turn_count vs turn_limit
+docs/150-win-rule.md	144	0x475a72	x86	call 473520	MATCH	475a72  call 473520                   ; (al, dl) = (Team1 有活实体, Team2 有活实体)
+docs/150-win-rule.md	145	0x475a77	x86	test bpl,r15b	MATCH	475a77  test bpl,r15b ; jne 475bac    ; ① 上限用尽（且设过）⇒ END
+docs/150-win-rule.md	146	0x475a80	x86	test al,1	MATCH	475a80  test al,1     ; je  475bac    ; ② Team1 没人     ⇒ END
+docs/150-win-rule.md	147	0x475a88	x86	test dl,1	MATCH	475a88  test dl,1     ; je  475bac    ; ③ Team2 没人     ⇒ END
+docs/150-win-rule.md	148	0x475a91	x86	cmp BYTE [rbx+0x11d],1	MATCH	475a91  cmp BYTE [rbx+0x11d],1 ; jne 475d7e   ; ← 只有"游戏没结束"才走到这里
+docs/150-win-rule.md	149	0x475bac	x86	mov BYTE [rbx+0x120],0x6	MATCH	475bac  mov BYTE [rbx+0x120],0x6      ; state = 6 = EndingGame
+docs/150-win-rule.md	156	0x475bf3	x86	call 473520	ADDR-OFF(+0x3)	475bf3  call 473520                   ; 再数一次
+docs/150-win-rule.md	157	0x475bfb	x86	test al,1	MATCH	475bfb  test al,1 ; je 475c0d
+docs/150-win-rule.md	158	0x475bff	x86	xor eax,eax	MATCH	475bff  xor  eax,eax                  ; 候选 = 0 (Team1)
+docs/150-win-rule.md	159	0x475c01	x86	test dl,1	MATCH	475c01  test dl,1 ; je 475c14          ;   Team2 没人 ⇒ 胜方 = 0
+docs/150-win-rule.md	160	0x475c06	x86	cmp ebp,1	MATCH	475c06  cmp  ebp,1 ; adc al,1         ;   两边都有人 ⇒ 胜方 = 1 (Team2)
+docs/150-win-rule.md	161	0x475c0d	x86	and dl,1	MATCH	475c0d  and  dl,1 ; mov al,2 ; sub al,dl   ; Team1 没人 ⇒ 2-dl（Team2 有人=1，两边都没=2）
+docs/150-win-rule.md	217	0x475a91	x86	cmp BYTE [rbx+0x11d],1	MATCH	475a91  cmp BYTE [rbx+0x11d],1 ; jne 475d7e    ; 关卡位；不是 1 就跳过整段
+docs/150-win-rule.md	218	0x475aa8	x86	call 46ee00	MATCH	475aa8  call 46ee00                            ; target_manager
+docs/150-win-rule.md	219	0x475abe	x86	call 46d6a0	MATCH	475abe  call 46d6a0                            ; life_manager
+docs/150-win-rule.md	221	0x475b80	x86	mov esi,[rdx-0x4]	MATCH	475b80  mov esi,[rdx-0x4]                      ;   id
+docs/150-win-rule.md	222	0x475b83	x86	call 454950	MATCH	475b83  call 454950                            ;   is_alive(id)
+docs/150-win-rule.md	223	0x475b8c	x86	test al,1	MATCH	475b8c  test al,1 ; jne 475c79                 ;   **只要有一个靶子还活着** ⇒ 去复原
+docs/150-win-rule.md	224	0x475ba1	x86	jne 475b20	MATCH	475ba1  jne 475b20                             ;   否则继续扫；扫完 ⇒ 475d45（什么都不做）
+docs/150-win-rule.md	225	0x475d2d	x86	call 454b40 (rdi=life+0x18, esi=id, edx=1, ecx=0)	OPS-DIFF	475d2d  call 454b40 (rdi=life+0x18, esi=id, edx=1, ecx=0)   ; ← 复原：alive := 1
+docs/150-win-rule.md	226	0x475d43	x86	jne 475cd0	MATCH	475d43  jne 475cd0                             ;   对**集合里每一个** target id 都做一遍
+docs/150-win-rule.md	237	0x475ba7	x86	jmp 475d45	MATCH	| 靶子**全部**已死时什么都不做（那段循环直接扫完） | `0x475ba7 jmp 475d45` | **逐位** |
+docs/152-audit-of-merged-claims.md	29	0x3c1c1c	x86	cmp %r8d,%eax	MATCH	| A | `docs/10-campaign.md` §13.3 | `0x3c1b40` 出口是 `cmp` / **`setb`** | **`setg`**（`0x3c1c1c cmp %r8d,%eax`、`0x3c1c1f setg %al`） | **结论不变**（人数是小非负整数，`setg`≡`setb`；平手仍进 Team1）。只是条件码记错 |
+docs/152-audit-of-merged-claims.md	88	0x3c1bdb	x86	add %r9d,%r8d	MATCH	| 谓词 = `Σteam < Σ(team^1)` ⇒ 进人少的队 | `0x3c1bdb add %r9d,%r8d`（`r8d`=Σteam）、`0x3c1bde xor $0x1,%r9d` + `0x3c1be2 add %r9d,%eax`（`eax`=Σ(team^1)）；`0x3c1c1c cmp %r8d,%eax` + **`0x3c1c1f setg %al`** ⇒ al = `Σ(team^1) > Σteam` | 一致（**但条件码名字见 §1-A**） |
+docs/152-audit-of-merged-claims.md	88	0x3c1bde	x86	xor $0x1,%r9d	MATCH	| 谓词 = `Σteam < Σ(team^1)` ⇒ 进人少的队 | `0x3c1bdb add %r9d,%r8d`（`r8d`=Σteam）、`0x3c1bde xor $0x1,%r9d` + `0x3c1be2 add %r9d,%eax`（`eax`=Σ(team^1)）；`0x3c1c1c cmp %r8d,%eax` + **`0x3c1c1f setg %al`** ⇒ al = `Σ(team^1) > Σteam` | 一致（**但条件码名字见 §1-A**） |
+docs/152-audit-of-merged-claims.md	88	0x3c1be2	x86	add %r9d,%eax	MATCH	| 谓词 = `Σteam < Σ(team^1)` ⇒ 进人少的队 | `0x3c1bdb add %r9d,%r8d`（`r8d`=Σteam）、`0x3c1bde xor $0x1,%r9d` + `0x3c1be2 add %r9d,%eax`（`eax`=Σ(team^1)）；`0x3c1c1c cmp %r8d,%eax` + **`0x3c1c1f setg %al`** ⇒ al = `Σ(team^1) > Σteam` | 一致（**但条件码名字见 §1-A**） |
+docs/152-audit-of-merged-claims.md	88	0x3c1c1c	x86	cmp %r8d,%eax	MATCH	| 谓词 = `Σteam < Σ(team^1)` ⇒ 进人少的队 | `0x3c1bdb add %r9d,%r8d`（`r8d`=Σteam）、`0x3c1bde xor $0x1,%r9d` + `0x3c1be2 add %r9d,%eax`（`eax`=Σ(team^1)）；`0x3c1c1c cmp %r8d,%eax` + **`0x3c1c1f setg %al`** ⇒ al = `Σ(team^1) > Σteam` | 一致（**但条件码名字见 §1-A**） |
+docs/152-audit-of-merged-claims.md	89	0x3c1b90	x86	test %rdx,%rdx	MATCH	| 平手进 Team1 | 平手时 `>` 为假 ⇒ al=0；空表分支 `0x3c1b90 test %rdx,%rdx; je` 直接把 `eax` 置 0 ⇒ 第一个玩家拿 0 | 一致 |
+docs/152-audit-of-merged-claims.md	90	0x473ae0	x86	call 0x3c1b40	MATCH	| 返回值直接当 team 传下去 | `0x473ae0 call 0x3c1b40` → `0x473b05 movzbl %al,%ebp` → `0x473b0a mov %ebp,%edx` → `0x473b0c call 0x3c17d0`（`add_to_team`，`esi`=`%ebx`=实体号） | 一致 |
+docs/152-audit-of-merged-claims.md	90	0x473b0a	x86	mov %ebp,%edx	MATCH	| 返回值直接当 team 传下去 | `0x473ae0 call 0x3c1b40` → `0x473b05 movzbl %al,%ebp` → `0x473b0a mov %ebp,%edx` → `0x473b0c call 0x3c17d0`（`add_to_team`，`esi`=`%ebx`=实体号） | 一致 |
+docs/152-audit-of-merged-claims.md	90	0x473b0c	x86	call 0x3c17d0	MATCH	| 返回值直接当 team 传下去 | `0x473ae0 call 0x3c1b40` → `0x473b05 movzbl %al,%ebp` → `0x473b0a mov %ebp,%edx` → `0x473b0c call 0x3c17d0`（`add_to_team`，`esi`=`%ebx`=实体号） | 一致 |
+docs/152-audit-of-merged-claims.md	91	0x473a1f	x86	mov 0x48(%r15),%rcx	MATCH	| 整房上限 10（`0x4739c0`） | `0x473a1f mov 0x48(%r15),%rcx`（玩家表 len）→ `0x473a34 cmp $0xa,%rcx` → `0x473a38 jae` ⇒ `len >= 10` 就不再收 | 一致 |
+docs/152-audit-of-merged-claims.md	91	0x473a34	x86	cmp $0xa,%rcx	MATCH	| 整房上限 10（`0x4739c0`） | `0x473a1f mov 0x48(%r15),%rcx`（玩家表 len）→ `0x473a34 cmp $0xa,%rcx` → `0x473a38 jae` ⇒ `len >= 10` 就不再收 | 一致 |
+docs/152-audit-of-merged-claims.md	91	0x473a38	x86	jae 	MATCH	| 整房上限 10（`0x4739c0`） | `0x473a1f mov 0x48(%r15),%rcx`（玩家表 len）→ `0x473a34 cmp $0xa,%rcx` → `0x473a38 jae` ⇒ `len >= 10` 就不再收 | 一致 |
+docs/152-audit-of-merged-claims.md	102	0x3e45cd	x86	call 0x478fc0	MATCH	四个参数在 `0x3e45cd call 0x478fc0` 前全部就位（`esi`=连接号、`edx`=level、`ecx`=精英数、`r8d`=5、`r9d`=limit）：
+docs/152-audit-of-merged-claims.md	105	0x3e3d95	x86	mov $0xa,%ecx	MATCH	3e3d95  mov $0xa,%ecx ; mov $0x5,%r9d          ; 档0: 10 / 5
+docs/152-audit-of-merged-claims.md	106	0x3e3da0	x86	cmp $0x4,%r14d	MATCH	3e3da0  cmp $0x4,%r14d  ; jb  -> 用上面那组
+docs/152-audit-of-merged-claims.md	107	0x3e3daa	x86	mov $0x14,%ecx	MATCH	3e3daa  mov $0x14,%ecx                         ; 档1: 20 / 5
+docs/152-audit-of-merged-claims.md	108	0x3e3daf	x86	cmp $0xb,%r14d	MATCH	3e3daf  cmp $0xb,%r14d  ; jb  -> 用上面那组
+docs/152-audit-of-merged-claims.md	109	0x3e3db9	x86	cmp $0x1a,%r14d	MATCH	3e3db9  cmp $0x1a,%r14d ; jae 3e456d
+docs/152-audit-of-merged-claims.md	110	0x3e3dc3	x86	mov $0x1e,%ecx	MATCH	3e3dc3  mov $0x1e,%ecx ; mov $0xa,%r9d         ; 档2: 30 / 10
+docs/152-audit-of-merged-claims.md	111	0x3e456d	x86	cmp $0x65,%r14d	MATCH	3e456d  cmp $0x65,%r14d ; jae 3e458d
+docs/152-audit-of-merged-claims.md	112	0x3e4573	x86	mov $0x28,%ecx	MATCH	3e4573  mov $0x28,%ecx ; mov $0xf,%r9d         ; 档3: 40 / 15
+docs/152-audit-of-merged-claims.md	113	0x3e458d	x86	cmp $0xfb,%r14d	MATCH	3e458d  cmp $0xfb,%r14d ; mov $0x19,%eax ; mov $0xc8,%r9d ; cmovb %eax,%r9d
+docs/152-audit-of-merged-claims.md	114	0x3e45a3	x86	mov $0x32,%ecx	MATCH	3e45a3  mov $0x32,%ecx                         ; 档4/5: 50 / (25 或 200)
+docs/152-audit-of-merged-claims.md	115	0x3e45c7	x86	mov $0x5,%r8d	MATCH	3e45c7  mov $0x5,%r8d  ; 3e45cd call 0x478fc0
+docs/152-audit-of-merged-claims.md	123	0x3e45c7	x86	mov $0x5,%r8d	MATCH	| 第 5 个实参是常数 5 | `0x3e45c7 mov $0x5,%r8d` | 一致 |
+docs/152-audit-of-merged-claims.md	164	0x4a891c	a64	ldp d9,d8,[x8,#-0x10]	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	164	0x4a88ec	a64	ldr x20,[x8,#0x10]	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	164	0x4a8918	a64	add x8,x22,x20,lsl #4	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	164	0x4a89b4	a64	stp d9,d8,[x29,#-0x60]	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	164	0x4a89e8	a64	mov x8,#0x2c	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	164	0x4a89ec	a64	movk x8,#0x8000,lsl#48	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	164	0x4a8a08	a64	bl 0x3d7a40	MATCH	| `0x4a891c ldp d9,d8,[x8,#-0x10]` = `points[len-1]`；`pos_y` 实参 = 该点第二字，中间无求值器 | `0x4a88e8 orr x22,…`（拼 ptr）、`0x4a88ec ldr x20,[x8,#0x10]`（len）、`0x4a8918 add x8,x22,x20,lsl #4`、**`0x4a891c ldp d9,d8,[x8,#-0x10]`**、`0x4a89b4 stp d9,d8,[x29,#-0x60]`、`0x4a89b8 sturb wzr,[x29,#-0x4c]`（type=0）、`0x4a89e8 
+docs/152-audit-of-merged-claims.md	183	0x418a10	x86	cmp ebp,dword ptr [rsp+0x34]	MATCH	| `cmp ebp,[rsp+0x34]` + **`setbe`**（无符号 `<=`） | `0x418a10 cmp ebp,dword ptr [rsp+0x34]`、`0x418a14 setbe sil` | 一致 |
+docs/152-audit-of-merged-claims.md	184	0x41886c	x86	cmp ebp,0x14	MATCH	| 循环上界钳在 20 | `0x41886c cmp ebp,0x14` + `0x41886f cmove r13d,ebp` | 一致 |
+docs/152-audit-of-merged-claims.md	184	0x41886f	x86	cmove r13d,ebp	MATCH	| 循环上界钳在 20 | `0x41886c cmp ebp,0x14` + `0x41886f cmove r13d,ebp` | 一致 |
+docs/152-audit-of-merged-claims.md	185	0x4186d2	x86	inc %edx	MATCH	| 只有两个调用点；存档那处实参是 `n+1` | 调用点**恰好 2 条**：`0x4186d9`（在 `0x4183b0`）、`0x3a3eda`（在 `0x3a2e10`）；前者前一条是 `0x4186d2 inc %edx` → `0x4186d7 mov %edx,%esi` | 一致 |
+docs/152-audit-of-merged-claims.md	185	0x4186d7	x86	mov %edx,%esi	MATCH	| 只有两个调用点；存档那处实参是 `n+1` | 调用点**恰好 2 条**：`0x4186d9`（在 `0x4183b0`）、`0x3a3eda`（在 `0x3a2e10`）；前者前一条是 `0x4186d2 inc %edx` → `0x4186d7 mov %edx,%esi` | 一致 |
+docs/161-manager-gaps.md	206	0x474b5d	x86	lea rdi,[r14+0x30]（= M+0x18）、0x474b6a mov r15,[r14+0x20]（= M+0x08	MATCH	判据③ 体内用的是本模块的表基/通道：0x474b5d lea rdi,[r14+0x30]（= M+0x18）、0x474b6a mov r15,[r14+0x20]（= M+0x08）
+docs/161-manager-gaps.md	210	0x474b89	x86	mov [rsp+0x30],[rsp+0x34]	OPS-DIFF	0x474b85/0x474b89 mov [rsp+0x30],[rsp+0x34] = (新兵, owner)            ; 载荷 +0x08 / +0x0c
+docs/161-manager-gaps.md	260	0x3f0e58	x86	lea rax,[isize::MAX+0x24]	MATCH	处理器闸 0x3f0e4e/0x3f0e58 lea rax,[isize::MAX+0x24] = 0x8000…0023 = 35
+docs/161-manager-gaps.md	465	0x51a443	x86	add rbp,0x43	MATCH	（0x51a162/239/310/3e7 = lea rax,[rbp+0x3c/33/35/37]；0x51a443 add rbp,0x43）
+docs/161-manager-gaps.md	572	0x469035	x86	movabs rdx,0x8000…0033	MATCH	| C9 | 本文 §3.5 / §2 第 16 行（`Graphics`） | 第三处重播 tag "是间接载入（`mov rax,[rsp+0x10]`）⇒ 按模块文档是 55，**未逐位复核**" | **逐位复核完**：`0x469035 movabs rdx,0x8000…0033` + `0x46903f or rdx,4` = **55**；三支共用提交代码，tag 从 `rsp+0x10` 取（这就是"字面量扫描只看到基址"的原因） | **任务 77 就地更正**（§2.2 ③） |
+docs/161-manager-gaps.md	572	0x46903f	x86	or rdx,4	MATCH	| C9 | 本文 §3.5 / §2 第 16 行（`Graphics`） | 第三处重播 tag "是间接载入（`mov rax,[rsp+0x10]`）⇒ 按模块文档是 55，**未逐位复核**" | **逐位复核完**：`0x469035 movabs rdx,0x8000…0033` + `0x46903f or rdx,4` = **55**；三支共用提交代码，tag 从 `rsp+0x10` 取（这就是"字面量扫描只看到基址"的原因） | **任务 77 就地更正**（§2.2 ③） |
+docs/162-audit-tiers.md	116	0x454f30	x86	push r15 / push r14 / push rbx	MATCH	0x454f30  push r15 / push r14 / push rbx            ← GraphwarRankManager::new
+docs/162-audit-tiers.md	117	0x454f9c	x86	lea rsi, [0x1c0eef]   'new_connection_event'   + 0x454faa mov edx, 0x14 (len 20)	MATCH	0x454f9c  lea rsi, [0x1c0eef]   'new_connection_event'   + 0x454faa mov edx, 0x14 (len 20)
+docs/162-audit-tiers.md	118	0x454fa3	x86	lea r8, [0x9567d8]	MATCH	0x454fa3  lea r8, [0x9567d8]                            ← 订阅器句柄结构
+docs/162-audit-tiers.md	119	0x454fb5	x86	call [0x9bac88]	MATCH	0x454fb5  call [0x9bac88] -> 0x3d38f0                   ← subscribe_to_event
+docs/162-audit-tiers.md	120	0x454fed	x86	lea rsi, [0x1c0e12]   'entity_removed_event'   + 0x454ffb mov edx, 0x14	MATCH	0x454fed  lea rsi, [0x1c0e12]   'entity_removed_event'   + 0x454ffb mov edx, 0x14
+docs/162-audit-tiers.md	121	0x455006	x86	call [0x9bac88]	MATCH	0x455006  call [0x9bac88] -> 0x3d38f0                   ← 第二条订阅
+docs/162-audit-tiers.md	135	0x454e1f	x86	movabs rax, 0x8000000000000043	MATCH	0x454e1f  movabs rax, 0x8000000000000043
+docs/162-audit-tiers.md	136	0x454e35	x86	call [0x9bac80]	MATCH	0x454e35  call [0x9bac80] -> 0x3d3530      ← send_all_info_events（整表重播）
+docs/162-audit-tiers.md	137	0x45510b	x86	movabs rax, 0x8000000000000043	MATCH	0x45510b  movabs rax, 0x8000000000000043
+docs/162-audit-tiers.md	138	0x45511f	x86	call [0x9bac80]	MATCH	0x45511f  call [0x9bac80] -> 0x3d3530      ← set_rank
+docs/162-audit-tiers.md	150	0x519209	x86	call [0x9bac88]	MATCH	0x519209  call [0x9bac88] -> 0x3d38f0
+docs/162-audit-tiers.md	152	0x519255	x86	call [0x9bac88]	MATCH	0x519255  call [0x9bac88] -> 0x3d38f0
+docs/162-audit-tiers.md	159	0x518fcd	x86	movabs rax, 0x800000000000003c	MATCH	0x518fcd  movabs rax, 0x800000000000003c
+docs/162-audit-tiers.md	160	0x518fe5	x86	call [0x9bac80]	MATCH	0x518fe5  call [0x9bac80] -> 0x3d3530      ← send_all_info_events
+docs/162-audit-tiers.md	161	0x5193e8	x86	call [0x9bac80]	MATCH	0x5193e8  call [0x9bac80] -> 0x3d3530      ← set_name（0x5193af 起拼 tag）
+docs/162-audit-tiers.md	181	0x519f4e	x86	movabs rbp, 0x7fffffffffffffff	MATCH	（**基址来源写在指令上**：`0x519f4e movabs rbp, 0x7fffffffffffffff` —— 整个函数里写 `rbp` 的只有
+docs/162-audit-tiers.md	182	0x51a443	x86	add 	MATCH	这一条、下面那条 `0x51a443 add`、以及早退臂上的 `0x519faf pop rbp`）：
+docs/162-audit-tiers.md	182	0x519faf	x86	pop rbp	MATCH	这一条、下面那条 `0x51a443 add`、以及早退臂上的 `0x519faf pop rbp`）：
+docs/162-audit-tiers.md	185	0x519f4e	x86	movabs rbp, 0x7fff_ffff_ffff_ffff	MATCH	0x519f4e movabs rbp, 0x7fff_ffff_ffff_ffff        ← 基址 = isize::MAX（**不是** 2^63！）
+docs/162-audit-tiers.md	188	0x51a162	x86	lea rax,[rbp+0x3c]	MATCH	0x51a162 lea rax,[rbp+0x3c]  ⇒ 0x800000000000003b = 59   @0x51a170 call [0x9bac80]
+docs/162-audit-tiers.md	189	0x51a239	x86	lea rax,[rbp+0x33]	MATCH	0x51a239 lea rax,[rbp+0x33]  ⇒ 0x8000000000000032 = 50   @0x51a247
+docs/162-audit-tiers.md	190	0x51a310	x86	lea rax,[rbp+0x35]	MATCH	0x51a310 lea rax,[rbp+0x35]  ⇒ 0x8000000000000034 = 52   @0x51a31e
+docs/162-audit-tiers.md	191	0x51a3e7	x86	lea rax,[rbp+0x37]	MATCH	0x51a3e7 lea rax,[rbp+0x37]  ⇒ 0x8000000000000036 = 54   @0x51a3f5
+docs/162-audit-tiers.md	192	0x51a443	x86	add rbp,0x43	MATCH	0x51a443 add rbp,0x43        ⇒ 0x8000000000000042 = 66   @0x51a451
+docs/162-audit-tiers.md	217	0x51a577	x86	movabs rax, 0x8000000000000007	MATCH	0x51a577  movabs rax, 0x8000000000000007
+docs/162-audit-tiers.md	218	0x51a581	x86	cmp qword ptr [rsi], rax	MATCH	0x51a581  cmp    qword ptr [rsi], rax       ← 这是在**断言收到的**事件 tag == 7
+docs/162-audit-tiers.md	219	0x51a5b1	x86	inc rax	MATCH	0x51a5b1  inc    rax                        ← ⇒ rax = 0x8000_0000_0000_0008
+docs/162-audit-tiers.md	220	0x51a5b8	x86	mov rsi, rsp	MATCH	0x51a5b8  mov    rsi, rsp
+docs/162-audit-tiers.md	221	0x51a5bb	x86	call [0x9bac80]	MATCH	0x51a5bb  call [0x9bac80] -> 0x3d3530       ← 发出去的是 **8**（NewPlayerRequest）
+docs/162-audit-tiers.md	276	0x51a5b1	x86	inc rax	MATCH	| **D4** | `docs/161-manager-gaps.md:112`（§2 第 3 行） | "`handle_connected_to_server`(`0x51a570`) 里 1 处 = **7**`@0x51a5bb`" | **8**：`0x51a577` 的 `movabs …07` 是**入向**断言，`0x51a5b1 inc rax` 之后发出去的是 **8**（`NewPlayerRequest`）。**同一篇文档 §2.1（`:127`）写的就是 8** ⇒ 文档内部打架 | 中（唯一一处"数值级"错误，且自相矛盾） |
+docs/162-audit-tiers.md	280	0x517a5e	x86	lea rsi,'entity_removed_event'	OPS-DIFF	| **D8** | `src/graphwar_local_player_manager.rs:165` | 「`0x517a5e lea rsi,'entity_removed_event'` + `0x517a6c mov edx,0x14`」 | `mov edx,0x14` 实际在 **`0x517a6f`**；`0x517a6c` 那条是 `mov rdi, rsp`（`lea rsi` 7 B → `lea r8` 7 B → 3 B 之后才是它）。**注释级偏差 3 字节，不影响任何结论或断言** | 很低（`AGENTS.md` §0.3 里注释也是证据，所以登记） |
+docs/162-audit-tiers.md	280	0x517a6c	x86	mov edx,0x14	OPS-DIFF	| **D8** | `src/graphwar_local_player_manager.rs:165` | 「`0x517a5e lea rsi,'entity_removed_event'` + `0x517a6c mov edx,0x14`」 | `mov edx,0x14` 实际在 **`0x517a6f`**；`0x517a6c` 那条是 `mov rdi, rsp`（`lea rsi` 7 B → `lea r8` 7 B → 3 B 之后才是它）。**注释级偏差 3 字节，不影响任何结论或断言** | 很低（`AGENTS.md` §0.3 里注释也是证据，所以登记） |
+docs/archive/148-guide-manual.md	91	0x51b7cf	x86	cmp $0x19	MATCH	| 25 s 墙钟 | `docs/93` §2（`0x51b7cf cmp $0x19`） | 逐位 |
+docs/archive/155-round-log.md	564	0x4a8b40	a64	bl get_position	MATCH	同一函数里的第二处生产点（死亡）用的是另一条路：`0x4a8b40 bl get_position`（`GraphwarPlanePosManager::get_position`）
+docs/archive/155-round-log.md	565	0x4a8b50	a64	ldp d8,d9,[sp,#0x80]	MATCH	→ `0x4a8b50 ldp d8,d9,[sp,#0x80]` → `0x4a8cb4 stp d8,d9,[x29,#-0x58]`，与 `0x4a8c50 ldurb w21,[x13,#-4]`
+docs/archive/155-round-log.md	565	0x4a8cb4	a64	stp d8,d9,[x29,#-0x58]	MATCH	→ `0x4a8b50 ldp d8,d9,[sp,#0x80]` → `0x4a8cb4 stp d8,d9,[x29,#-0x58]`，与 `0x4a8c50 ldurb w21,[x13,#-4]`
+docs/archive/155-round-log.md	588	0x4a7458	a64	bl calculate_corrected_function	MATCH	* 调用序（**观测**）：`GraphwarGameStateManager::fire_functions` 内先 **`0x4a7458 bl calculate_corrected_function`**，
+docs/archive/155-round-log.md	589	0x4a798c	a64	bl calculate_shot_results	MATCH	再 **`0x4a798c bl calculate_shot_results`**，而 `calculate_shot_results` 在 **`0x3b5b0c`** 调采样器
+docs/archive/155-round-log.md	849	0x4a8940	a64	add w24,w21,#0x3c	MATCH	2. `FunctionActive.active_tick = [函数管理器 +0x58] + 0x3c`（`0x4a8940 add w24,w21,#0x3c`，60 tick = 1 s），
+docs/archive/155-round-log.md	1530	0x472948	x86	mov byte [rsp+0x90], 0	OPS-DIFF	| A | `0x4729d6` | `[rsp+0xf0]` = 队列记录所指点表的**最后一个点**（`0x47286b`） | **常量 0**（`0x472948 mov byte [rsp+0x90], 0`） | `[管理器+0x58] + X/30 + 60` |
+docs/archive/155-round-log.md	1548	0x3f15fc	x86	movsd xmm0, [0x19fbd0]	MATCH	0x3f15fc  movsd  xmm0, [0x19fbd0]      ; 1000.0
+docs/archive/155-round-log.md	1549	0x3f160c	x86	movsd xmm2, [0x19faa8]	MATCH	0x3f160c  movsd  xmm2, [0x19faa8]      ; 50.0
+docs/archive/155-round-log.md	1550	0x3f1618	x86	addsd xmm1, [0x19f838]	MATCH	0x3f1618  addsd  xmm1, [0x19f838]      ; + 500.0            ← x 轴偏移
+docs/archive/155-round-log.md	1551	0x3f164e	x86	addsd xmm0, [0x19f1f0]	MATCH	0x3f164e  addsd  xmm0, [0x19f1f0]      ; + 300.0            ← y 轴偏移
+docs/archive/155-round-log.md	1553	0x3f166b	x86	cmp ecx, 0x3e7	MATCH	0x3f166b  cmp    ecx, 0x3e7            ; col > 999 ?
+docs/archive/155-round-log.md	1554	0x3f1671	x86	ja 0x3f169e	MATCH	0x3f1671  ja     0x3f169e              ;   ⇒ **算撞**（越界=x）
+docs/archive/155-round-log.md	1555	0x3f1673	x86	cmp edx, 0x257	MATCH	0x3f1673  cmp    edx, 0x257            ; row > 599 ?
+docs/archive/155-round-log.md	1556	0x3f1679	x86	ja 0x3f169e	MATCH	0x3f1679  ja     0x3f169e              ;   ⇒ **算撞**（越界=y）
+docs/archive/155-round-log.md	1557	0x3f1697	x86	cmp byte ptr [rax + rdi], 0xff	MATCH	0x3f1697  cmp    byte ptr [rax + rdi], 0xff   ; mask[row*1000+col]
+docs/archive/155-round-log.md	1558	0x3f169b	x86	setne al	MATCH	0x3f169b  setne  al                    ; ← **判据就这一条**：!= 0xFF 即"撞"
+docs/archive/155-round-log.md	1572	0x3c3863	x86	cmp eax, 0x3e7	MATCH	0x3c3863  cmp  eax, 0x3e7     ; col > 999
+docs/archive/155-round-log.md	1573	0x3c3868	x86	ja 0x3c3898	MATCH	0x3c3868  ja   0x3c3898       ;  ⇒ 撞
+docs/archive/155-round-log.md	1574	0x3c386a	x86	cmp ecx, 0x257	MATCH	0x3c386a  cmp  ecx, 0x257     ; row > 599
+docs/archive/155-round-log.md	1575	0x3c3870	x86	ja 0x3c3898	MATCH	0x3c3870  ja   0x3c3898       ;  ⇒ 撞
+docs/archive/155-round-log.md	1576	0x3c3876	x86	imul ecx, ecx, 0x3e8	MATCH	0x3c3876  imul ecx, ecx, 0x3e8
+docs/archive/155-round-log.md	1577	0x3c387e	x86	add rdi, rcx	MATCH	0x3c387e  add  rdi, rcx       ; idx = row*1000 + col
+docs/archive/155-round-log.md	1578	0x3c388e	x86	cmp byte ptr [rax + rdi], 0xff	MATCH	0x3c388e  cmp  byte ptr [rax + rdi], 0xff
+docs/archive/155-round-log.md	1579	0x3c3892	x86	je 0x3c37aa	MATCH	0x3c3892  je   0x3c37aa       ; == 0xFF ⇒ 不撞，继续下一个点
+docs/archive/155-round-log.md	1610	0x3c37c6	x86	cmp byte [flags+r15],0	MATCH	**不 break**，并用一个"该点已处理"的字节数组防重（`0x3c37c6 cmp byte [flags+r15],0`）。
+docs/archive/155-round-log.md	1714	0x4eb9d0	x86	push r15/r14/rbx	MATCH	0x4eb9d0  push r15/r14/rbx; sub rsp,0x40
+docs/archive/155-round-log.md	1721	0x4eba0b	x86	bt 0x1fe20,rax	ADDR-OFF(+0x5)	0x4eba0b  bt 0x1fe20,rax          ; 一元算子集合 {5,9,10,11,12,13,14,15,16}
+docs/archive/155-round-log.md	1722	0x4eba16	x86	bt 0xe0007,rax	ADDR-OFF(+0x5)	0x4eba16  bt 0xe0007,rax          ; 叶子集合   {0,1,2,17,18,19}
+docs/archive/155-round-log.md	1724	0x4ebab7	x86	lea rcx,0x1c3c6c	MATCH	0x4ebab7  lea rcx,0x1c3c6c; movsxd rax,[rcx+rax*4]; add rax,rcx; jmp rax   ; 18 项跳转表
+docs/archive/155-round-log.md	1981	0x3b5870	a64	stp x27, x10, [x8]	A64-ADDR-OFF(+0xc)	| `+0x00` | `points.cap` | `0x3b5870 stp x27, x10, [x8]` | 只在释放/扩容时用（`shl $0x4` 算 `cap*16`） |
+docs/archive/155-round-log.md	1982	0x3c37d9	x86	mov 0x8(%r14,%r13,1),%rdx	MATCH	| `+0x08` | `points.ptr` | 同上（`stp` 的第二个寄存器） | `0x3c37d9 mov 0x8(%r14,%r13,1),%rdx` → `0x3c37e2 movupd (%rdx,%r12,1)` |
+docs/archive/155-round-log.md	1982	0x3c37e2	x86	movupd (%rdx,%r12,1)	MATCH	| `+0x08` | `points.ptr` | 同上（`stp` 的第二个寄存器） | `0x3c37d9 mov 0x8(%r14,%r13,1),%rdx` → `0x3c37e2 movupd (%rdx,%r12,1)` |
+docs/archive/155-round-log.md	1983	0x3b5884	a64	str x9, [x8, #0x10]	MATCH	| `+0x10` | `points.len` | `0x3b5884 str x9, [x8, #0x10]` | `0x3c37d2 cmp %r12,0x10(%r14,%r13,1)` |
+docs/archive/155-round-log.md	1983	0x3c37d2	x86	cmp %r12,0x10(%r14,%r13,1)	MATCH	| `+0x10` | `points.len` | `0x3b5884 str x9, [x8, #0x10]` | `0x3c37d2 cmp %r12,0x10(%r14,%r13,1)` |
+docs/archive/155-round-log.md	1984	0x3b5890	a64	str w28, [x8, #0x18]	MATCH	| `+0x18` | `id: u32` | `0x3b5890 str w28, [x8, #0x18]` | `0x3c38a3 mov 0x18(%r14,%r13,1),%r14d` |
+docs/archive/155-round-log.md	1984	0x3c38a3	x86	mov 0x18(%r14,%r13,1),%r14d	MATCH	| `+0x18` | `id: u32` | `0x3b5890 str w28, [x8, #0x18]` | `0x3c38a3 mov 0x18(%r14,%r13,1),%r14d` |
+docs/archive/155-round-log.md	1985	0x3b5894	a64	strb w10, [x8, #0x1c]	MATCH	| `+0x1c` | `flag: u8` | `0x3b5894 strb w10, [x8, #0x1c]` | — |
+docs/archive/155-round-log.md	1999	0x3b5870	a64	stp x27,x10,[x8]	A64-ADDR-OFF(+0xc)	| 2 | 打包成 `GraphwarShotResult` | `0x3b5770` | `0x3c2bc0` | arm `0x3b5870 stp x27,x10,[x8]` / `str x9,[x8,#0x10]` / `str w28,[x8,#0x18]` | **否**（只写 cap/ptr/len/id） |
+docs/archive/155-round-log.md	2000	0x4a79f8	a64	stur q0,[x22,#0x30]	MATCH	| 3 | 整条 Vec 搬进 `self.results` | `0x4a7160` | `0x470eb0` | arm `0x4a79f8 stur q0,[x22,#0x30]` + `0x4a79f0 stur x8,[x22,#0x40]`；x86 `0x471a15/0x471a1c movups` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2000	0x4a79f0	a64	stur x8,[x22,#0x40]	MATCH	| 3 | 整条 Vec 搬进 `self.results` | `0x4a7160` | `0x470eb0` | arm `0x4a79f8 stur q0,[x22,#0x30]` + `0x4a79f0 stur x8,[x22,#0x40]`；x86 `0x471a15/0x471a1c movups` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2000	0x471a1c	x86	movups 	MATCH	| 3 | 整条 Vec 搬进 `self.results` | `0x4a7160` | `0x470eb0` | arm `0x4a79f8 stur q0,[x22,#0x30]` + `0x4a79f0 stur x8,[x22,#0x40]`；x86 `0x471a15/0x471a1c movups` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2001	0x4a7ac8	a64	ldp q0,q1 / 0x4a7ad4 stp q0,q1	MATCH	| 4 | 深拷贝点表 → `set_function_points` | 同上 | 同上 | arm `0x4a7ac8 ldp q0,q1 / 0x4a7ad4 stp q0,q1`（32 B/次）；x86 同形 | **否**（块拷贝） |
+docs/archive/155-round-log.md	2002	0x489478	a64	str q0,[x22]	MATCH	| 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2002	0x48947c	a64	str x8,[x22,#0x10]	MATCH	| 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2002	0x456a2b	x86	movups (%rbx),%xmm0	MATCH	| 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2002	0x456a2e	x86	movups %xmm0,(%r15)	MATCH	| 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
+docs/archive/155-round-log.md	2003	0x4a891c	a64	ldp d9, d8, [x8, #-0x10]	MATCH	| 6 | 取 `points[len-1]` 当爆炸点 | `0x4a8558` | `0x472470` | arm `0x4a891c ldp d9, d8, [x8, #-0x10]`；x86 `0x4724cc/0x4724dd` 取 len×32 | **否**（只读两个 f64） |
+docs/archive/155-round-log.md	2013	0x3b5404	a64	tbz w22, #0x0	A64-ADDR-OFF(+0x4)	* 同一函数里还有**第二条**路径：`0x3b5404 tbz w22, #0x0` 跳到 `0x3b55c8` 是 Normal（`y = f(x)`），
+docs/archive/155-round-log.md	2058	0x3c3755	x86	xor %ecx,%ecx	MATCH	3c3755  xor %ecx,%ecx                 ; X = 0                 ← 外层的"采样序号"
+docs/archive/155-round-log.md	2059	0x3c3770	x86	mov 0x38(%rsp),%rcx / inc %rcx	MATCH	3c3770  mov 0x38(%rsp),%rcx / inc %rcx ; X += 1
+docs/archive/155-round-log.md	2060	0x3c378d	x86	mov %rcx,0x38(%rsp)	MATCH	3c378d  mov %rcx,0x38(%rsp)           ; ★ 本轮的 X（报文 tick 由它派生）
+docs/archive/155-round-log.md	2061	0x3c3798	x86	xor %r13d,%r13d / xor %r15d,%r15d	MATCH	3c3798  xor %r13d,%r13d / xor %r15d,%r15d   ; 内层：结果记录偏移 / 下标
+docs/archive/155-round-log.md	2062	0x3c37aa	x86	add $0x20,%r13 / inc %r15	MATCH	3c37aa  add $0x20,%r13 / inc %r15     ; 下一个结果记录（32 B/条）
+docs/archive/155-round-log.md	2064	0x3c37d2	x86	cmp 0x10(%r14,%r13,1),%r12	MATCH	3c37d2  cmp 0x10(%r14,%r13,1),%r12    ; 结果.length vs X → 到尾巴就 flags[i]=1 退出
+docs/archive/155-round-log.md	2065	0x3c37de	x86	shl $0x4,%r12 / 3c37e2 movupd (%rdx,%r12,1),%xmm0	MATCH	3c37de  shl $0x4,%r12 / 3c37e2 movupd (%rdx,%r12,1),%xmm0   ; ★ 取 points[X]（X 在内层共享！）
+docs/archive/155-round-log.md	2067	0x3c38e4	x86	mov %rdx,(%rax,%rcx,1)	MATCH	3c38e4  mov %rdx,(%rax,%rcx,1)        ; 条目 +0x00 = tag 0x8000000000000000
+docs/archive/155-round-log.md	2068	0x3c38ee	x86	movdqu %xmm0,0x8(%rax,%rcx,1)	MATCH	3c38ee  movdqu %xmm0,0x8(%rax,%rcx,1) ; 条目 +0x08 = (x, y)  ← 直接来自 points[X]
+docs/archive/155-round-log.md	2069	0x3c38a3	x86	mov 0x18(%r14,%r13,1),%r14d	MATCH	3c38a3  mov 0x18(%r14,%r13,1),%r14d   ; 条目 +0x18 = **GraphwarShotResult.id**
+docs/archive/155-round-log.md	2070	0x3c38fe	x86	mov %edx,0x1c(%rax,%rcx,1)	MATCH	3c38fe  mov %edx,0x1c(%rax,%rcx,1)    ; 条目 +0x1c = X
+docs/archive/155-round-log.md	2085	0x3b58ac	a64	ldr w28,[x21],#0x4	MATCH	`0x3b58ac ldr w28,[x21],#0x4`）；"同一条函数被两个兵各算一遍"这一点**未证**。
+docs/archive/155-round-log.md	2151	0x3b58ac	a64	ldr w28,[x21],#0x4	MATCH	| 3 | 两条点表逐位相同的结果记录**从哪来** | `GraphwarShotResult.id` 数组（`0x3b58ac ldr w28,[x21],#0x4`）的上游：是一次开火里**逐兵**一份，还是逐函数一份 | **推断**（有地址、未证） |
+docs/archive/155-round-log.md	2828	0x472948	x86	mov byte ptr [rsp + 0x84], 0	MATCH	| **A** `0x4729d6` | **常量 0** | `0x472948  mov byte ptr [rsp + 0x84], 0` |
+docs/archive/155-round-log.md	2829	0x472d75	x86	movzx eax, byte ptr [rcx + r8*8 - 4]	MATCH	| B `0x472e4d` | 记录里的一个字节 | `0x472d75  movzx eax, byte ptr [rcx + r8*8 - 4]` → `0x472e2e mov byte ptr [rsp + 0x90], al` |
+docs/archive/155-round-log.md	2829	0x472e2e	x86	mov byte ptr [rsp + 0x90], al	MATCH	| B `0x472e4d` | 记录里的一个字节 | `0x472d75  movzx eax, byte ptr [rcx + r8*8 - 4]` → `0x472e2e mov byte ptr [rsp + 0x90], al` |
+docs/archive/155-round-log.md	2836	0x472859	x86	mov rcx, r13	MATCH	0x472859  mov   rcx, r13
+docs/archive/155-round-log.md	2837	0x47285c	x86	shl rcx, 4	MATCH	0x47285c  shl   rcx, 4                    ; r13 = 点数，步长 16 B = 一个 (f64,f64) 点
+docs/archive/155-round-log.md	2838	0x472860	x86	mov rdx, qword ptr [rsp + 8]	MATCH	0x472860  mov   rdx, qword ptr [rsp + 8]  ; 点数组 ptr
+docs/archive/155-round-log.md	2839	0x472865	x86	movdqu xmm0, xmmword ptr [rdx + rcx - 0x10]	MATCH	0x472865  movdqu xmm0, xmmword ptr [rdx + rcx - 0x10]   ; ★ points[len-1]
+docs/archive/155-round-log.md	2840	0x47286b	x86	movdqa xmmword ptr [rsp + 0xf0], xmm0	MATCH	0x47286b  movdqa xmmword ptr [rsp + 0xf0], xmm0         ; ← 后面写进 EffectInfo 的 pos
+docs/archive/155-round-log.md	3017	0x3c38fe	x86	mov [rax+rcx+0x1c], edx	MATCH	| ⑤ | 谁分配序号 | **不是分配的**：它就是点数组的下标，由 `calculate_shot_results` 在撞点处写出（`0x3c38fe mov [rax+rcx+0x1c], edx`），恒等于**被截断点数组的最后一个下标**（`len == idx+1`，8/8） | **观测（逐位）** |
+docs/archive/155-round-log.md	3073	0x3c2bd1	x86	mov [rsp+0x1b8],rdi	MATCH	| `0x3c2bc0` | `calculate_shot_results`（FDE `[0x3c2bc0,0x3c5c4d)`） | `rdi` = 返回 `Vec<Record0x20>` 的**隐式返回指针**（`0x3c2bd1 mov [rsp+0x1b8],rdi`）；`rsi` = 那发的结构体 |
+docs/archive/155-round-log.md	3498	0x4727e1	x86	mov r15d,[rax+0x8]	MATCH	0x4727e1  mov r15d,[rax+0x8]          ; 指针低半
+docs/archive/155-round-log.md	3499	0x4727e5	x86	mov r12d,[rax+0xc]	MATCH	0x4727e5  mov r12d,[rax+0xc]          ; 指针高半
+docs/archive/155-round-log.md	3500	0x472814	x86	shl r12,0x20 / 0x472818 or r12,r15 / 0x47281b mov [rsp+8],r12	MATCH	0x472814  shl r12,0x20 / 0x472818 or r12,r15 / 0x47281b mov [rsp+8],r12
+docs/archive/155-round-log.md	3501	0x472820	x86	mov r13,[rax+0x10]	MATCH	0x472820  mov r13,[rax+0x10]          ; n
+docs/archive/155-round-log.md	3502	0x472854	x86	test r13,r13 / je skip	MATCH	0x472854  test r13,r13 / je skip
+docs/archive/155-round-log.md	3503	0x472859	x86	mov rcx,r13 / shl rcx,4	MATCH	0x472859  mov rcx,r13 / shl rcx,4
+docs/archive/155-round-log.md	3504	0x472860	x86	mov rdx,[rsp+8] / 0x472865 movdqu xmm0,[rdx+rcx-0x10]	MATCH	0x472860  mov rdx,[rsp+8] / 0x472865 movdqu xmm0,[rdx+rcx-0x10]   ; ★ pos = pts[n-1]
+docs/archive/155-round-log.md	3505	0x47286b	x86	movdqa [rsp+0xf0],xmm0	MATCH	0x47286b  movdqa [rsp+0xf0],xmm0
+docs/archive/155-round-log.md	3511	0x4a7a24	a64	ldr x9,[x28],#0x20	MATCH	4a7a24  ldr  x9,[x28],#0x20     ; tag
+docs/archive/155-round-log.md	3512	0x4a7a28	a64	tbnz x9,#0x3f, skip	MATCH	4a7a28  tbnz x9,#0x3f, skip     ; 跳过 bit63 的"事件项"
+docs/archive/155-round-log.md	3513	0x4a7a2c	a64	ldr x24,[x8,#0x10]	MATCH	4a7a2c  ldr  x24,[x8,#0x10]     ; n  ← 同一个字段
+docs/archive/155-round-log.md	3514	0x4a7a50	a64	ldr x23,[x8,#0x8]	MATCH	4a7a50  ldr  x23,[x8,#0x8]      ; ptr ← 同一个字段
+docs/archive/155-round-log.md	3516	0x4a7b28	a64	stp x24,x21,[x29,#-0x68]	MATCH	4a7b28  stp  x24,x21,[x29,#-0x68] ; (n, dst)
+docs/archive/155-round-log.md	3517	0x4a7b3c	a64	bl set_function_points	MATCH	4a7b3c  bl   set_function_points  ; 里面 end_x = pts[n-1].x（§27.2）
+docs/archive/155-round-log.md	3635	0x3c25f5	x86	test %r15b,%r15b	MATCH	Ode 分支入口：x86 `0x3c25f5 test %r15b,%r15b` / `0x3c25f8 je 0x3c2923`（**不跳** ⇒ `0x3c25fe` 起）。
+docs/archive/155-round-log.md	3635	0x3c25f8	x86	je 0x3c2923	MATCH	Ode 分支入口：x86 `0x3c25f5 test %r15b,%r15b` / `0x3c25f8 je 0x3c2923`（**不跳** ⇒ `0x3c25fe` 起）。
+docs/archive/155-round-log.md	3639	0x3c264c	x86	mov $0x64,%ebx	MATCH	| 二分 100 次不收敛 | `0x3c264c mov $0x64,%ebx`；`0x3c27xx` 每轮 `dec %ebx`；`0x3c282f jne` / `0x3c2835 jmp 0x3c2b5d` | `0x3b5458 b.eq 0x3b5704` | 100 次都不满足 `\|chord−step\| < 0.001` |
+docs/archive/155-round-log.md	3639	0x3c282f	x86	jne 	MATCH	| 二分 100 次不收敛 | `0x3c264c mov $0x64,%ebx`；`0x3c27xx` 每轮 `dec %ebx`；`0x3c282f jne` / `0x3c2835 jmp 0x3c2b5d` | `0x3b5458 b.eq 0x3b5704` | 100 次都不满足 `\|chord−step\| < 0.001` |
+docs/archive/155-round-log.md	3639	0x3c2835	x86	jmp 0x3c2b5d	MATCH	| 二分 100 次不收敛 | `0x3c264c mov $0x64,%ebx`；`0x3c27xx` 每轮 `dec %ebx`；`0x3c282f jne` / `0x3c2835 jmp 0x3c2b5d` | `0x3b5458 b.eq 0x3b5704` | 100 次都不满足 `\|chord−step\| < 0.001` |
+docs/archive/155-round-log.md	3640	0x3c287d	x86	ucomisd cand_y,px	OPS-DIFF	| 候选点 NaN | `0x3c287d ucomisd cand_y,px` + `0x3c2881 jp 0x3c2b5d` | `0x3b5570 fcmp d13,d8` + `0x3b5574 fccmp …vc` + `0x3b5580 b.gt` | `cand_y` 或 `px` 任一为 NaN |
+docs/archive/155-round-log.md	3640	0x3c2881	x86	jp 0x3c2b5d	MATCH	| 候选点 NaN | `0x3c287d ucomisd cand_y,px` + `0x3c2881 jp 0x3c2b5d` | `0x3b5570 fcmp d13,d8` + `0x3b5574 fccmp …vc` + `0x3b5580 b.gt` | `cand_y` 或 `px` 任一为 NaN |
+docs/archive/155-round-log.md	3641	0x3c2890	x86	andpd 	MATCH	| x 越界 | `0x3c2887`取 `mid` → `0x3c2890 andpd` → `0x3c2898 ucomisd [0x19fbc8]` → `0x3c28a0 ja` | `0x3b556c fabs d0,d10` + `0x3b5574`（25） | `\|mid\| > 25` |
+docs/archive/155-round-log.md	3641	0x3c2898	x86	ucomisd [0x19fbc8]	MATCH	| x 越界 | `0x3c2887`取 `mid` → `0x3c2890 andpd` → `0x3c2898 ucomisd [0x19fbc8]` → `0x3c28a0 ja` | `0x3b556c fabs d0,d10` + `0x3b5574`（25） | `\|mid\| > 25` |
+docs/archive/155-round-log.md	3641	0x3c28a0	x86	ja 	MATCH	| x 越界 | `0x3c2887`取 `mid` → `0x3c2890 andpd` → `0x3c2898 ucomisd [0x19fbc8]` → `0x3c28a0 ja` | `0x3b556c fabs d0,d10` + `0x3b5574`（25） | `\|mid\| > 25` |
+docs/archive/155-round-log.md	3642	0x3c28b2	x86	andpd 	SKIP-NOTEXT	| y 越界 | `0x3c28a6`取 `cand_y` → `0x3c28b2 andpd` → `0x3c28b4 ucomisd [0x19fd40]` → `0x3c28bc ja` | `0x3b5564 fabs d1,d13` + `0x3b557c`（15） | `\|cand_y\| > 15` |
+docs/archive/155-round-log.md	3642	0x3c28b4	x86	ucomisd [0x19fd40]	MATCH	| y 越界 | `0x3c28a6`取 `cand_y` → `0x3c28b2 andpd` → `0x3c28b4 ucomisd [0x19fd40]` → `0x3c28bc ja` | `0x3b5564 fabs d1,d13` + `0x3b557c`（15） | `\|cand_y\| > 15` |
+docs/archive/155-round-log.md	3642	0x3c28bc	x86	ja 	MATCH	| y 越界 | `0x3c28a6`取 `cand_y` → `0x3c28b2 andpd` → `0x3c28b4 ucomisd [0x19fd40]` → `0x3c28bc ja` | `0x3b5564 fabs d1,d13` + `0x3b557c`（15） | `\|cand_y\| > 15` |
+docs/archive/155-round-log.md	3643	0x3c2915	x86	cmp %r13d,%r12d	MATCH	| 点数用尽 | `0x3c2915 cmp %r13d,%r12d` / `0x3c2918 jne 0x3c260d` / `0x3c291e jmp 0x3c2b5d` | `0x3b55ac cmp w22,w23` / `0x3b55c0 b.ne` | `count == n` |
+docs/archive/155-round-log.md	3643	0x3c2918	x86	jne 0x3c260d	MATCH	| 点数用尽 | `0x3c2915 cmp %r13d,%r12d` / `0x3c2918 jne 0x3c260d` / `0x3c291e jmp 0x3c2b5d` | `0x3b55ac cmp w22,w23` / `0x3b55c0 b.ne` | `count == n` |
+docs/archive/155-round-log.md	3643	0x3c291e	x86	jmp 0x3c2b5d	MATCH	| 点数用尽 | `0x3c2915 cmp %r13d,%r12d` / `0x3c2918 jne 0x3c260d` / `0x3c291e jmp 0x3c2b5d` | `0x3b55ac cmp w22,w23` / `0x3b55c0 b.ne` | `count == n` |
+docs/archive/155-round-log.md	3643	0x3b55ac	a64	cmp w22,w23	MATCH	| 点数用尽 | `0x3c2915 cmp %r13d,%r12d` / `0x3c2918 jne 0x3c260d` / `0x3c291e jmp 0x3c2b5d` | `0x3b55ac cmp w22,w23` / `0x3b55c0 b.ne` | `count == n` |
+docs/archive/155-round-log.md	3671	0x3c27f2	x86	ja 0x3c2840	MATCH	（x86 `0x3c27d0` 起算弦长 → `0x3c27f2 ja 0x3c2840` 收敛 → 才到 `0x3c2881/0x3c2898/0x3c28b4`），
+docs/archive/155-round-log.md	3683	0x3c27ce	x86	call *0x9baca8	OPS-DIFF	| `chord = sqrt(h² + (yn−y)²)`（`0x3c27ce call *0x9baca8`，即 `sqrt(a*a+b*b)`） | `hypot(h, yn - y)` = `m_hypot` | ✓ |
+docs/archive/155-round-log.md	3911	0x3c5ffd	x86	call *0x9bacf8	MATCH	3c5ffd  call *0x9bacf8        ; MathFunction::new(文本) —— 输入先拷一份（解析器会就地转小写）
+docs/archive/155-round-log.md	3912	0x3c6003	x86	movsd (%r14),%xmm0	MATCH	3c6003  movsd (%r14),%xmm0    ; x0 = point.x     ← r14 = 第 4 个参数（&Point）
+docs/archive/155-round-log.md	3913	0x3c6008	x86	test %bpl,%bpl	MATCH	3c6008  test %bpl,%bpl        ; flip（第 5 个参数，r8b）
+docs/archive/155-round-log.md	3914	0x3c600d	x86	xorpd 0x19e690	MATCH	3c600d  xorpd 0x19e690        ; flip ⇒ x0 = −x0（只翻符号位）
+docs/archive/155-round-log.md	3915	0x3c602a	x86	call 4eb9d0	MATCH	3c602a  call 4eb9d0           ; f(∓x0)：y = 0、y' = 0
+docs/archive/155-round-log.md	3916	0x3c602f	x86	movsd 0x8(%r14),%xmm1	MATCH	3c602f  movsd 0x8(%r14),%xmm1 ; y0 = point.y
+docs/archive/155-round-log.md	3917	0x3c6035	x86	subsd %xmm0,%xmm1	MATCH	3c6035  subsd %xmm0,%xmm1     ; c = y0 − f(∓x0)
+docs/archive/155-round-log.md	3918	0x3c6043	x86	ucomisd 	MATCH	3c6043  ucomisd               ; c<0 走 fabs + " - "，否则 " + "
+docs/archive/156-client-rounds.md	66	0x3be5f0	x86	cmp %r13,-0x28(%rcx) / je skip	MATCH	0x3be5f0  cmp  %r13,-0x28(%rcx) / je skip    ; (value+0x50) != 0x8000_0000_0000_0000（i64::MIN）
+docs/archive/156-client-rounds.md	67	0x3be5f6	x86	mov %eax,%edx / sub -0x4(%rcx),%edx	MATCH	0x3be5f6  mov  %eax,%edx / sub -0x4(%rcx),%edx   ; edx = tick - active_tick（u32，value+0x74）
+docs/archive/156-client-rounds.md	68	0x3be5fb	x86	jbe skip	MATCH	0x3be5fb  jbe  skip                          ; tick <= active_tick ⇒ 不在场（**严格**大于）
+docs/archive/156-client-rounds.md	69	0x3be5fd	x86	mov -0x18(%rcx),%rdi	MATCH	0x3be5fd  mov  -0x18(%rcx),%rdi              ; rdi = points.len()（value+0x60）
+docs/archive/156-client-rounds.md	70	0x3be601	x86	lea (%rdx,%rdx,1),%r8d / shl $5,%edx / sub %r8d,%edx	MATCH	0x3be601  lea (%rdx,%rdx,1),%r8d / shl $5,%edx / sub %r8d,%edx
+docs/archive/156-client-rounds.md	72	0x3be60b	x86	add $0x708,%edi	MATCH	0x3be60b  add  $0x708,%edi                   ; points.len() + 1800
+docs/archive/156-client-rounds.md	73	0x3be611	x86	cmp %edi,%edx / jae skip	MATCH	0x3be611  cmp  %edi,%edx / jae skip          ; 30*d >= len+1800 ⇒ 不在场
+docs/archive/156-client-rounds.md	83	0x4b6147	x86	call 499050	MATCH	4b6147  call 499050      ; FunctionDrawer::update_transform     ← 在 GraphwarPlane::draw
+docs/archive/156-client-rounds.md	84	0x4b6339	x86	call 456df0	MATCH	4b6339  call 456df0      ; get_active_functions_on_tick         ← 唯一调用点
+docs/archive/156-client-rounds.md	85	0x4b6418	x86	call 498b70	MATCH	4b6418  call 498b70      ; FunctionDrawer::remove_function      ← 唯一调用点
+docs/archive/156-client-rounds.md	86	0x4b69ec	x86	call 498c70	MATCH	4b69ec  call 498c70      ; FunctionDrawer::update_function      ← **唯一调用点**
+docs/archive/156-client-rounds.md	87	0x4b6a0e	x86	call 4992b0	MATCH	4b6a0e  call 4992b0      ; FunctionDrawer::update_function_fade ← 唯一调用点
+docs/archive/156-client-rounds.md	738	0x422764	a64	mov w0, #0x3e8	MATCH	0x422764  mov w0, #0x3e8     ; 宽 1000
+docs/archive/156-client-rounds.md	739	0x422768	a64	mov w1, #0x258	MATCH	0x422768  mov w1, #0x258     ; 高 600
+docs/archive/156-client-rounds.md	740	0x42276c	a64	mov w2, wzr	MATCH	0x42276c  mov w2, wzr        ; use_mipmaps = false
+docs/archive/156-client-rounds.md	741	0x422770	a64	mov w3, #0x1	MATCH	0x422770  mov w3, #0x1       ; Format = 1 = LA8（Godot 4：L8=0 / LA8=1 / R8=2 / RG8=3 / RGB8=4 / RGBA8=5）
+docs/archive/156-client-rounds.md	742	0x422760	a64	add x4, x19, #0x30	MATCH	0x422760  add x4, x19, #0x30 ; &self.pixels（+0x30 那个 PackedByteArray）
+docs/archive/156-client-rounds.md	752	0x422cbc	a64	ldrb w23, [x22, x20]	MATCH	0x422cbc  ldrb  w23, [x22, x20]    ; m = mask[i]
+docs/archive/156-client-rounds.md	754	0x422ccc	a64	bl op_push_back	MATCH	0x422ccc  bl    op_push_back       ; 推 L = 0
+docs/archive/156-client-rounds.md	757	0x422ce4	a64	bl op_push_back	MATCH	0x422ce4  bl    op_push_back       ; 推 A = !m
+docs/archive/156-client-rounds.md	769	0x42260c	a64	fmov s2, #0.5	MATCH	0x42260c  fmov s2, #0.5                         ; 0.5
+docs/archive/156-client-rounds.md	770	0x42261c	a64	fmul s8, s0, s2 / fmul s9, s1, s2	MATCH	0x42261c  fmul s8, s0, s2 / fmul s9, s1, s2     ; position = size * 0.5（居中）
+docs/archive/156-client-rounds.md	771	0x422630	a64	mov w8, #0x447a0000	MATCH	0x422630  mov  w8, #0x447a0000                  ; 1000.0f32
+docs/archive/156-client-rounds.md	772	0x422644	a64	fdiv s10, s0, s1	MATCH	0x422644  fdiv s10, s0, s1                      ; k = size.x / 1000
+docs/archive/156-client-rounds.md	1306	0x519534	x86	mov esi,[rdi+0x28]	MATCH	519534  mov  esi,[rdi+0x28]        ; M+0x28 = "now" 的纳秒分量
+docs/archive/156-client-rounds.md	1307	0x519537	x86	cmp esi,0x3b9aca00	MATCH	519537  cmp  esi,0x3b9aca00        ; == 1e9 ? ⇒ **哨兵**（合法纳秒 < 1e9）
+docs/archive/156-client-rounds.md	1308	0x51953d	x86	jne 519555	MATCH	51953d  jne  519555                ; 有覆盖值 ⇒ now = (M+0x20, M+0x28)
+docs/archive/156-client-rounds.md	1309	0x51953f	x86	call *0x9ba8f8 (0x8f3a10)	MATCH	51953f  call *0x9ba8f8 (0x8f3a10)  ; 否则 SystemTime::now() → (rax=secs, edx=nanos)
+docs/archive/156-client-rounds.md	1310	0x519545	x86	mov r8,[rbx]	MATCH	519545  mov  r8,[rbx]              ; base.secs  = M+0x00
+docs/archive/156-client-rounds.md	1311	0x519548	x86	mov ecx,[rbx+8]	MATCH	519548  mov  ecx,[rbx+8]           ; base.nanos = M+0x08
+docs/archive/156-client-rounds.md	1312	0x51955f	x86	call *0x9baf28 (0x90cdd0)	MATCH	51955f  call *0x9baf28 (0x90cdd0)  ; Duration::checked_sub(now, base)
+docs/archive/156-client-rounds.md	1313	0x519565	x86	sub rax,[rbx+0x10]	MATCH	519565  sub  rax,[rbx+0x10]        ; − accum.secs  = M+0x10    （jb ⇒ panic 0x1c649f）
+docs/archive/156-client-rounds.md	1314	0x519588	x86	sub edx,ecx	MATCH	519588  sub  edx,ecx               ; − accum.nanos = M+0x18
+docs/archive/156-client-rounds.md	1316	0x5195ce	x86	divsd xmm2,[0x19eff8]	MATCH	5195ce  divsd xmm2,[0x19eff8]      ; nanos / 1e9   （0x19eff8 = f64 1e9）
+docs/archive/156-client-rounds.md	1317	0x5195d6	x86	addsd xmm2,xmm1	MATCH	5195d6  addsd xmm2,xmm1            ; + secs        ⇒ 秒
+docs/archive/156-client-rounds.md	1318	0x5195da	x86	divsd xmm2,[0x19f7f8]	MATCH	5195da  divsd xmm2,[0x19f7f8]      ; / 0.016666666 ⇒ 不足一 tick 的小数部分
+docs/archive/156-client-rounds.md	1319	0x5195e2	x86	mov eax,[rbx+0x40]	MATCH	5195e2  mov  eax,[rbx+0x40]        ; M+0x40 = u32 tick
+docs/archive/156-client-rounds.md	1320	0x5195ed	x86	addsd xmm0,xmm2	MATCH	5195ed  addsd xmm0,xmm2            ; tick + 小数部分 ← 返回值（f64）
+docs/archive/156-client-rounds.md	1380	0x4b60a0	x86	mov rdi,[rax+0x70]	MATCH	4b60a0  mov  rdi,[rax+0x70]  ; 4b60a4 call 0x44ac60（拿 Gd 句柄）→ 4b60c9 前一路 upcast
+docs/archive/156-client-rounds.md	1381	0x4b60c9	x86	call *0x9bb000 (0x8925f0)	ADDR-OFF(-0x5)	4b60c9  call *0x9bb000 (0x8925f0)  ; Control::get_size() → xmm0 = w, xmm1 = h
+docs/archive/156-client-rounds.md	1382	0x4b60d4	x86	movss [rsp+8],xmm0	MATCH	4b60d4  movss [rsp+8],xmm0         ; w
+docs/archive/156-client-rounds.md	1383	0x4b60da	x86	movss [rsp+0x10],xmm1	MATCH	4b60da  movss [rsp+0x10],xmm1      ; h
+docs/archive/156-client-rounds.md	1384	0x4b60e3	x86	call 0x4be6e0	MATCH	4b60e3  call 0x4be6e0              ; get_team_overview(...) → eax = **u32 的 4 个位**
+docs/archive/156-client-rounds.md	1385	0x4b60e8	x86	movss xmm0,[0x1ba128]	MATCH	4b60e8  movss xmm0,[0x1ba128]      ; 0.5f32（同一个 8 字节池的下一个 f32 是 30.0）
+docs/archive/156-client-rounds.md	1386	0x4b60f0	x86	movss xmm1,[rsp+0x10]	MATCH	4b60f0  movss xmm1,[rsp+0x10] ; 4b60f6 mulss xmm1,xmm0    ; **arg2 y = h × 0.5**
+docs/archive/156-client-rounds.md	1387	0x4b60fa	x86	movss xmm2,[rsp+8]	MATCH	4b60fa  movss xmm2,[rsp+8]    ; 4b6104 divss xmm2,[0x1b9fc8]  ; **arg3 scale = w / 50.0**
+docs/archive/156-client-rounds.md	1388	0x4b6100	x86	mulss xmm0,xmm2(=0.5)	MATCH	4b6100  mulss xmm0,xmm2(=0.5)                              ; **arg1 x = w × 0.5**
+docs/archive/156-client-rounds.md	1390	0x4b6132	x86	lea rdi,[rax+0x80]	MATCH	4b6132  lea  rdi,[rax+0x80]        ; 被调者 = 平面上的函数绘制器
+docs/archive/156-client-rounds.md	1391	0x4b6139	x86	movzx esi,dl	MATCH	4b6139  movzx esi,dl               ; **arg4 flip（bool）**
+docs/archive/156-client-rounds.md	1392	0x4b6147	x86	call 0x499050	MATCH	4b6147  call 0x499050              ; FunctionDrawer::update_transform
+docs/archive/156-client-rounds.md	1407	0x49905e	x86	movd [rsp+0xc],xmm1	MATCH	49905e  movd  [rsp+0xc],xmm1      ; 存 y
+docs/archive/156-client-rounds.md	1408	0x499064	x86	movss [rsp+8],xmm0	MATCH	499064  movss [rsp+8],xmm0        ; 存 x
+docs/archive/156-client-rounds.md	1409	0x499080	x86	movdqa xmm0,[0x19e880]	MATCH	499080  movdqa xmm0,[0x19e880]    ; 四个 -0.0 的符号掩膜
+docs/archive/156-client-rounds.md	1410	0x499088	x86	movdqa [rsp+0x20],xmm2	MATCH	499088  movdqa [rsp+0x20],xmm2    ; 原值那份（低 32 位 = s）
+docs/archive/156-client-rounds.md	1412	0x499092	x86	movdqa [rsp+0x10],xmm0	MATCH	499092  movdqa [rsp+0x10],xmm0    ; 取负那份
+docs/archive/156-client-rounds.md	1415	0x499135	x86	movdqa xmm0,[rsp+0x10]	MATCH	499135  movdqa xmm0,[rsp+0x10]    ; **flip 分支**：取负那份
+docs/archive/156-client-rounds.md	1416	0x49913b	x86	movdqa xmm1,xmm0	MATCH	49913b  movdqa xmm1,xmm0
+docs/archive/156-client-rounds.md	1417	0x49913f	x86	call *0x9bb238	MATCH	49913f  call *0x9bb238            ; set_scale(xmm0, xmm1) ⇒ (-s,-s)
+docs/archive/156-client-rounds.md	1418	0x499235	x86	movdqa xmm0,[rsp+0x20]	MATCH	499235  movdqa xmm0,[rsp+0x20]    ; **非 flip 分支**：xmm0 = 原值（s）
+docs/archive/156-client-rounds.md	1419	0x49923b	x86	movdqa xmm1,[rsp+0x10]	MATCH	49923b  movdqa xmm1,[rsp+0x10]    ;                  xmm1 = 取负（-s）
+docs/archive/156-client-rounds.md	1420	0x499241	x86	call *0x9bb238	MATCH	499241  call *0x9bb238            ; set_scale ⇒ (s,-s)
+docs/archive/156-client-rounds.md	1453	0x4beb95	x86	movzx eax,[rsp+0x38]	MATCH	4beb95  movzx eax,[rsp+0x38] ; shl eax,0x18        ; bit 24
+docs/archive/156-client-rounds.md	1454	0x4beb9d	x86	movzx ecx,[rsp+4]	MATCH	4beb9d  movzx ecx,[rsp+4]    ; shl ecx,0x10        ; bit 16
+docs/archive/156-client-rounds.md	1455	0x4beba7	x86	movzx edx,[rsp+8]	MATCH	4beba7  movzx edx,[rsp+8]    ; shl edx,8           ; bit 8
+docs/archive/156-client-rounds.md	1456	0x4bebb1	x86	movzx eax,[rsp+0xc]	MATCH	4bebb1  movzx eax,[rsp+0xc]                        ; bit 0
+docs/archive/156-client-rounds.md	1457	0x4bebb6	x86	or eax,edx	MATCH	4bebb6  or    eax,edx   ⇒ eax = (b38<<24)|(b4<<16)|(b8<<8)|(bc)
+docs/archive/156-client-rounds.md	1497	0x4b681d	x86	mov rax,[rsp+0xd0]	MATCH	4b681d  mov rax,[rsp+0xd0]        ; 表 1（HashMap<u32,u32>）
+docs/archive/156-client-rounds.md	1498	0x4b6842	x86	call 0x47dec0	MATCH	4b6842  call 0x47dec0             ; hash(key = player id)
+docs/archive/156-client-rounds.md	1499	0x4b68a3	x86	cmp ebp,[r10-8]	MATCH	4b68a3  cmp ebp,[r10-8]           ; 比 key
+docs/archive/156-client-rounds.md	1500	0x4b68de	x86	mov r15d,[rcx+r8*8-4]	ADDR-OFF(+0x3)	4b68de  mov r15d,[rcx+r8*8-4]     ; value = 表1[player id]（4 字节）⇒ 当表 2 的 key
+docs/archive/156-client-rounds.md	1501	0x4b68eb	x86	mov rax,[rsp+0xc8]	MATCH	4b68eb  mov rax,[rsp+0xc8]        ; 表 2
+docs/archive/156-client-rounds.md	1502	0x4b69a7	x86	movzx eax,[rcx+r8*8-4]	MATCH	4b69a7  movzx eax,[rcx+r8*8-4]    ; 3 个**字节**：r
+docs/archive/156-client-rounds.md	1503	0x4b69ad	x86	movzx edx,[rcx+r8*8-3]	MATCH	4b69ad  movzx edx,[rcx+r8*8-3]    ;                  g
+docs/archive/156-client-rounds.md	1504	0x4b69b3	x86	movzx ecx,[rcx+r8*8-2]	MATCH	4b69b3  movzx ecx,[rcx+r8*8-2]    ;                  b
+docs/archive/156-client-rounds.md	1519	0x4e069f	x86	movaps xmm0,[0x19cc20]	MATCH	4e069f  movaps xmm0,[0x19cc20]   ; Rect2(-25,-15,50,30)
+docs/archive/156-client-rounds.md	1520	0x4e06ab	x86	lea rdx,[0x19ed00]	MATCH	4e06ab  lea    rdx,[0x19ed00]    ; Color(1,1,1,1)
+docs/archive/156-client-rounds.md	1521	0x4e06b7	x86	movss xmm0,[0x1b9d08]	MATCH	4e06b7  movss  xmm0,[0x1b9d08]   ; width = -1.0
+docs/archive/156-client-rounds.md	1522	0x4e06c2	x86	mov ecx,1	MATCH	4e06c2  mov    ecx,1             ; filled = true
+docs/archive/156-client-rounds.md	1523	0x4e06c7	x86	xor r8d,r8d	MATCH	4e06c7  xor    r8d,r8d           ; antialiased = false
+docs/archive/156-client-rounds.md	1524	0x4e06ca	x86	call *0x9bc028	MATCH	4e06ca  call   *0x9bc028         ; draw_rect
+docs/archive/156-client-rounds.md	1847	0x4637fc	x86	lea rsi @0x1c18ad 'new_connection_event…'   0x46380a mov edx,0x14   0x463815 call subscribe	MATCH	0x4637fc  lea rsi @0x1c18ad 'new_connection_event…'   0x46380a mov edx,0x14   0x463815 call subscribe
+docs/archive/156-client-rounds.md	1848	0x46384d	x86	lea rsi @0x1c18c1 'entity_removed_event…'   0x46385b mov edx,0x14   0x463866 call subscribe	MATCH	0x46384d  lea rsi @0x1c18c1 'entity_removed_event…'   0x46385b mov edx,0x14   0x463866 call subscribe
+docs/archive/156-client-rounds.md	1874	0x46362e	x86	shl rsi,2	MATCH	删到的值按 **4 字节元素**的 `Vec` 释放（`0x46362e shl rsi,2` / `0x463632 mov edx,4`）
+docs/archive/156-client-rounds.md	1874	0x463632	x86	mov edx,4	MATCH	删到的值按 **4 字节元素**的 `Vec` 释放（`0x46362e shl rsi,2` / `0x463632 mov edx,4`）
+docs/archive/156-client-rounds.md	2020	0x4b32e2	x86	test %r14b	MATCH	| 4 | 弧与箭头**是否互斥** | `entity_drawer::entity_primitives` 两处分支条件（`0x4b32e2 test %r14b` / `0x4b34c3 test %bl`）的哈希表语义**没解**⇒ 本类按"同一具士兵两组都画"发 | **未知**（`tests/entity_drawer.rs` 早就这么记着） |
+docs/archive/156-client-rounds.md	2020	0x4b34c3	x86	test %bl	MATCH	| 4 | 弧与箭头**是否互斥** | `entity_drawer::entity_primitives` 两处分支条件（`0x4b32e2 test %r14b` / `0x4b34c3 test %bl`）的哈希表语义**没解**⇒ 本类按"同一具士兵两组都画"发 | **未知**（`tests/entity_drawer.rs` 早就这么记着） |
+docs/archive/156-client-rounds.md	2021	0x4b2e10	x86	call 0x519530	MATCH	| 5 | 驱动量 `V` 是什么时钟 | `0x4b2e10 call 0x519530`（`get_fractional_tick`）的返回值；本类由调用方给 | **观测**（算式）/ **我方接线**（谁每帧喂它） |
+docs/archive/156-client-rounds.md	2088	0x4b3594	x86	addsd 	MATCH	| 张开态单段张角 | `2×π/6` = 60°（三段合计 180°，画面上是断开的） | `0x4b3594 addsd` |

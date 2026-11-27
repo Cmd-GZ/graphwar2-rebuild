@@ -1,0 +1,176 @@
+# source_audit_docs3.tsv —— 审计面④第三轮：docs/144–docs/162（19 篇后期文档）的「档位声明 vs 物证」抽样台账
+# 生成：审计员 t70 / 2026-11-27，分支 agent/docs-audit3；判据沿用 .agent-work/specs/AUDIT-CRITERIA.md 与 docs/06 §88/§112
+# 列：id | 文件:行 | 原文摘录 | 声称档位 | 判据（可复核：命令/地址/夹具） | 判定 | 建议改法 | A-E
+# 判定四值：有物证（抽查能复现）/ 无物证 / 档位与物证不匹配 / 与源码或事实冲突（后两者=真问题，见 docs/06 §114）
+# A-E 沿用 AUDIT-CRITERIA §1；本审计映射与 T40/T65 一致：A=有物证、B=档位不匹配或真错、D=无物证
+# 行号由生成器现找（摘录唯一命中）⇒ docs 一追加，重跑生成器即可重新对齐；摘录是稳定检索键
+# 复跑环境：x86 .so = .reference/game/libgraphwarrust.so（md5 b156c315693f3cf69bc1282225c3c1a0）
+#           arm64 = .reference/steam/android-2.0.60/libgraphwarrust.so；
+#           冻结语料 = .reference/replays/gw2-replays-snapshot/replays（403 条目 = 401 份回放 + MANIFEST.tsv + SHA256SUMS）
+id	文件:行	原文摘录	声称档位	判据（可复核）	判定	建议改法	A-E
+001	docs/144-lobby-fixes.md:47	房间列表就是一张 `HashMap<SocketAddr, GameInfo>` 的投影	观测（符号 + 指令）	arm64 `.symtab`：`update_game_list<Iter<SocketAddr, GameInfo>>` 的泛型签名逐字存在（本审计：a64.py sym update_game_list）	有物证	合格；建议把复跑命令写成可执行行（a64.py sym …）	A
+002	docs/144-lobby-fixes.md:44	as IVBoxContainer>::process      (14 524 B)	观测	arm64 `.symtab`：`<GraphwarLanVBox as IVBoxContainer>::process` = 0x450c20、**size 14524** 逐字相同	有物证	合格	A
+003	docs/144-lobby-fixes.md:50	`update_game_list::{{closure}}::{{closure}}`（ARM64 `0x449124`，264 B）	观测	arm64 symtab：0x449124 size **264** ⇒ 地址与大小全对	有物证	合格	A
+004	docs/144-lobby-fixes.md:65	`GraphwarLanBroadcasterV6::get_game_info`，ARM64	观测	arm64 symtab：0x3ddce8 size 460（桶 stride 0x78 未逐条核，属桶内布局推断）	有物证	`0x78` 桶步长建议降「推断」，或补 `a64.py dis 0x3ddce8` 的桶算术	A
+005	docs/144-lobby-fixes.md:79	`GraphwarBackend::stop_lan_broadcaster()`（`0x407068`）	观测	arm64 symtab：stop_lan_broadcaster 0x407068（172 B）、stop_server_broker_handler 0x4074f8（136 B）逐字相同	有物证	合格	A
+006	docs/144-lobby-fixes.md:83	`stop_lan_broadcaster` 全二进制**只有一个调用点**	观测	全 arm64 `.text`（673,333 条指令）扫 bl/b 到 0x407068：**1 条**，在 **0x3a9538**（a64.py callers）	有物证	合格（负结论给了单一命中，形态正确）	A
+007	docs/144-lobby-fixes.md:26	屏幕级少了那一行 **96 px**，面板从 956 涨到 1056	观测（真值管线）	算术闭合 956+96+4(sep)=1056；`join_level_pop_up.tscn` 面板带 `size_flags_stretch_ratio = 10.0` 可核。但 `docs/archive/145:204` 对同一缺陷写的是「1049」⇒ 跨文档冲突	档位与物证不匹配	两篇统一成「956 → 1056（含 4 px 分隔）」，并注明 docs/145 的 1049 是旧读数	B
+008	docs/144-lobby-fixes.md:27	四个模式按钮**一个样式盒都没挂**	观测（真值场景的 `theme` + `StyleBoxFlat.bg_color`）	`recovered-src/axis_menu_icon_theme.tres:4` = `bg_color = Color(1, 1, 1, 1)`；`game_menu_icon_button_theme.tres:4` = `Color(0.101961, 0.231373, 0.176471)` = #1A3B2D —— 两色逐位相同	有物证	合格	A
+009	docs/144-lobby-fixes.md:29	客户端自检 **581 → 605**（+24，0 失败 0 跳过）	（无档位，当轮读数）	现树 selftest 早已超过该数（后续轮次门槛到 732）；文档没标「当轮」、旧树不可复跑	无物证	补「当轮读数（不可复跑）」或只留「+24 条断言」	D
+010	docs/144-lobby-fixes.md:361	`GameInfo.current_player_count` 在服务端侧由谁改写	未知	文档自己把它列在遗留并写清「仍是推断的部分」——AGENTS §0.3 要求的诚实形态	有物证	合格（诚实标未知）	A
+011	docs/147-ai-behaviour.md:19	`净击杀 × 2e6 − 距离项 − V²/100 − (超长 ? 5e7)`	观测	公式所在函数 `0x51a750`（0xcf0 B、5 条 Location 全指 graphwar_function_evolutionator.rs）可核；2e6/5e7 可用 `tools/const_xrefs.py 2000000.0` 反查	有物证	合格；2e6/5e7 的 `.rodata` 地址建议补进正文	A
+012	docs/147-ai-behaviour.md:20	两支都在	观测（本文更正）	**地址错 5 字节**：0x51ae4c 是 `mov rax,[rsp+0x28]`，`dec eax` 在 **0x51ae51**；0x51ae4a `jne 0x51ae5d` 说明它们俩是**块首**不是指令地址。T61 对 docs/guide 的更正用的正是 0x51ae51/0x51ae62	档位与物证不匹配	改成「块首 0x51ae4c → mov；`dec eax` 在 0x51ae51」，另一支同理（inc 在 0x51ae62）	B
+013	docs/147-ai-behaviour.md:226	的记法（`0x51ae4c dec`	观测（本文更正）	同一条记法在本篇出现两次（:20 与 :226），地址都差 5：0x51ae5d 是 `mov rax,[rsp+0x28]`、`inc eax` 在 **0x51ae62**	档位与物证不匹配	同第 12 行，两处一起改	B
+014	docs/147-ai-behaviour.md:23	`0x3c2bc0`（全库只有两个调用点）	观测（调用链）	`tools/addr_probe.py callers 0x3c2bc0`：call rel32 = 0，槽 **0x9bacb0** 有 **2** 个站点（0x471825 in 0x470eb0、0x51a9a1 in 0x51a750）——「两个」逐字相同；且是 GOT 形态不是 rel32	有物证	合格；建议把「槽 0x9bacb0」写出来，否则读者按 rel32 复核会得 0	A
+015	docs/147-ai-behaviour.md:26	0..3 → 50/5	观测（`0x3e3d95`–`0x3e45a8`）	`dis 0x3e3d80`：0x3e3d95 `mov ecx,0xa` / `mov r9d,5` / 0x3e3da0 `cmp r14d,4; jb` / 0x3e3daf `cmp r14d,0xb; jb` / 0x3e3dd9 `cmp r14d,0x1a; jae` / `mov ecx,0x1e` / `mov r9d,0xa` ⇒ 阈值 4/11/26 与档表一致	有物证	合格；把三条 cmp 的地址补进正文	A
+016	docs/147-ai-behaviour.md:27	关 12 那个 `50`	观测	与六档表自洽：d=50 落在 26..100 ⇒ 代数 50 / 种群 200（s=40×5）/ 上限 15；T61 对 docs/guide 的更正（代数50/种群200/limit15）同值	有物证	合格	A
+017	docs/147-ai-behaviour.md:22	`种群 + 3`（3 = 前 3 名精评）	观测	与 §2.3 的「一回合评分次数 = d×53 / d×103 / d×153 / d×203 / d×253」算术闭合（种群 50/100/150/200/250 各 +3）	有物证	合格（自洽 + 有档表出处）	A
+018	docs/147-ai-behaviour.md:215	打**死一个自己人**	观测（`0x51ae4c`）	指令级：0x51ae51 `dec eax` / 0x51ae62 `inc eax` 两支都在（正负各一支）⇒ 友军项存在；「−2e6」这一步要看累加点（未逐条核）	有物证	合格；若正文写 −2e6，建议指明累加指令地址	A
+019	docs/147-ai-behaviour.md:219	距离项 | 初值 1e6，只在 **tag 3 事件**里取 min	观测（静态）/ 转引实测	「常规对局里恒 1e6」是转引 archive/ai/74 的运行时分布，采样未入库（`.agent-work` 已失效，AGENTS 明令不得当证据链）	无物证	降「推断」并写缺什么（需要一份 tag 3 事件的运行时直方图）	D
+020	docs/147-ai-behaviour.md:220	那个累加器 | tag 4 事件把 `value>>32` 累加进 `[rsp+0x34]`	观测（指令）/ **未知**	指令侧可核（0x51b063–0x51b075 的 cmovle/cmove）；「tag 4 何时出现」自己标了未知 ⇒ 诚实	有物证	合格	A
+021	docs/149-coverage-matrix.md:8	我们已实现 527 个函数，其中 逐位 89 / 观测 435 / 推断 3；未做 0	（生成物）	`COVERAGE_MATRIX_UPSTREAM=.reference/upstream python3 tools/coverage_matrix.py --check` → **OK**，打印行逐字相同（rc=0）	有物证	合格（生成物与脚本一致）；但这是**模块级**口径，函数级 F1 只有 214/527（fixtures/function_coverage.tsv）⇒ 建议本句后并列函数级读数	A
+022	docs/149-coverage-matrix.md:18	`weak_caller.rs` 在上表里算进 **scope=`other`** 那一档（39 个 `orig_funcs`	（生成物 + 2026-11-08 更正）	`docs/coverage-matrix.tsv` 该行 `orig_funcs=39`、`scope=other`；430+97=527 算术闭合	有物证	合格	A
+023	docs/149-coverage-matrix.md:24	二进制函数边界（Ghidra 全量 / 落在 `.text`、本机函数表里有） | 13503 / **13263**	（生成物）	13,263 = analysis/funcstarts_ghidra_va.pkl 条数（AGENTS §0 同值）；本机不可从 `.so` 复算（pkl 在上游仓库）⇒ 转引	有物证	合格；建议注明「转引 pkl，非本机复算」	A
+024	docs/149-coverage-matrix.md:25	`panic::Location` 结构体（`len` 字段自校验后） | **2042**	（生成物）	仓库里找不到记录该计数的夹具/命令（boundary_audit.tsv 记的是 527 个**函数**，不是 2042 条结构体）	无物证	补一条可复跑命令（哪个脚本、哪个中间产物），否则降「转引」	D
+025	docs/149-coverage-matrix.md:27	至少有一个 Location 锚的函数（=13263 里） | **527**（4.0%）	（生成物）	`fixtures/boundary_audit.tsv` **527** 数据行（本审计复算）；527/13263 = 3.97 % ≈ 4.0 %	有物证	合格	A
+026	docs/149-coverage-matrix.md:28	其中同时引用两个以上模块 Location 的（已压平，不重复计数） | 86	（生成物）	boundary_audit.tsv 的列里没有「引用 ≥2 模块」的判据；86 不在本机可复算范围	无物证	补出处（哪列/哪条命令算出 86）	D
+027	docs/149-coverage-matrix.md:209	把 `0x3c2bc0` / `0x3c2530` 这类无锚函数**逐个反编译并人工归属**	（建议）	`tools/addr_probe.py locs 0x3c2530` → 零 Location；`locs 0x3c2bc0` 同 ⇒「无锚」成立	有物证	合格	A
+028	docs/149-coverage-matrix.md:217	「885/13263，观测 441 + 推断 444」	（对照行）	该行把旧读数判成「调用图扩散=推断层，不进总账」，与 AGENTS §0.2 口径一致	有物证	合格	A
+029	docs/150-win-rule.md:36	三条都跳同一个出口** `0x475bac`（`state=6` = `EndingGame`）	逐位	`dis 0x475b80`：**0x475bac `mov byte ptr [rbx + 0x120], 6`** 逐字相同；随后 0x475bc8 `mov byte [rsp+0x18],6` 走 tag 30 分支	有物证	合格	A
+030	docs/150-win-rule.md:38	**217/217** 次 `EndingGame`	观测	403 条目快照复算（解 401 份回放）：`GameStateInfo.game_state=EndingGame` **217 帧 / 217 份**，字面出现 217 次 ⇒ 帧数=份数	有物证	合格	A
+031	docs/150-win-rule.md:39	胜方被写死成 `1`（Team2）	逐位	`dis 0x475be0`：0x475bff `xor eax,eax` / `test dl,1` / `je` / **0x475c06 `cmp ebp,1` + 0x475c09 `adc al,1`** / 0x475c14 `mov [rbx+0x11f],al` ⇒ 两队都活时 winner=1 **当且仅当 ebp==0**；「ebp=上限用尽」这一步仍是推断	档位与物证不匹配	标成「逐位（winner 算式）+ 推断（ebp 语义）」	B
+032	docs/150-win-rule.md:17	（**只读，不入库**，401 份）	观测	本机复算：目录 **403** 条目 = 回放 **401** 份 + MANIFEST.tsv + SHA256SUMS；`fixtures/guardrails.json` 亦记 `corpus.count=403 / corpus.replays=401` ⇒ 本行的 401 是对的	有物证	合格（全仓应统一成「401 份回放 / 403 条目」）	A
+033	docs/150-win-rule.md:256	每关的数据**：`0x472400(esi=标志, edx=N)`	逐位	`dis 0x472400`：0x472405 `mov [rdi+0xc8],esi`、0x47240b `mov [rdi+0xcc],edx`、0x472433 `movabs rax,0x8000000000000039`（57=TurnLimitInfo）；`callers 0x472400` → 槽 0x9bbef8 唯一站点 **0x49be85**（在 0x499740 体内）	有物证	合格（三处地址 + 唯一调用者全对）	A
+034	docs/150-win-rule.md:259	语料 21 条（N ∈ {1,5,6,10}），**只有一个字段**	观测	401 份回放复算：TurnLimitInfo **21 帧 / 21 份**，值分布 {1:1, 5:8, 6:7, 10:5}，载荷只有 turn_limit 一个键 —— 与近期真值（1 字段 / 21 帧）同值	有物证	合格	A
+035	docs/150-win-rule.md:179	只统计了**含靶子**的 109 份	观测	217 帧=217 份可核；但「45/45 只统计含靶子」依赖 TargetInfo 存在性 —— 本审计复算含 TargetInfo 的回放 = **111 份**（不是 109）	档位与物证不匹配	111 才是当前值（109 是 401 份时代旧读数；docs/archive/123 需按 401 复算）	B
+036	docs/150-win-rule.md:182	却**没有** `EndingGame` 的回放 	观测	需按批做存活统计（文档 §5 给了命令，但结论依赖「回合边界事件」判定）；本审计未复跑，且同篇 §6 自认这两份是录像截断	有物证	合格（标了推断/缺什么）	A
+037	docs/150-win-rule.md:149	475bac  mov BYTE [rbx+0x120],0x6	逐位（代码块）	逐字相同（0x475bac `mov byte ptr [rbx + 0x120], 6`）	有物证	合格	A
+038	docs/150-win-rule.md:150	475bc8.. push tag 30 字节 6	逐位（代码块）	0x475bc8 `mov byte [rsp+0x18],6` + 0x475bcd `movabs rax,0x7fff…` + 0x475bd7 `add rax,0x1f` ⇒ 值 0x8000…1e；tag 30 的算式没写出来（按 tag=imm−1 口径 0x1f 会被读成 30 还是 31 取决于基址形态）	档位与物证不匹配	把 tag 的算式与基址形态写出来（同 docs/162 §4.3 的写法）	B
+039	docs/150-win-rule.md:72	46f32a  call   46ee00	逐位（代码块）	**地址错 3 字节**：0x46f32a 是 `mov rdi,r14`，`call 0x46ee00` 在 **0x46f32d**	与源码或事实冲突	地址改 0x46f32d（或注明「块首=mov」）	B
+040	docs/150-win-rule.md:156	475bf3  call 473520	逐位（代码块）	**地址错 3 字节**：0x475bf3 是 `mov rdi,rbx`，`call 0x473520` 在 **0x475bf6**	与源码或事实冲突	地址改 0x475bf6	B
+041	docs/150-win-rule.md:139	4759fe  inc DWORD [rsi+0x118]	逐位（代码块）	真指令是 **3 条**：0x4759fe `mov r15d,[rsi+0x118]` / 0x475a05 `inc r15d` / 0x475a08 `mov [rsi+0x118],r15d` —— 单条 `inc [mem]` 不是真指令（语义等价、形式不实）	档位与物证不匹配	写成三条，或注明「伪码：load+inc+store」	B
+042	docs/151-addr-open-items.md:77	`0x554730`/`0x554750` **不是函数起点**	未知→本轮裁定	`addr_probe.py fde 0x554730` → 所属 FDE `0x5546c0..0x554762` size **0xa2**，且打印 NOT an FDE function start；`0x554770` 是起点、**0xb6** —— 全对	有物证	合格	A
+043	docs/151-addr-open-items.md:80	`0x51a750`（`0xcf0` B）体内 **5 条 Location 全指 `src/graphwar_function_evolutionator.rs`	裁定	`fde 0x51a750` → size **0xcf0**；`locs 0x51a750` → graphwar_function_evolutionator.rs x5（e.g. :306:35）	有物证	合格	A
+044	docs/151-addr-open-items.md:80	`0x51a610`（`0xd6` B）1 条指 `graphwar_local_player_manager.rs`	裁定	fde 0x51a610 → size **0xd6**；locs → local_player_manager.rs x1（:146:18）	有物证	合格	A
+045	docs/151-addr-open-items.md:80	`0x3d76f0`（`0x254` B）零 Location	裁定	fde 0x3d76f0 → size **0x254**；locs → (no panic::Location referenced)	有物证	合格	A
+046	docs/151-addr-open-items.md:154	`0x9bac88` | `0x3c2045`、`0x3c2096`	裁定（槽语义）	槽与 addend 可用 addr_probe/fixtures 复算；「addend=0x3d38f0 是事件名分派器」依赖 tools/event_tags.py 的解码（同仓可复跑）	有物证	合格（两条判据都给了路径）	A
+047	docs/151-addr-open-items.md:163	⚠ **审计更正**（[`152`](152-audit-of-merged-claims.md) §1-D）	（就地更正块）	本篇已按 docs/152 §1-D 就地更正：写明该槽 267 条 `call *` + 56 条 `mov`、跨 153 个函数遍布 `.text`，并注明第 22 条结论（= bcmp）不受影响 —— 这是本批里**自查自纠**的正面样本（原结论 + 为什么错 + 正确结论都在）	有物证	合格（无需再改；建议把这处更正也回填到 docs/16 §15.9 的引用点）	A
+048	docs/151-addr-open-items.md:10	0x567530` 就是这么从	（案例）	结论是「有据的不做」，与 addr_probe.py 的三种取址形态一致（工具在仓库内，可复跑）	有物证	合格	A
+049	docs/151-addr-open-items.md:44	`0x3e6830` 事件骨架加工（`0x140` B）	未知	本节把它裁成 drop glue 并说明 0x140 是 Ghidra 合并的假长度；FDE 侧可用 `fde 0x3e6830` 复核（本审计未逐条核该长度）	有物证	合格（给了裁定链）	A
+050	docs/152-audit-of-merged-claims.md:12	`.rela.dyn`（24,669 条：RELATIVE 24,501 / GLOB_DAT 100 / JUMP_SLOT 55 / IRELATIVE 13）	（口径节）	本审计独立解析 ELF：.rela.dyn+.rela.plt 合计 **24,669** = RELATIVE(8) **24,501** + GLOB_DAT(6) **100** + JUMP_SLOT(7) **55** + IRELATIVE(16) **13** —— 四个数全对	有物证	合格	A
+051	docs/152-audit-of-merged-claims.md:14	`.eh_frame_hdr` 解析 | **13,430 个 FDE**	（口径节）	本机 `parse_eh_frame` / `parse_eh_frame_hdr` 复算均 **13,430**	有物证	合格	A
+052	docs/152-audit-of-merged-claims.md:13	1,520,816 条指令	（口径节）	需跑一次全 `.text` capstone 扫描（~1.5 M 条）；本审计未复算 ⇒ 判不了真假	无物证	补可复跑命令与该数产物（tsv/jsonl），否则标「当轮」	D
+053	docs/152-audit-of-merged-claims.md:18	最小值 `0x37b940` = `.text` 的 `sh_addr`	（口径节）	`.text` 段起止可从 `.so` 直读（AGENTS「地址空间」条同值：pkl 最小/最大 0x37b940/0x94eb70）	有物证	合格	A
+054	docs/152-audit-of-merged-claims.md:29	`0x3c1c1c cmp %r8d,%eax`、`0x3c1c1f setg %al`	（不一致表 A 行）	`dis 0x3c1c1c` → `cmp eax, r8d`；**0x3c1c1f `setg al`** ⇒ docs/10 写 setb 是错，本篇更正对	有物证	合格	A
+055	docs/152-audit-of-merged-claims.md:30	`.symtab` 尺寸 **3712 B** ⇒ `0x4a8558..0x4a93d8`	（不一致表 B 行）	arm64 `.symtab`：`execute_results` 0x4a8558 size **3712** ⇒ 末地址 0x4a93d8；本篇判 docs/155 的 0x4a8e50 是热路径 ret 正确	有物证	合格	A
+056	docs/152-audit-of-merged-claims.md:31	实测 **13 种 / 16 批**	（不一致表 C 行）	需解 401 份回放里的格式批字符串再分桶；本审计未复算这 16 批 ⇒ 判不了	无物证	补分桶脚本/产物，否则标「当轮」	D
+057	docs/152-audit-of-merged-claims.md:32	该槽有 **267 条 `call *` + 56 条 `mov`**，跨 **153 个函数**	（不一致表 D 行）	同 docs/151 的 0x9baa10 条：本审计未独立重扫（缺自建扫描器），只能在采信时注明	无物证	给出扫描命令/产物（哪个脚本、几行）	D
+058	docs/152-audit-of-merged-claims.md:196	`0x554730`/`0x554750` 都不在 FDE 起点表，所属 FDE = `0x5546c0`，长 **0xa2**	（逐项复算）	`addr_probe.py fde` 三次调用逐字相同（0xa2 / 0xb6）	有物证	合格	A
+059	docs/153-audit-downstream.md:5	三轴内容命中 **647 / 647 / 633**	（审计横幅「现行值」）	`fixtures/guardrails.json`：fire 647 / batch 647 / batch_conv **637**；该文件 `_updated` 明写「旧记 633 系 Ode 修复后的漂移未同步」⇒ 633 是旧值	与源码或事实冲突	改成 647 / 647 / **637**（横幅自称「现行值」，错在这里最误导）	B
+060	docs/153-audit-downstream.md:5	种类序列 **1075 ×3**	（横幅）	guardrails：三轴 `kind_seq_ok` 均 **1075**	有物证	合格	A
+061	docs/153-audit-downstream.md:5	死亡集合 **366 / 385**	（横幅）	guardrails：`deaths_ok=366`、`deaths_checked=385`（fire/batch）	有物证	合格	A
+062	docs/153-audit-downstream.md:5	挖洞点 **207 / 294**	（横幅）	guardrails：`destroy_ok=207`、`destroy_checked=294`	有物证	合格	A
+063	docs/153-audit-downstream.md:4	`cargo test --offline` **1585 / 0 failed**（`--features gdext-bindings` 1669）	（横幅「现行值」）	2026-11-08 读数；后续轮次已报到 1853/1983，且 AGENTS §0.2 明令测试条数不算进度 ⇒「现行」二字必然过期	无物证	删掉「现行」，写成「2026-11-08 读数（当轮）」	D
+064	docs/153-audit-downstream.md:81	401 份回放 / 1080 批 / 失败 **512** 全落桶	（逐项复算 R1-03）	401 份回放 ✓（本审计复算）；「512 只在 conv strict 轴成立、fire 轴 1059」这层限定本篇自己写明了 ⇒ 轴名齐全	有物证	合格（数字带轴名，符合合并纪律 C）	A
+065	docs/153-audit-downstream.md:92	401 份里 **503/503** 条 `DestroyObstacle`	（逐项复算 R2-14a）	本审计复算 DestroyObstacle = **503** 帧；「162 组重复 (pos_x,pos_y,radius)」亦可复算 = **162**	有物证	合格	A
+066	docs/153-audit-downstream.md:91	全 `.text` 唯一调用点 `0x4b6339`	（逐项复算 R2-13）	`addr_probe.py callers 0x456df0` 一条命令可复核（本审计未跑该条；方法在仓库内）	无物证	补一次 callers 的输出	D
+067	docs/153-audit-downstream.md:91	R2-13 | `0x456df0` 不是绘制	（逐项复算）	结论「0x456df0 是 sret 取 Vec<u32> 而非绘制」与 0x4b6339 单点调用链自洽，且给了 curve_on_screen_check/draw_classes_check 的 passed 读数	有物证	合格	A
+068	docs/154-docs-audit.md:53	327 → **348 / 527**（并集 351；无名 179 = 138+41）	（A4 处置列）	本审计复算三表并集：name_to_addr 326 / v2 312 / windows 335 唯一地址 ⇒ 并集 **355**、∩527 = **348**、527 内无名 **179** ——「348 / 179」逐字相同（并集 355 与该文 351 不同）	有物证	合格（348/179 可复算）	A
+069	docs/154-docs-audit.md:103	三份符号表逐条对上，且 `name_to_addr` 的 327 只是其中一表	（B5 判据列）	`fixtures/name_to_addr.tsv` 有 743 行、唯一地址 **326**；三表并集 **355**（本审计）⇒「327」是行/名口径	档位与物证不匹配	把三个口径分开写（表行 743 / 唯一地址 326 / 并集 355 / 527 内 348）	B
+070	docs/154-docs-audit.md:37	python3 tools/coverage_matrix.py --check         # OK（527/527，逐位 88 / 观测 439 / 推断 0）	（复跑命令块）	`--check` 现在仍 OK，但打印的是「逐位 **89** / 观测 **435** / 推断 **3**」⇒ 括号里的三个分布数已过期	与源码或事实冲突	换成 89/435/3，或只写 --check 不抄分布	B
+071	docs/154-docs-audit.md:50	换成 `647 / 647 / 633` 与 `1075 ×3`	（A1 处置列）	guardrails 现值 = 647 / 647 / **637**；该处置自己把 633 写进了「应改成」列 ⇒ 把旧值当新值	与源码或事实冲突	改成 647 / 647 / **637**	B
+072	docs/154-docs-audit.md:232	`docs/archive/156-client-rounds.md` | 2,158 | `d0d3898176c5793460e241adfedb8fb9`	（A.2 表）	本审计复算三份归档：`wc -l` = 4,229 / 2,158 / 1,885、`md5sum` = 0baca0a0… / d0d38981… / f35b4e9d… —— 行数与 md5 六项全对	有物证	合格	A
+073	docs/154-docs-audit.md:72	A23 | `docs/06-verification.md` §41.4	（就地更正）	docs/06 §41.4 那条「没有在本分支落地」现在确实已落地：guardrails fire/batch 内容 = 647 就是它的结果	有物证	合格	A
+074	docs/154-docs-audit.md:70	`weak_caller.rs`（**40** 个归属函数）	（A21 旧值）	`docs/coverage-matrix.tsv` 该行 `orig_funcs=**39**`、`scope=other`，且 430+97=527 ⇒ 39 对且**计入** total	有物证	合格	A
+075	docs/154-docs-audit.md:19	B13 口径未定案（56/544 vs 78/527）	（B 组）	两个口径都在仓内：coverage-matrix.tsv 78 模块 / 527 函数（--check OK）；module_map.tsv 一侧 56/544（未复核）	有物证	合格（把冲突摆出来而没硬裁）	A
+076	docs/158-audit-407.md:6	语料：**冻结快照**	（口径节）	本审计复算：回放 **401 份**（另 2 个 MANIFEST.tsv/SHA256SUMS）⇒ 本篇 401 是对的	有物证	合格	A
+077	docs/158-audit-407.md:17	内容命中 **647 批 → 647 自洽 / 0 不自洽**	（正对照行）	guardrails `content_ok=647` 可核；「647/647 自洽」需重跑它自建的复算器（未入库）⇒ 只能核前一半	档位与物证不匹配	把「647 自洽」的复算脚本入库，否则前半可核、后半不可核，别写成同一行	B
+078	docs/158-audit-407.md:186	快照 401 份（全部可解 gzip JSONL）；286 份有结算批，115 份没有	（复算）	401 份全部可解 ✓；按 `GameStateInfo.game_state==CalculatingResults` 计 = **287 份有 / 114 份无**；「批」的口径（guardrails 的 1080 批）不是该帧数 ⇒ 286/115 的判据未给出	档位与物证不匹配	写清「结算批」的判定口径；同批 docs/155:47 写的是 282+4/115，两篇互不相同	B
+079	docs/158-audit-407.md:247	--dir $WS/.agent-work/replay-snapshot	（语料指针）	路径在 `.agent-work/` ⇒ 按 AGENTS「`.agent-work` 是可丢弃的，别写进证据链」该指针**已失效**；现语料在 `.reference/replays/gw2-replays-snapshot/`	无物证	把语料指针换成 .reference 路径并登记 guardrails.json 的 corpus 指纹	D
+080	docs/158-audit-407.md:220	快照文件数：`06-verification.md` 一处写 **403 份**、另一处写 **401 份**	（裁决）	本审计复算：目录 **403** 条目 = 回放 **401** + 2 个元数据（MANIFEST.tsv 首行自写「401 份回放定格快照」）；guardrails 同时记 count=403/replays=401 ⇒ 本篇裁决完全正确	有物证	合格（这是本批里对 401/403 讲得最清楚的一处）	A
+081	docs/158-audit-407.md:16	A ∩ B = **73**；A ∪ B = **407**	逐位	两个轴的交并（73 / 407）是 262+218−73=407 的算术闭合，且与本审计复算的 401 份语料不冲突	有物证	合格（算术闭合）	A
+082	docs/158-audit-407.md:91	`1793871489#0`	（抽样表）	表里每条给的是批号 + 桶 + 差异 ulp，但没有逐批的复跑命令/产物（conv strict 轴要真跑）	无物证	把 647 批的 jsonl 或分桶脚本入库	D
+083	docs/158-audit-407.md:1	「407 批残差 = 回放自身不自洽」站不站得住	（标题主张）	结论方向与本次复算不冲突（647 命中批自洽这一半可核），但核心论据不可复算 ⇒ 可信度只能落在「方向」层面	档位与物证不匹配	把判决降成「在可复算的那一半上成立」，或补产物	B
+084	docs/159-audit-fingerprint.md:1	12,736 个无 `Location` 函数 / 2,803 个高置信结构同源	（审计对象）	13,263 − 527 = **12,736** 算术闭合；`fixtures/callgraph_fingerprint.tsv` 数据行 = **12,736**	有物证	合格	A
+085	docs/159-audit-fingerprint.md:3	`tools/callgraph_fingerprint.py`（`c1183d29`）	（审计对象）	该夹具 12,736 行逐行可读（本审计复算行数）	有物证	合格	A
+086	docs/159-audit-fingerprint.md:12	重出夹具后：高置信 **2,803 → 2,745**	（就地更正块）	**现夹具 `tier=高置信同源` 只有 2,399 行**（推断同源 1,092 / 歧义 2,689 / 未知 6,556，合计 12,736）⇒「重出后 2,745」与仓内夹具不符	与源码或事实冲突	把「重出后」的数改成与仓内夹具一致（2,399），或注明后来又重出了一版并记该版 sha256	B
+087	docs/159-audit-fingerprint.md:12	推断 468 → 528	（被审的数）	现夹具 = 2,399；本篇的判决（2,803 站不住）方向更成立，但被审的数已不是当前夹具里的数	档位与物证不匹配	注明「2,803 是 2026-11-0x 的夹具读数」	B
+088	docs/159-audit-fingerprint.md:79	638 个**算在 2,803 内**	（一致行）	现夹具：高置信行里 `note=small-uncalibrated` 的 **514** 行（≥256B 高置信行 0 行带此注记这一半成立）	档位与物证不匹配	514（现夹具）而不是 638	B
+089	docs/159-audit-fingerprint.md:67	中位 192 B、58.8% <256 B	（§11）	本审计复算 12,736 行 size 列：**中位 192.0**、**<256 B 占 58.8 %** —— 两个数全对	有物证	合格	A
+090	docs/159-audit-fingerprint.md:4	里 2,803 个是高置信结构同源	（被审主张）	现夹具高置信 **2,399 / 12,736 = 18.8 %**；本篇自己判「站不住」⇒ 结论方向保留	有物证	合格（判决方向正确）	A
+091	docs/159-audit-fingerprint.md:5	本文每一条都自己跑	（立场声明）	本篇确实给出了自建读取器/分类器的做法；但重算产物未入库（只在 `.agent-work`）⇒ 与 AGENTS 证据链纪律冲突	无物证	把重算产物（tsv）入库或把脚本放到 tools/	D
+092	docs/160-verify-782.md:15	实测 **129/165 = 78.182% / 147/165 = 89.091%**	（复核行）	算术可核：129/165 = 78.1818…%、147/165 = 89.0909…%；但 165 这个分母来自自建留出半划分，产物未入库	档位与物证不匹配	把 165 个样本的清单（linux_addr）入库，否则分母不可复核	B
+093	docs/160-verify-782.md:17	`scal_c@0.5` 实测 **77.58**（128/165，−1 个样本）	（复核行）	128/165 = 77.575 % 算术对；样本级证据未入库	档位与物证不匹配	同上一行	B
+094	docs/160-verify-782.md:26	工具自己的预注册选择规则给的是 **76.4**（`scal=0.25`）	（打折行）	预注册规则在 `fixtures/feature_cleanup78_prereg.md`（存在）；但「规则跑出来是 76.4」这一步没有产物	无物证	把 23 组配置的分数表入库（本篇说跑过 27 组消融）	D
+095	docs/160-verify-782.md:30	72.73 / 88.48 / 78.18 / 89.09 与 27 组消融表**逐位**复现	（结论）	四个数算术自洽；消融表 27 组未入库（feature_cleanup78_*.tsv 有若干，但未对上 27 组的口径）	无物证	指明消融表落在哪个 fixture 的哪几列	D
+096	docs/160-verify-782.md:26	「78.18 就是新纪录」	（复核行 13）	「要打折」这个结论与 docs/02 §43.4 的披露一致（本篇核的是「打折够不够」）	有物证	合格	A
+097	docs/160-verify-782.md:17	扣掉 `Location` 数字投影后**仍是** 78.18	（复核行 4）	本篇实测 scal_c@0.5 = 77.58 ⇒ 原句口径不成立的判定自洽（不是同权重对照）	有物证	合格	A
+098	docs/160-verify-782.md:21	泄漏最多值 1 个样本	（复核行 8）	「泄漏最多值 1 个样本」与 `scal@0.5` 129→128 的读数自洽（129−128=1）	有物证	合格	A
+099	docs/160-verify-782.md:4	**复核立场**：任务是**找出问题**	（立场）	立场声明合规（AUDIT-CRITERIA「反例优先」）	有物证	合格	A
+100	docs/161-manager-gaps.md:3	档位分布现在是 **19 `wired` / 2 `layout` / 1 `assembled` / 0 `stub`**	（头部读数）	`client/tools/assemble_check.gd` 的 `TIER_TALLY := {"wired": 19, "layout": 2, "assembled": 1, "stub": 0}` 逐字相同；22 个逐槽 WIRED_TIER / WIRED_SIZE 可数	有物证	合格（这是当前真值；docs/162 的 14/2/6/0 已被它取代）	A
+101	docs/161-manager-gaps.md:149	arm64 `0x409eac` 处 `alloc 0x58`	（逐槽行）	arm64 `dis 0x409ea0`：0x409eac `mov w0,#0x58`、0x409eb0 `mov w1,#8`、0x409eb4 `bl #0x4d93f0`（alloc）⇒ 逐字相同	有物证	合格	A
+102	docs/161-manager-gaps.md:149	**59**`@0x51a170` / **50**`@0x51a247` / **52**`@0x51a31e` / **54**`@0x51a3f5` / **66**`@0x51a451`	（逐槽行）	doc_cite_check_docs3.py 机核：5 条 `call [slot 0x9bac80]` 全 MATCH；0x51a162/0x51a239/0x51a310/0x51a3e7/0x51a443 的 lea/add 亦 MATCH（基址 0x519f4e movabs rbp,0x7fff…）	有物证	合格	A
+103	docs/161-manager-gaps.md:149	1 处 = **8**`@0x51a5b1`	（逐槽行）	**0x51a5b1 是 `inc rax`**（tag 物化），`call [0x9bac80]` 在 **0x51a5bb**（机核 MATCH）—— 同一发布在 :149 写 0x51a5b1、在 :165 写 0x51a5bb	与源码或事实冲突	统一：发布点写 0x51a5bb，tag 物化写 0x51a5b1（两处都用「@」无法区分）	B
+104	docs/161-manager-gaps.md:150	`new` = `0x455760`（call 点 `0x517af8`	（逐槽行）	0x455616 `call [0x9bac80]` 机核 MATCH（SoldierInfo=15 发布点）；0x455570 / 0x4556d0 均为函数起点	有物证	合格	A
+105	docs/161-manager-gaps.md:151	`GraphwarGameStateManager` / 296	（逐槽行）	`assemble_check.gd` 的 WIRED_SIZE 第 7 槽 = **296** ✓；7 条订阅站点抽样机核 MATCH	有物证	合格	A
+106	docs/161-manager-gaps.md:153	难度六档阈值 `4/11/26/101/251`	（逐槽行）	`dis 0x3e3d80`：`cmp r14d,4` / `cmp r14d,0xb` / `cmp r14d,0x1a` 逐字相同（101/251 在 0x3e456d 那一支，未逐条核）	有物证	合格	A
+107	docs/161-manager-gaps.md:154	判别值闸 = 35	（逐槽行）	`dis 0x3f0e58` → `lea rax,[r12+0x24]`（isize::MAX+0x24 ⇒ tag 35）+ `cmp [rsi],rax`，机核 MATCH	有物证	合格	A
+108	docs/161-manager-gaps.md:153	18 | `GraphwarComputerPlayerManager`	（逐槽行）	assemble_check.gd 第 18 槽 wired + 72 B；订阅/发布地址抽样机核 MATCH	有物证	合格	A
+109	docs/161-manager-gaps.md:180	@0x474ba5`（`a	（汇总表）	`dis 0x474ba5` → `call qword ptr [rip+…] slot 0x9bac80`（add_event）✓；两条发布的 tag 需按 tag 表核（未逐条）	有物证	合格	A
+110	docs/162-audit-tiers.md:3	**四处口径全部 = 14 `wired` / 2 `layout` / 6 `assembled` / 0 `stub`（合计 22）**	（一句话结论）	`client/tools/assemble_check.gd` 现 TIER_TALLY = {19, 2, 1, 0}；22 个逐槽 WIRED_TIER 里 assembled 只有 1 个（#7）、layout 2 个（#2/#8）⇒ 14/2/6/0 已过期	与源码或事实冲突	整篇加「2026-11-0x 当轮读数」横幅，或改成 19/2/1/0 并注明被 docs/161 取代	B
+111	docs/162-audit-tiers.md:4	`assemble_check.gd` 跑出来 `{14, 2, 6, 0}`，**226 passed / 0 failed**	（运行时读数）	脚本自身 TIER_TALLY 是 19/2/1/0；脚本 753 行、无 assert 字样（断言计数由外壳统计）⇒ 226 无法从当前脚本复核	与源码或事实冲突	同上；并把「226 passed」的来源（哪个 runner）写清	B
+112	docs/162-audit-tiers.md:280	`mov edx,0x14` 实际在 **`0x517a6f`**	（D8 勘误）	`dis 0x517a5e…`：0x517a5e `lea rsi,[rip-…]`（7 B）→ 0x517a65 `lea r8,…`（7 B）→ **0x517a6c `mov rdi,rsp`** → **0x517a6f `mov edx,0x14`** ⇒ 本篇勘误正确	有物证	合格（doc 自己抓出并改对了）	A
+113	docs/162-audit-tiers.md:185	0x519f4e movabs rbp, 0x7fff_ffff_ffff_ffff	（§4.3 代码块）	`dis 0x519f4e` → `movabs rbp, 0x7fffffffffffffff` 逐字相同；0x519faf pop rbp 亦在	有物证	合格	A
+114	docs/162-audit-tiers.md:192	0x8000000000000042 = 66	（§4.3 表）	`dis 0x51a443..` → `add rbp,0x43`；arg=0x43 ⇒ 0x7fff…+0x43 = 0x8000…42 = 66 ✓（站点 0x51a451 机核 MATCH）	有物证	合格	A
+115	docs/162-audit-tiers.md:111	`GraphwarRankManager`（#22，72 B）	（§4.1）	assemble_check.gd WIRED_SIZE #22 = **72** ✓；订阅/发布地址机核 MATCH	有物证	合格	A
+116	docs/162-audit-tiers.md:146	`GraphwarNameManager`（#20，72 B）	（§4.2）	WIRED_SIZE #20 = **72** ✓；表/hasher 偏移本篇给的是指令级	有物证	合格	A
+117	docs/162-audit-tiers.md:5	**六处同值**	（一句话结论）	六处来源里有多处是我方同一份常量（assemble_check.gd / root_wiring.rs / 模块文档表 / 报告表）⇒ 不是独立物证；「同值」不能当「对」的证据	档位与物证不匹配	改成「六处一致 = 一致性检查（非独立证据）」，独立证据只到 §4 的三格反汇编	B
+118	docs/archive/145-tab-fix.md:204	面板带多拿 96 px ⇒ 面板 1049 高、底边 1152（真值 956 / 1056）	观测	**算术不闭合**：面板带起点 y=100（96+4），100+1049 = 1149 ≠ 1152；同批 docs/144:26 写「956 涨到 1056」（956+96+4=1056 才闭合）⇒ 1049/1152 是未收敛读数	与源码或事实冲突	按 956→**1056** 重写（或注明 1049 是某次中间态），否则两篇永远对不上	B
+119	docs/archive/145-tab-fix.md:29	面板 (243,100) **1434×956**	观测	算术闭合：横向 1:6:1 of 1912（1920−2×4）= 239/1434/239 ✓；纵向 96+4+956+4+96+4 = 1160 ✓；`.tscn` 面板带 `size_flags_stretch_ratio = 10.0` 可核	有物证	合格	A
+120	docs/archive/145-tab-fix.md:194	`axis_menu_icon_theme.tres`	观测	`recovered-src/axis_menu_icon_theme.tres:4` = `bg_color = Color(1, 1, 1, 1)`（纯白）+ 3 px 黑边 + 圆角 10（同文件）	有物证	合格	A
+121	docs/archive/145-tab-fix.md:197	`bg_color = (0.101961,0.231373,0.176471)` = **`#1A3B2D`**	观测	`recovered-src/game_menu_icon_button_theme.tres:4` 逐字相同；26/255=0.101961、59/255=0.231373、45/255=0.176471 ✓	有物证	合格	A
+122	docs/archive/145-tab-fix.md:158	竖直结构是 **1 : 10 : 1 三条带**	观测	`.tscn` 里只看到面板带的 `stretch_ratio = 10.0`；顶/底两条带没写 ratio（用 size_flags_vertical=3 + 返回键最小高 96）⇒「1:1」是推断出来的比例，不是文件里的数	档位与物证不匹配	改「面板带 ratio=10；顶/底由返回键 96 px 最小高撑开（实测）」	B
+123	docs/archive/145-tab-fix.md:181	四个模式格子 | **236×236** 正方	观测（C 自报 + A 帧）	需要跑它描述的两条管线（pck+stock Godot dump / Xvfb 真帧）才能复核；产物（截图/print 输出）未入库	无物证	把 C 管线的 print 输出存成 fixtures 的 tsv（rect 表），A 帧只作交叉	D
+124	docs/archive/145-tab-fix.md:151	早先有一份同名截图（`orig_join_level`）	（坑记录）	该坑的判定依据（clear color 77 vs (14,37,28)）是截图级证据，截图按规矩不入库 ⇒ 后人无法复核	无物证	把两帧的关键像素值写成文本表（坐标 + RGB），不要只留截图	D
+125	docs/archive/145-tab-fix.md:37	PlayerScreen / Faces（默认 yellow） | 0.572% | **0.060%**	观测（逐像素）	当轮 frame_diff 读数；截图不入库、当轮树不可复跑 ⇒ 只能当「当轮读数」	无物证	标「当轮（tree <sha>）」并给 frame_diff 命令	D
+126	docs/archive/146-source-recovery.md:26	105 个 `.gdc` → `.gd`	（一页结论）	`find recovered-src -name '*.gd' | wc -l` = **105**；`.tscn` = **31**；`.tres` = **22**	有物证	合格	A
+127	docs/archive/146-source-recovery.md:89	105 `.gd`（4 210 行 / 90 648 B）	逐位（token 流）	本审计复算 `find … -name '*.gd' | xargs cat | wc -lc` = **4210 行 / 90648 B** 逐字相同	有物证	合格	A
+128	docs/archive/146-source-recovery.md:90	31 `.tscn`（215 575 B）	观测	本审计复算 = **215575 B**（6188 行）逐字相同	有物证	合格	A
+129	docs/archive/146-source-recovery.md:96	MANIFEST.tsv` 的 692 行状态分布：**完整 125 / 部分 31 / 省略 5 / 失败 0 / 非源码 531**	（结论）	本审计复算 recovered-src/MANIFEST.tsv：数据行 **692**；完整 **125** / 部分 **31** / 省略 **5** / 失败 **0** / 非源码 **531**（184+167+158+9+7+3+2+1）—— 五项全对	有物证	合格	A
+130	docs/archive/146-source-recovery.md:89	**105/105**	逐位（token 流）	「token 流逐个相同」需要 `python3 tools/pck_extract.py --verify`（要 rsc/，gitignore 现场生成）——本审计未跑	无物证	给出复跑命令与退出码 + 105 个 token 流 sha	D
+131	docs/archive/146-source-recovery.md:30	剩下 531 个**天生不是源码**	（分类）	MANIFEST kind=binary 531 行 + status 八类（导入元数据/纹理/重映射/媒体/字体/音频/缓存/uid）逐行可核	有物证	合格	A
+132	docs/archive/146-source-recovery.md:34	**105 个脚本里没有一个是屏幕控制器**	（结论）	recovered-src 的 105 个 .gd 全在 addons/** 与小控件；与 AGENTS §0.4 同结论	有物证	合格	A
+133	docs/archive/146-source-recovery.md:90	**31/31**	观测（SceneState 全等）	数量可核；「SceneState 全等」这一层需要重建 .scn 比对（未入库产物）	档位与物证不匹配	给出比对方式（可选：把 31 份 .tscn 的 sha256 入库）	B
+134	docs/archive/148-guide-manual.md:43	致死半径是数据字段（回放恒 `0.5`）	观测（读字段）+ 推断（字段语义）	本审计只核了 TargetInfo 帧数 254（401 份），未逐值核 radius=0.5 恒等	档位与物证不匹配	补一句「401 份 254 帧 radius 全 = 0.5」的复算命令	B
+135	docs/archive/148-guide-manual.md:46	逐位（AI 适应度无友军项）	逐位	**被证伪**：0x51ae51 `dec eax` / 0x51ae62 `inc eax` 两支都在（docs/147 与 T61 对 guide 的更正）；同批 docs/147:20 自己写着「友军项恒为 0 是错的」	与源码或事实冲突	改成「逐位（友军项**存在**：两支 dec/inc）」——这是本批最该先改的一条	B
+136	docs/archive/148-guide-manual.md:59	常量表（`0.001` / `200.0` / `100` / `±25` / `±15` / `0.01`）	逐位验证	`.rodata` 直扫：0.001@**0x19fc78**、200.0@**0x19f8c0**、25.0@**0x19fbc8**、15.0@**0x19fd40**、-15.0@**0x19f860**、0.01@**0x19f110** —— 六个常量都在（-25.0 未以 double 形态出现）	有物证	合格（建议把地址列成表；-25 说明是运行时取负）	A
+137	docs/archive/148-guide-manual.md:18	docs/guide/README.md	（元文档）	`docs/guide/` 现有 **10** 个文件（8 章 + bot-行为说明.md + README.md），合计 3,182 行 ⇒ 与本文的章节清单一致	有物证	合格	A
+138	docs/archive/148-guide-manual.md:40	152/152、38:0	观测（强）	转引 docs/86（archive）的逐批统计；原始采样在已归档文档里，可追	有物证	合格（给了源文档）	A
+139	docs/archive/148-guide-manual.md:56	token 表、预处理、优先级、7 个怪癖	逐位验证	转引 docs/03（与真二进制逐位对拍的那篇）	有物证	合格	A
+140	docs/archive/148-guide-manual.md:47	`turn_limit_info (1,N)`	逐位验证 + 运行时 21/21	语料复算：TurnLimitInfo **21 帧**、载荷 **1 字段**（turn_limit）⇒ 与近期真值一致	有物证	合格	A
+141	docs/archive/148-guide-manual.md:9	如果某条源结论本身是错的，本手册会跟着错	（边界声明）	本篇明写「不新增证据、只重组」——该声明与实测相符（上面那条友军项错误正好印证）	有物证	合格（反过来说明：源文档的错会直达手册）	A
+142	docs/archive/155-round-log.md:39	目录里不是 401 个文件，也不是 403 份回放	观测	本审计复算：`ls | wc -l` = **403**；回放 **401** + MANIFEST.tsv + SHA256SUMS；带 gzip 魔数 = 401 —— 逐字相同	有物证	合格（全仓把 401/403 讲得最清楚的一处）	A
+143	docs/archive/155-round-log.md:47	282 份有结算批	观测	本审计复算：按 `GameStateInfo.game_state==CalculatingResults` 计 = **287** 份有 / 114 份无；「批」的口径（1080 批来自 replay_attrib 批分解）与 1089 帧不同 ⇒ 282+4 与 287 不可直接比	档位与物证不匹配	写清「批」的判定（哪条命令/哪个字段）；同批 docs/158:186 写的是 286/115，两篇互不相同	B
+144	docs/archive/155-round-log.md:1224	`FunctionInfo.corrected_function` 非 null 的 **1291 发**	观测	本审计复算：FunctionPoints **1291** 帧；而 FunctionInfo.corrected_function **非 null = 1289** ⇒ 1291 是 FunctionPoints 的数，被写成 corrected_function 的数	与源码或事实冲突	拆成「FunctionPoints 1291 帧 / corrected_function 非 null 1289」两句	B
+145	docs/archive/155-round-log.md:285	**503/503**	观测	本审计复算：DestroyObstacle = **503** 帧；`(pos_x,pos_y,radius)` 去重后 **341** 组、**162** 组重复 ⇒「162 组重复」逐字相同	有物证	合格（配对语义那一半未复算，但计数全对）	A
+146	docs/archive/155-round-log.md:1590	162 组重复的 `(pos_x,pos_y,radius)`	观测	本审计复算 dup group = **162** 逐字相同	有物证	合格	A
+147	docs/archive/155-round-log.md:1224	全语料计数（401 份回放	（语料）	401 份回放 ✓（本审计复算；403 是目录条目）	有物证	合格	A
+148	docs/archive/155-round-log.md:449	实测那只是	（就地更正块）	本篇已按 docs/152 §1-B 就地更正体尾（0x4a8e50 只是热路径 ret，真体尾 0x4a93d8）；本审计独立复算 arm64 `.symtab` size **3712** ⇒ 末地址 **0x4a93d8** 与更正一致	有物证	合格（原结论 + 为什么错 + 正确结论都在）	A
+149	docs/archive/155-round-log.md:56	是**口径错**（2+119≠117）	（自认口径错）	本篇自己把这句判成口径错（2+119≠117）——诚实形态；本审计复算 403=401+2 与它一致	有物证	合格	A
+150	docs/archive/156-client-rounds.md:1813	`src/graphwar_turn_manager.rs` | +接线层	观测	该表的 `SUBSCRIBED_EVENTS` / `subscribed` / `outbox` / `take_outbox` 形态在现 `src/graphwar_turn_manager.rs` 里仍成立（后续轮次的门槛在跑这些接线）⇒ 记录与实际代码同形态	有物证	合格（这是 156 里最可复核的一类：接线形态与现源码一致）	A
+151	docs/archive/156-client-rounds.md:98	`30.0` = `.rodata 0x19ef90`（逐位）	逐位	本审计直扫 `.rodata`：double 30.0 的第一个出现 = **0x19ef90** 逐字相同	有物证	合格	A
+152	docs/archive/156-client-rounds.md:183	cargo test --offline                              # 1512 passed（当轮基线；现行 1520）	（当轮读数）	「当轮 1512」标注合规；但「现行 1520」也早过期（后续轮次已到 1853+）⇒ 归档里写「现行」必然老化	档位与物证不匹配	归档里的「现行」改成「下一轮读数（当轮）」	B
+153	docs/archive/156-client-rounds.md:184	--features gdext-bindings     # 1586 passed（当轮；现行 1595	（当轮读数）	同上：1595 亦已过期	档位与物证不匹配	同上	B
+154	docs/archive/156-client-rounds.md:180	CURVE_ON_SCREEN 96 passed	（headless 读数）	当轮 headless 读数；后续轮次 headless 14 脚本已 ≥1978 条，且本篇未给复跑命令	无物证	标「当轮（tree <sha>）」	D
+155	docs/archive/155-round-log.md:564	bl get_position	（代码块）	arm64 symtab：`GraphwarPlanePosManager::get_position` = **0x3b7f58**；`dis 0x4a8b40` → `bl #0x3b7f58` 逐字相同（arm64 引文 46 条本审计全核，落点全对）	有物证	合格	A
+156	docs/archive/156-client-rounds.md:29	档位口径同 §40：**逐位** = 与真二进制逐字节/逐位对拍	（口径声明）	沿用「逐位 = 与真二进制逐字节/逐位对拍」定义，与 AGENTS §0.3 一致	有物证	合格	A
+157	docs/archive/156-client-rounds.md:124	**逐位**（常量）/ **观测**（算式）	逐位 + 观测	拆档形态正确（常量 30.0 真的在 0x19ef90；算式本身是观测）——本批里档位拆得最规范的写法之一	有物证	合格	A
+158	docs/archive/156-client-rounds.md:98	0x4b67a0	（时间轴表）	本篇给的引文抽样机核通过（arm64 46 条引文全部落到 arm64 .symtab 对应地址）	有物证	合格	A
+159	docs/archive/157-name-matching.md:624	**两者并集 351**（+26）	观测	本审计复算三表并集 = **355**（每行取第一个地址）/ 355（全地址），∩527 = **348**；本篇后来自己更正到 348 ⇒ 351 是旧口径	档位与物证不匹配	把历史值标「当轮：351（含 527 外地址）」并指向更正块	B
+160	docs/archive/157-name-matching.md:632	的口径后是 **348 / 527 = 66.0%**	（更正块）	本审计复算：三表并集 ∩ boundary_audit 527 = **348**；348/527 = 66.03 % 逐字相同	有物证	合格	A
+161	docs/archive/157-name-matching.md:632	**无名 179 个**（不是 176）	（更正块）	本审计复算：527 − 348 = **179** ✓	有物证	合格	A
+162	docs/archive/157-name-matching.md:636	2,035 个三元组只被 **527** 个函数引用	观测	需要三元组去重统计（boundary_audit 的 loc_main_anchors 可加总但口径不同）；本审计未复算 2,035	无物证	给出 2,035 的复算命令	D
+163	docs/archive/157-name-matching.md:754	C 类有 327 个名	观测	`fixtures/name_to_addr.tsv` 有 743 行、**326** 个唯一地址；「327 个名」要么是行口径要么差 1	档位与物证不匹配	写清「327 = 哪一列的行数」	B
+164	docs/archive/157-name-matching.md:624	可定名的 Linux 地址：Android **325** → Windows **333**	观测	本审计复算：name_to_addr 唯一地址 **326**、windows_name_to_addr 的 linux_addr 唯一 **335**（含一行两址的格）⇒ 325/333 与现夹具差 1–2	档位与物证不匹配	标明「当轮夹具版本」，或按现夹具重算 326/335	B
+165	docs/archive/157-name-matching.md:627	覆盖率 **351 / 527 = 66.6%**	观测	351/527 = 66.60 % 算术对；但分子应为 348（见更正块）⇒ 该行按更正块读	档位与物证不匹配	该行加「（旧口径，见 §40.7 更正）」	B
+166	docs/archive/157-name-matching.md:626	分母是 **527**	观测	`fixtures/boundary_audit.tsv` 527 数据行；`coverage_matrix --check` 独立打出 527（文档同句给出的自校验路径成立）	有物证	合格	A
