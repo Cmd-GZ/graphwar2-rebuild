@@ -321,10 +321,22 @@ var _replay_play_btn: Button = null
 ## 就靠这个数钉住（真帧右三键 x1583..1919 = 337）—— **机制未知 + 我方补丁**，
 ## 见 `_set_replay_layout()` 里那段注。
 var _right_grid_natural_w := 0.0
-## `RightControls/HBoxContainer`（`Fire!` 那一行）与它的两颗按钮。回放屏要把那颗可见的
-## `Fire!` 藏起来但**留着行高**（真帧右三键 y433/533/633 ⇒ 顶行 96 还在）。
+## `RightControls/HBoxContainer`（`Fire!` 那一**行**）与其中的 `FireContainer`。
+##
+## 回放屏藏的是 **`FireContainer` 这一个 `MarginContainer`**，**不是**那一行、也**不是**行里的
+## 两颗按钮 —— 这条有指令级证据：原版 `0x3d9b50`（回放视图）按名字表
+## `LeftButtonGrid|RightButtonGrid|FireContainer|LeftReplaysButtonsGrid|RightReplaysButtonsGrid`
+## 取 5 个节点、依次 `CanvasItem::set_visible(false,false,false,true,true)`：
+## `FireContainer` 那一条是 `0x3d9ce6 xor %esi,%esi` → `0x3d9ce8 call *[0x9ba978]`，
+## 而 `0x9ba978 → 0x8ab200` 正是 `set_visible` 的 ptrcall 包装（class 串 `0x29ef2d`
+## 'CanvasItem' 长 `0xa`、method 串 `0x29ef4c` 'set_visible' 长 `0xb`）。见 `docs/06` §103。
+##
+## ⇒ 那一行的最小高变成 **0**（VBox 里仍占一个 separation），右三键组的居中量因此与
+## 原版一致（真帧 y=433/533/633）。**不要**给这一行 `custom_minimum_size.y`：
+## T4 时代手搭树时补过 `(0, 96)`，装真 `.tscn` 之后它正好把右三键列压下 48 px（= 96/2，
+## 两个 `size_flags_vertical = 3` 的间隔把余量均分）。
 var _fire_row: Control = null
-var _fire_parts: Array[Control] = []
+var _fire_container: Control = null
 
 # --- 联机模式（`docs/139`；落实 `docs/134` §7.1 的交接清单） ---
 #
@@ -407,17 +419,13 @@ func build() -> void:
 	_replay_left = _node(L + "/LeftReplaysButtonsGrid")
 	_replay_play_btn = _node(L + "/LeftReplaysButtonsGrid/AspectRatioContainer/PlayPauseButton")
 	_fire_row = _node(R + "/HBoxContainer")
+	_fire_container = _node(R + "/HBoxContainer/FireContainer")
 	_fire_button = _node(R + "/HBoxContainer/FireContainer/FireButton")
 	_right_grid = _node(R + "/RightButtonGrid")
 	_replay_right = _node(R + "/RightReplaysButtonsGrid")
 	_timer_label = _node(B + "/TimerContainer/TimerLabel")
 	_fx_button = _node(B + "/FxContainer/AspectRatioContainer/FxTextureButton")
 	_offset_label = _node(B + "/OffsetContainer/OffsetLabel")
-	_fire_parts = []
-	for nm in [R + "/HBoxContainer/FireContainer/ClipButton", R + "/HBoxContainer/FireContainer/FireButton"]:
-		var c := _node(nm)
-		if c != null:
-			_fire_parts.append(c)
 
 	# `ViewFunctionsLabel` 在 `.tscn` 里带着一段**示例文本**（原版控制器运行时会改）。
 	# 原版对局屏默认不显示它（`_show_function_overlay == false`）；实例化后必须自己关掉，
@@ -579,8 +587,6 @@ func _on_fire_pressed() -> void:
 ## 修正常数**一行**（§53.4 ③），读数改走 `replay_state()`（不画任何东西）。
 func _set_replay_layout(on: bool) -> void:
 	_replay_layout = on
-	var w := get_viewport_rect().size.x
-	var key := w * 0.15 / 3.0
 	# 原版这几块都是 `.tscn` 里的**静态节点**，靠运行时 `visible` 切（`docs/06` §53.4）：
 	# 对局屏 = 键盘 + Fire + 隐藏的回放键组；回放屏 = 反过来。
 	if _left_grid != null:
@@ -600,14 +606,19 @@ func _set_replay_layout(on: bool) -> void:
 		else:
 			_right_grid.visible = true
 			_replay_right.custom_minimum_size = Vector2.ZERO
-	# Fire 行：原版回放屏**右上角是空的但有那一行的高度**（真帧右三键落在 y433/533/633
-	# = 顶行 96 + 居中；若整行藏掉会整体上移 ~52 px）⇒ 藏按钮、留行高。
+	# Fire 行：**原版藏的是 `FireContainer` 这个 `MarginContainer`**（`0x3d9b50` 的第 3 个节点，
+	# `esi=0` @ `0x3d9ce6`；见 `_fire_container` 的注），不是整行、也不是行里那两颗按钮。
+	# ⇒ 那一行的最小高 = 0（`FireContainer` 没有可见子节点 ⇒ 自己 min = (0,0)），而它**仍然
+	# 是 VBox 的一个可见子节点**（占掉一个 separation）—— 这一点决定右三键组的居中量：
+	#   三键组 y = f + sep + (H − f − G − 3·sep)/2 + sep   （f = Fire 行高、H = 列高 1058、G = 396）
+	#   f = 0   ⇒ y = 333（组顶）⇒ 三颗 433/533/633  ← 原版真帧
+	#   f = 96  ⇒ y = 381（组顶）⇒ 三颗 481/581/681  ← 我方改前（差 48 = 96/2）★ 已修
+	# 所以这里**不许**再写 `custom_minimum_size.y`（那正是 +96 的来源；`docs/06` §103）。
+	if _fire_container != null:
+		_fire_container.visible = not on
 	if _fire_row != null:
 		_fire_row.visible = true
-		_fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO
-	for part in _fire_parts:
-		if part != null:
-			part.visible = not on
+		_fire_row.custom_minimum_size = Vector2.ZERO
 	if _replay_left != null:
 		_replay_left.visible = on        # `.tscn` 里默认 `visible = false`（对局屏不显示）
 	if _replay_right != null:
@@ -628,6 +639,47 @@ func _set_replay_layout(on: bool) -> void:
 		# 回放屏的函数框是**只读**的（原版按不可编辑态画文字：灰 0.875×α0.5）
 		_input.read_only = on
 	_update_replay_pause_icon()
+	# 布局诊断（`docs/16` §86）：`GW2_REPLAY_LAYOUT_DUMP=1` 时把右列那 5 个节点的真实矩形 +
+	# 最小尺寸打到 stdout（→ `game.log`）。**默认关闭、不参与任何判定**，只给"量版式"用。
+	# 为什么要它：`--headless --script` 的根窗口不是 1920×1160（量不到真布局），
+	# 走 `tools/frame_capture.py --flow replay --seed-replays` 这条**真窗口**路径才与真帧同口径；
+	# 本轮的定案数据就是这么来的（存成 `fixtures/replay_layout_dump.tsv`）。
+	if OS.get_environment("GW2_REPLAY_LAYOUT_DUMP") == "1" and is_inside_tree():
+		_dump_replay_layout(on)
+
+## 布局诊断（见 `_set_replay_layout()` 末尾）。等 2 帧让容器 sort 完再打。
+func _dump_replay_layout(on: bool) -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var R := "MarginContainer/VBoxContainer/PlayMainHBox/RightControls"
+	var L := "MarginContainer/VBoxContainer/PlayMainHBox/LeftControls"
+	var paths := [
+		R, R + "/HBoxContainer", R + "/HBoxContainer/FireContainer",
+		R + "/HBoxContainer/FireContainer/ClipButton",
+		R + "/HBoxContainer/FireContainer/FireButton",
+		R + "/MarginContainer", R + "/RightButtonGrid", R + "/RightReplaysButtonsGrid",
+		R + "/RightReplaysButtonsGrid/HBoxContainer",
+		R + "/RightReplaysButtonsGrid/GraphwarButton",
+		R + "/RightReplaysButtonsGrid/GraphwarButton3",
+		R + "/RightReplaysButtonsGrid/GraphwarButton4",
+		R + "/MarginContainer2",
+		L, L + "/LeftTopButtonsContainer", L + "/LeftButtonGrid", L + "/LeftReplaysButtonsGrid",
+		"MarginContainer/VBoxContainer/PlayMainHBox",
+		"MarginContainer/VBoxContainer",
+	]
+	print("@@LAYOUT on=%s viewport=%s win=%s" % [str(on), str(get_viewport_rect().size), str(get_window().size)])
+	for p in paths:
+		var n := get_node_or_null(p) as Control
+		if n == null:
+			print("@@LAYOUT %s || MISSING" % p)
+			continue
+		var gr := n.get_global_rect()
+		var mn := n.get_combined_minimum_size()
+		print("@@LAYOUT %s || vis=%s || pos=(%.1f,%.1f) size=(%.1f,%.1f) || gpos=(%.1f,%.1f) || min=(%.1f,%.1f) || cmin=(%.1f,%.1f) || vflag=%d hflag=%d" % [
+			p, str(n.visible), n.position.x, n.position.y, n.size.x, n.size.y,
+			gr.position.x, gr.position.y, mn.x, mn.y,
+			n.custom_minimum_size.x, n.custom_minimum_size.y,
+			n.size_flags_vertical, n.size_flags_horizontal])
 
 ## 播放/暂停键的图标：原版 `PlayPauseButton` 的 `icon` 在 `play_option`（▶）与
 ## `pause_option`（⏸）之间切（`docs/121` §4 的资产名映射；`GwIcons.FIXED` 里

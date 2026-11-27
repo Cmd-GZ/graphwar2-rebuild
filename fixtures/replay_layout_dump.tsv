@@ -1,0 +1,82 @@
+# fixtures/replay_layout_dump.tsv —— 播放屏（S3/S4）右列布局的**真窗口实测**：48 px 是哪一层贡献的（T54，2026-11-27）
+#
+# 背景：T51（docs/06 §101）把 `replay_play`/`replay_end` 的 60 367 px 归到「右三键列整体下移 48 px」，
+#       并把病灶指到 `_set_replay_layout()` 的 `_fire_row.custom_minimum_size = (0, key=96)` 一处，
+#       但标的是**推断**（没有运行时读数）。本表就是那份运行时读数：1920×1160 真窗口下逐节点量出来的
+#        `size` / `custom_minimum_size` / `global_position`。
+#
+# 怎么量的（可复跑，**必须**是真窗口；`--headless --script` 的根窗口不是 1920×1160，量不到真布局）：
+#   export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+#   export WT=<这棵树>   CARGO_HOME=$MAIN/.reference/cargo-home   CARGO_TARGET_DIR=$WT/.cargo-target
+#   cd $WT && cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+#   $MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --import
+#   bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN --dev /dev --proc /proc \
+#         --tmpfs /tmp --setenv DISPLAY 127.0.0.1:253 --setenv GW2_REPLAY_LAYOUT_DUMP 1 --chdir $WT \
+#     python3 tools/frame_capture.py --side ours --flow replay --seed-replays --out $WT/.agent-work/t54/m2 --display-num 253
+#   grep '@@LAYOUT' $WT/.agent-work/t54/m2/game.log      # ← 本表的原始行
+#   （`GW2_REPLAY_LAYOUT_DUMP=1` 是 `play_screen.gd::_dump_replay_layout()`，默认关闭、不参与任何判定。）
+#
+# 列的来源：
+#   before_fix / after_fix = 上面那条命令跑出来的 `@@LAYOUT` 行（同一个 worktree，只差 play_screen.gd 那一段）
+#   original               = **真帧 + 指令**两路独立得到（见 §原版一列怎么来的）
+#
+# ── 原版一列怎么来的（两路互相独立，结论一致）────────────────────────────────────────
+# ① 真帧（观测）：原版 `.reference/game/Graphwar.x86_64` 同一套 `--flow replay --seed-replays` 采集，
+#    右列 ROI x∈[1583,1919] 的**逐行非背景段**（背景 #0E251C）：
+#       nonbg rows 433..528 / 533..628 / 633..728（各 96 高、步距 100）—— 三颗保存键的绿面
+#       333..428 与 0..432 全空白（`RightReplaysButtonsGrid` 的第 0 行是个**不画东西**的 HBox 行）
+#    左列 ROI x∈[0,300] 的逐行段：0..95（顶行）/ 581..676（⇤←⌫ 那行）/ 1062..1159（底行）。
+# ② 指令（观测）：`0x3d9b50`（= 原版进回放视图那个函数）对 5 个节点依次 `CanvasItem::set_visible`：
+#       LeftButtonGrid=0 @0x3d9be2 · RightButtonGrid=0 @0x3d9c64 · **FireContainer=0 @0x3d9ce6**
+#       · LeftReplaysButtonsGrid=1 @0x3d9d65 · RightReplaysButtonsGrid=1 @0x3d9de3
+#    名字表在 `0x1bf8c7`，长度立即数 0xe/0xf/0xd/0x16/0x17；调用是 `call *[0x9ba978]`，
+#    该 GOT 槽 → `0x8ab200`，里面绑的 class 串 `0x29ef2d` 'CanvasItem'(0xa)、method 串 `0x29ef4c`
+#    **'set_visible'**(0xb) + hash `0x9a2976c2` ⇒ 不是 `set_disabled`、不是 `set_process`。
+#    ⇒ **原版藏的是 `FireContainer` 这一个 MarginContainer，不是那一行、也不是行里的两颗按钮**；
+#      它没有动 `custom_minimum_size` 之类的任何高度补丁 ⇒ 那一行的最小高 = 0。
+# ③ 原版拿不到的那些数（标 `推导`）：H=1058 与 grid 高 396 由 before_fix 实测给出（这两个数与
+#    「藏键盘/留宽」补丁无关，而且底行 y1062..1159、左列 3 行段两侧逐字节 0 差 ⇒ 列高同）；
+#    f=0（Fire 行高）由 `433 = f + 4 + (1058 − f − 396 − 12)/2 + 4 + 100` 反解，**唯一解 f=0**；
+#    组顶 333 = 433 − (96+4)。三个数互相自洽，且与真帧三行段逐项相同。
+#
+# ── 判据（改前/改后都要成立）────────────────────────────────────────────────────────
+# 三颗保存键的 y 行段必须 = 433..528 / 533..628 / 633..728（±1 px）；
+# 左右边界 1583..1919、宽 337、高 96、步距 100 **逐项不变**（T51 已证这些本来就对）。
+#
+# 列：phase	node	property	before_fix	after_fix	original	original_source
+# ─────────────────────────────────────────────────────────────────────────────
+phase	node	property	before_fix	after_fix	original	original_source
+replay	MarginContainer/VBoxContainer/PlayMainHBox		size.y	1058	1058	1058	推导（底行 y1062..1159 两侧 0 差 ⇒ 同高）
+replay	…/PlayMainHBox/RightControls		size.y	1058	1058	1058	推导（同上，列高不被改动）
+replay	…/RightControls	size_flags_vertical	1	1	1	.tscn（`layout_mode = 2` 默认 FILL，无 expand）
+replay	…/RightControls/HBoxContainer	size.y	96	0	0	真帧反解（唯一解）+ 0x3d9b50 无高度补丁
+replay	…/RightControls/HBoxContainer	custom_minimum_size.y	96	0	0	指令：0x3d9b50 只 set_visible，没有 set_custom_minimum_size
+replay	…/RightControls/HBoxContainer/FireContainer	visible	true	false	false	指令 0x3d9b50 FireContainer=0 @0x3d9ce6
+replay	…/RightControls/HBoxContainer/FireContainer	min.y	0	0	0	实测（before_fix 也是 0：两颗子按钮已藏 ⇒ 天然最小高 0）
+replay	…/RightControls/MarginContainer	size.y	277	325	325	推导 (1058−0−396−3×4)/2
+replay	…/RightControls/MarginContainer	global_position.y	100	4	4	推导（= f + sep）
+replay	…/RightControls/MarginContainer2	size.y	277	325	325	推导（同上）
+replay	…/RightControls/MarginContainer2	global_position.y	781	733	733	推导
+replay	…/RightControls/RightReplaysButtonsGrid	size.y	396	396	396	实测（4 行 × 96 + 3 × 4）
+replay	…/RightControls/RightReplaysButtonsGrid	global_position.y	381	333	333	真帧：首颗 433 − (96+4)
+replay	…/RightControls/RightReplaysButtonsGrid	custom_minimum_size.x	337	337	337	我方补丁（见 docs/06 §59：藏键盘后宽度会让棋盘列变宽）
+replay	…/RightReplaysButtonsGrid/HBoxContainer(第0行)	size.y	96	96	96	实测（HBoxContainer.gd 给每个子节点 cmin=(96,96)）
+replay	…/RightReplaysButtonsGrid/HBoxContainer(第0行)	画像素	0	0	0	真帧：两侧 333..432/381..480 都空白（该行只占位不画）
+replay	…/RightReplaysButtonsGrid/GraphwarButton(save_screenshot)	global_position.y	481	433	433	真帧行段 433..528
+replay	…/RightReplaysButtonsGrid/GraphwarButton3(save_summary)	global_position.y	581	533	533	真帧行段 533..628
+replay	…/RightReplaysButtonsGrid/GraphwarButton4(save_clip)	global_position.y	681	633	633	真帧行段 633..728
+replay	…/RightReplaysButtonsGrid/*	global_position.x / size.x	1583 / 337	1583 / 337	1583 / 337	真帧（左右边界逐项相同，本来就对）
+replay	…/RightReplaysButtonsGrid/*	size.y / 步距	96 / 100	96 / 100	96 / 100	真帧（本来就对）
+replay	…/LeftControls/LeftReplaysButtonsGrid	global_position.y	481	481	481	真帧（左列未动：581−100；两侧 0 差）
+replay	…/LeftControls/LeftReplaysButtonsGrid	size.y	196	196	196	实测（2 行 × 96 + 4）
+replay	…/LeftControls/LeftTopButtonsContainer	size.y	96	96	96	真帧行段 0..95
+#
+# ── 结论 ────────────────────────────────────────────────────────────────────────
+# 多出来的 **96 px 全部来自 `RightControls/HBoxContainer`（Fire 行）这一层**：
+#   before_fix 它的 `combined_minimum_size.y = 96` 而**天然最小高是 0**（`FireContainer` 两颗子按钮
+#   已藏 ⇒ min=(0,0)），这 96 **只可能来自我方那句 `custom_minimum_size = (0, key=96)`**。
+#   列高 H=1058 两侧相同、grid 高 396 与左列 196 两侧相同 ⇒ 96 的余量被两个
+#   `size_flags_vertical = 3` 的间隔**均分** ⇒ 右三键组下移 96/2 = **48 px**，正是真帧量到的偏差。
+# 修法（`client/src/screens/play_screen.gd::_set_replay_layout()`）：
+#   ① 藏 `FireContainer`（= 原版 0x3d9b50 的做法），② 不再给那一行 `custom_minimum_size.y`。
+# 复跑后三项判据逐项命中：行高 96→**0**、组顶 381→**333**、三颗 481/581/681→**433/533/633**。

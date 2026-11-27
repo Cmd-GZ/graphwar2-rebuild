@@ -12884,3 +12884,113 @@ python3 tools/headless_audit.py --list M           # 只看 M 档（逐条 文�
 
 `fixtures/headless_assertion_audit.tsv` 每行 = 一条断言的 `script / line / tier / sub / kept /
 reason / condition / message`，表头写了判据与"读这张表前必须知道的三件事"。
+
+## 86. 客户端侧：播放屏的**回放版式只有 5 个 `visible`** —— 长在 `RightControls` 那根 VBox 上的"留行高"补丁会把整列三键压下 48 px（2026-11-27，任务 T54 / `task-50`）
+
+### 86.1 原版回放屏怎么切版式：5 个节点、5 条 `CanvasItem::set_visible`
+
+`0x3d9b50`（进回放视图）/ `0x3d9e40`（回对局视图）是一对孪生函数：按名字表取 5 个节点、依次
+`set_visible`，布尔值互补。回放视图那一份（本轮自己反汇编复核，**不是抄表**）：
+
+| # | 节点（`.tscn` 里的真实类型） | 回放视图 | 指令 |
+|---|---|---|---|
+| 1 | `LeftButtonGrid`（`GridContainer`，键盘左半） | **false** | `0x3d9be2 xor esi,esi` |
+| 2 | `RightButtonGrid`（`GridContainer`，键盘右半） | **false** | `0x3d9c64 xor esi,esi` |
+| 3 | **`FireContainer`（`MarginContainer`，`Fire!` 那颗键的容器）** | **false** | `0x3d9ce6 xor esi,esi` |
+| 4 | `LeftReplaysButtonsGrid`（`GridContainer`，⏮▶⏭ 那组） | **true** | `0x3d9d65 mov esi,1` |
+| 5 | `RightReplaysButtonsGrid`（`GridContainer`，三颗保存键） | **true** | `0x3d9de3` |
+
+名字表在 `.rodata 0x1bf8c7`，每次取名的**长度立即数** `0xe/0xf/0xd/0x16/0x17` 正好是
+14/15/13/22/23（`LeftButtonGrid`/`RightButtonGrid`/`FireContainer`/`LeftReplaysButtonsGrid`/`RightReplaysButtonsGrid`）。
+调用点是 `call *[0x9ba978]`，该 GOT 槽 → `0x8ab200`，里面捆的是 class 串 `0x29ef2d` **`CanvasItem`**（长 `0xa`）
++ method 串 `0x29ef4c` **`set_visible`**（长 `0xb`）+ 方法 hash `0x9a2976c2`。
+
+**两件必须记住的事**：
+
+1. 藏的是 **`FireContainer` 这一个 `MarginContainer`**，**不是**它所在的 `RightControls/HBoxContainer` 行，
+   也**不是**行里的 `ClipButton`/`FireButton` 两颗按钮。三者对布局的效果**不一样**（见 86.2）。
+2. 原版**没有**任何"给这一行留高度"的补丁 —— 它靠 `visible` 让那一行塌成 0 高。
+
+### 86.2 为什么"差一层"就差 48 px：`RightControls` 的几何
+
+`client/scenes/screens/play_screen.tscn`（= `recovered-src/play_screen.tscn`，逐字节相同）里右列是
+一根 `VBoxContainer`，回放屏的可见子节点 4 个：
+
+```text
+RightControls (VBoxContainer, @1920 H = 1058)
+├── HBoxContainer        ← Fire 行：f = 它的 combined_minimum_size.y
+├── MarginContainer      ← size_flags_vertical = 3（弹性间隔 1）
+├── RightButtonGrid      ← 回放屏 visible=false（不参与布局）
+├── RightReplaysButtonsGrid  ← G = 396（4 行 × 96 + 3 × 4）
+└── MarginContainer2     ← size_flags_vertical = 3（弹性间隔 2）
+```
+
+两个 `vflag=3` 的间隔把"Fire 行以下的余量"**均分**，所以
+
+```text
+三键组顶 = f + 4 + (H − f − G − 12)/2 + 4 = f/2 + (H − G − 12)/2 + 8
+⇒ **df = 96 只会让三键组移动 48**
+```
+
+实测（`GW2_REPLAY_LAYOUT_DUMP=1`，1920×1160 真窗口，数据入库 `fixtures/replay_layout_dump.tsv`）：
+
+| | `f`（Fire 行高） | 间隔 | grid 顶 | 三颗保存键 y | 与原版真帧 |
+|---|---|---|---|---|---|
+| 原版 | **0** | 325 | 333 | **433 / 533 / 633** | — |
+| 我方改前 | **96** | 277 | 381 | 481 / 581 / 681 | +48 ❌ |
+| 我方改后 | **0** | 325 | 333 | 433 / 533 / 633 | 0 ✅ |
+
+改前那 96 的来源是 `_set_replay_layout()` 为了**手搭的树**补的一句
+`_fire_row.custom_minimum_size = Vector2(0, w*0.15/3)`（T4 时代：把那两颗按钮藏起来但"留着行高"）。
+装上真 `.tscn` 之后 `FireContainer` 的天然最小高本来就是 0，这句补丁变成**纯多余的 +96**。
+
+### 86.3 现在的写法（`client/src/screens/play_screen.gd::_set_replay_layout()`）
+
+```gdscript
+# 藏 FireContainer 这个节点（= 0x3d9b50 的第 3 条 set_visible(false)）；
+# 不给那一行任何 custom_minimum_size —— 让容器自己把它算成 0 高。
+if _fire_container != null:
+    _fire_container.visible = not on
+if _fire_row != null:
+    _fire_row.visible = true
+    _fire_row.custom_minimum_size = Vector2.ZERO
+```
+
+* **`_fire_row.visible = true` 不能省**：那一行虽然是 0 高，但它**仍然是一个可见子节点**，
+  VBox 为它保留一个 separation（4 px）。把它 `visible=false` 会少一个 separation，三键组会再上移 2 px
+  —— **推导**（`f=0` 且只剩 2 个 separation ⇒ 间隔 327 ⇒ 组顶 331 而不是 333）。这条**没有单独实测**
+  （本轮没把这一行藏掉跑一遍），但三项判据的算术是同一条；要实测只需把 dump 那行改成 `visible=false` 再跑一次。
+* 右列**宽度**那条补丁（`_replay_right.custom_minimum_size.x = 键盘 grid 天然最小宽 337`）**保留**：
+  藏掉 `RightButtonGrid` 之后 Godot 会把它的宽度从最小宽里剔掉，右列会缩到回放组自己的天然宽
+  （@1920 = 230）⇒ 棋盘列变宽、整块版式崩（`docs/06` §59 已记）。它管的是 x，与本节 y 无关。
+* `_fire_parts: Array[Control]`（两颗按钮的句柄）**已删**，换成 `_fire_container: Control`；
+  `var w / var key` 一并删掉（只有那一行用过 `key`）。
+
+### 86.4 量版式的正确姿势：`GW2_REPLAY_LAYOUT_DUMP=1` + **真窗口**（headless 量不到）
+
+```bash
+# 真窗口（Xvfb 1920×1160）里进回放屏，节点矩形打一行 @@LAYOUT 到 game.log
+bwrap --unshare-user --unshare-net ... --setenv GW2_REPLAY_LAYOUT_DUMP 1 --chdir $WT \
+  python3 tools/frame_capture.py --side ours --flow replay --seed-replays --out $WT/.agent-work/t54/m2 --display-num 253
+grep '@@LAYOUT' $WT/.agent-work/t54/m2/game.log
+# 行格式：<节点路径> || vis= || pos=(x,y) size=(w,h) || gpos=(x,y) || min=(w,h) || cmin=(w,h) || vflag= hflag=
+```
+
+**为什么不用 `--headless --script`**：headless 的根窗口不是 1920×1160（自检里甚至有 64×64 的场合），
+`get_viewport_rect()` 与真机不同 ⇒ 所有 `按屏宽比例` 的原版脚本（`ButtonGrid.gd`/`FireContainer.gd`/
+`HBoxContainer.gd` … 都是 `w*0.15/3` 这一档）算出来的尺寸不是真机尺寸，量了也不算数
+（`docs/06` §101.4 第 2 条试过、本轮再确认）。这条与"自检窗口尺寸"相关的坑记在 `docs/18`。
+
+**`@@LAYOUT` 是诊断、不参与判定**：默认关；`_dump_replay_layout()` 只 `print`，不改任何节点属性。
+本轮"改前 / 改后"两组读数就是这么来的，逐节点入库 `fixtures/replay_layout_dump.tsv`（含"原版一列怎么来的"）。
+
+### 86.5 教训（写给下一位：`_scaffold` 式补丁在装真 `.tscn` 之后要重审）
+
+1. **"照真帧凑出来的补丁"要标清楚它为什么存在**：`custom_minimum_size = (0, 96)` 当年是为"手搭树 + 藏按钮"
+   写的；真 `.tscn` 装进来之后它的效果变了（从"补行高"变成"多 96"），而**所有测试都还是绿的**
+   （selftest / headless 都不量三颗保存键的 y）。这类补丁要挂一条**像素判据**才能发现
+   （本轮的判据在 `fixtures/replay_screen_targets.txt` §三 与 `fixtures/replay_layout_dump.tsv`）。
+2. **一行 `visible` 与一层容器不是一回事**：改版式时先看"这个节点在 `.tscn` 里的父链"，
+   再看容器的最小尺寸怎么被 `visible` 影响 —— VBox 会跳过不可见子节点、**但不跳过它留下的 separation**。
+3. **别在同一棵 VBox 上打高度补丁**：两个 `vflag=3` 的间隔均分余量 ⇒ 任何 `df` 都只让目标移动 `df/2`，
+   于是"差 48"看起来像"另一个容器错位 48"，很容易往错的方向查（`docs/06` §101 就卡在这一步，本轮用 dump 定案；详见 `docs/06` §103）。
