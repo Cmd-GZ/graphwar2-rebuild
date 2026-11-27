@@ -55,7 +55,7 @@ import struct
 import sys
 
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
-from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RIP
+from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RIP, X86_REG_RSP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -1014,8 +1014,8 @@ def cmd_structs(p, args):
 #   * 枚举      ⇒ 用 `mono_kind`（E6 变体名 + 判别值）现场取，再用我方 `pub enum` 逐项比；
 #   * 非 serde  ⇒ 用 `cmd_structs` 的同一判据现场算窗口下界（只有下界 ⇒ unknown）。
 AUDIT2_SERDE = [
-    # (结构体, 我方文件, 我方类型名, Serialize 地址, E1 名串槽说明)
-    ("GameInfo", "src/_scaffold/protocol.rs", "GameInfo", 0x5060D0),
+    # (结构体, 我方文件（**权威形态**所在）, 我方类型名, Serialize 地址, E1 名串槽说明)
+    ("GameInfo", "src/events.rs", "GameInfo", 0x5060D0),
 ]
 AUDIT2_ENUM = [
     # (枚举, 我方文件, 我方类型名, 单态地址, 枚举 Serialize 实现地址)
@@ -1027,19 +1027,54 @@ AUDIT2_ENUM = [
 ]
 AUDIT2_STRUCT = [
     # (我方类型名, 我方文件, 二进制锚点函数 vaddr（None ⇒ 由**模块名机械挑选**）, E3 期望偏移, 说明)
+    # ⚠️ 路径已按 T57（`docs/06` §104）搬家后的现状更新：`*_class.rs` 里的 gdext 类搬回了原版模块文件。
     ("EffectAudioData", "src/graphwar_audio_control.rs", None, "0x0/0x10/0x14"),
     ("PatternSegment", "src/graphwar_level_generator.rs", None, "0x0/0x8/0x10/0x18/0x20/0x24/0x28"),
     ("GraphwarGameRecorder", "src/graphwar_game_recorder.rs", 0x3D4FA0, "0x08/0x18/0x40/0x48"),
     ("ShotCalculator", "src/graphwar_shot_calculator.rs", 0x3C2BC0, None),
     ("FunctionEvolutionator", "src/graphwar_function_evolutionator.rs", 0x41A9D0, None),
-    ("GraphwarPlane", "src/_scaffold/graphwar_plane_class.rs", 0x4B5DF0, None),
+    ("GraphwarPlane", "src/graphwar_plane.rs", 0x4B5DF0, None),
     ("GraphicsManager", "src/graphwar_graphics_manager.rs", 0x468D80, None),
     ("ReplayControl", "src/graphwar_replay_control.rs", 0x4C6F40, None),
     ("LevelManager", "src/graphwar_level_manager.rs", 0x499740, None),
     ("ClientConnectionHandler", "src/graphwar_client_connection_handler.rs", 0x45A340, None),
-    ("AxisDrawer", "src/axis_drawer.rs", 0x3E2A00, None),
-    ("GraphwarLanVBox", "src/_scaffold/graphwar_lan_vbox_class.rs", 0x4DEC00, None),
+    ("AxisDrawer", "src/_scaffold/gdext_mod.rs", 0x3E2A00, None),
+    ("GraphwarLanVBox", "src/graphwar_lan_vbox.rs", 0x4DEC00, None),
 ]
+
+
+def _ours_layout(path, name):
+    """在**指定文件**里找我方同名结构体的字段（**私有字段也算**，gdext 类的字段都是私有的）。
+
+    与 [`rust_structs`] 的区别：那个只认 `pub struct` + `pub field`（用于 serde 负载的公共口径），
+    这里要的是"我方到底声明了几个字段、什么类型"，私有与否无关 ⇒ 单独一个朴素解析器。
+    """
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return None
+    pat = re.compile(r"^\s*pub(?:\([^)]*\))?\s+struct\s+%s\b" % re.escape(name))
+    fld = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?),\s*$")
+    for i, ln in enumerate(lines):
+        if not pat.match(ln):
+            continue
+        fields, j, depth = [], i, 0
+        while j < len(lines) and "{" not in lines[j]:
+            j += 1
+        k = j
+        while k < len(lines):
+            depth += lines[k].count("{") - lines[k].count("}")
+            if k > j:
+                m = fld.match(lines[k])
+                if m and not lines[k].lstrip().startswith(("//", "#", "#[")):
+                    fields.append((m.group(1), m.group(2).strip()))
+            if depth <= 0 and k >= j:
+                break
+            k += 1
+        return ("%s:%d" % (os.path.relpath(path, REPO), i + 1), fields)
+    return None
+
+
 RE_ENUM = re.compile(r"^\s*pub\s+enum\s+([A-Za-z_][A-Za-z0-9_]*)")
 RE_VARIANT = re.compile(r"^\s{4}([A-Z][A-Za-z0-9_]*)\s*(?:=\s*(\d+))?\s*,?\s*$")
 
@@ -1117,34 +1152,51 @@ def cmd_tsv2(p, args):
     e1 = {n: (k, v, s) for n, k, v, s in p.serde_names()}
 
     # ---- (1) serde 负载：GameInfo ----
+    # T66：权威形态在 `src/events.rs`（5 个真枚举 + u32 + address String），
+    # `src/_scaffold/protocol.rs` 只剩一个 **JSON 视图**（枚举字段用线上串承载，
+    # `Broadcast` 是它的别名）⇒ 「我方字段集」按**权威形态**列，视图单独在备注里点明。
     for name, ours_path, ours_ty, serf in AUDIT2_SERDE:
         lay = serde_layout(p, serf)
         bnames = [r["name"] for r in lay]
-        mine = ours_struct.get(ours_ty)
+        mine = ours_struct.get("GameInfo")  # 取 `src/events.rs` 那份（_scaffold 不在 allsrc 里）
         ofields = [f for f, _ in mine[2]] if mine else []
+        otypes = dict(mine[2]) if mine else {}
         k, sva, slot = e1.get(name, (None, None, None))
-        bad_type = []
+        bad, ok = [], []
+        WANT_TY = {
+            "game_state": "GameState",
+            "axis_mode": "AxisMode",
+            "function_mode": "FunctionMode",
+            "turn_mode": "TurnMode",
+            "time_mode": "TimeMode",
+        }
         for r in lay:
             kk = r["kind"]["kind"]
+            t = otypes.get(r["name"], "")
             if r["off"] == 0x18:
-                bad_type.append("%s@0x18：32 字节、1 字节 tag、2 变体的枚举，我方是 `String`(24B)"
-                                % r["name"])
-            elif kk in ("enum", "enum2"):
-                bad_type.append("%s@%s：%s，我方是串" % (
-                    r["name"], fmt(r["off"]), r["kind"]["detail"].split("：")[-1][:60]))
+                ok.append("%s@0x18 我方 `String`(24B)（原版 32 字节枚举，身份=推断，登记）" % r["name"])
+            elif r["name"] in WANT_TY:
+                if WANT_TY[r["name"]] in t:
+                    ok.append("%s=%s ✅" % (r["name"], WANT_TY[r["name"]]))
+                else:
+                    bad.append("%s 我方 `%s`，原版 `%s`" % (r["name"], t or "?", r["kind"]["detail"][:40]))
             elif kk == "int":
-                t = dict(mine[2]).get(r["name"], "") if mine else ""
-                if "i64" in t:
-                    bad_type.append("%s@%s：u32（4 字节），我方 `i64`（8 字节）" % (r["name"], fmt(r["off"])))
-        judge = "match" if (len(bnames) == len(ofields) == (k or -1) and bnames == ofields) else "mismatch"
-        note = ("**字段数/键序 match、类型 mismatch**：" + "；".join(bad_type)) if bad_type else ""
-        note += ("｜**本轮已修**：`src/events.rs::GameInfo` 改成 5 个真枚举 + `current_player_count: u32`；"
-                 "`_scaffold/protocol.rs::GameInfo` 只把 `current_player_count` 改成 u32（wire 编解码层仍用串，"
-                 "属 §82.4-3 的手写 JSON 偏差）；`address` 的 32 字节枚举身份=推断 ⇒ 仍用 String（登记）")
+                if "u32" in t:
+                    ok.append("%s=u32 ✅" % r["name"])
+                else:
+                    bad.append("%s@%s：u32（4 字节），我方 `%s`" % (r["name"], fmt(r["off"]), t or "?"))
+        judge = "match" if (len(bnames) == len(ofields) == (k or -1) and bnames == ofields and not bad) else "mismatch"
+        note = ("**字段数/键序 match；5 个枚举字段已落地成真类型**（T66）：" + "；".join(ok)
+                if not bad else "**类型 mismatch**：" + "；".join(bad))
+        note += ("｜**我方 3 处 → 2 处（T66）**：权威 = `src/events.rs`（本行「我方字段集」列）；"
+                 "JSON 视图 = `src/_scaffold/protocol.rs`（字段同名同序、枚举用线上串承载），"
+                 "`Broadcast` 是该视图的**别名**（原版只有一个 `struct GameInfo`）。"
+                 "为什么没压到「1 处定义」：见 `fixtures/struct_audit_plan3.txt` §2.3 的两条硬约束"
+                 "（`_scaffold/broker.rs` 的 i64 测试助手、`tests/wire_format.rs` 的 `\"Timers1m\"` 错字断言）")
+        note += "｜**仍登记**：`address` 身份（32B/1B tag/2 变体，形状=观测、身份=推断）"
         rows.append([name,
-                     "%s（`GameInfo`）；另有同名第二处 src/events.rs:304 与第三处 "
-                     "src/_scaffold/protocol.rs:80 `Broadcast`（原版只有**一个** `struct GameInfo`）" % ours_path,
-                     "%d 字段：%s" % (len(ofields), ",".join(ofields)),
+                     "%s（权威；`GameInfo`）；JSON 视图在 src/_scaffold/protocol.rs（`Broadcast` 为其别名）" % ours_path,
+                     "%d 字段：%s" % (len(ofields), ",".join("%s:%s" % (f, t) for f, t in mine[2]) if mine else "?"),
                      "E1 slot=%s→%s N=%s；E2 ser=%s；E3 值偏移见括号；E5 单态：%s" % (
                          fmt(slot), fmt(sva), k, fmt(serf),
                          ", ".join("%s=%s%s" % (r["name"], fmt(r["off"]), fmt(r["mono"])) for r in lay)),
@@ -1205,7 +1257,11 @@ def cmd_tsv2(p, args):
                  "本轮把 `EventInfo` 改成 `{ event: GraphwarEvent, tick: u32 }` 两字段；"
                  "`GraphwarEvent{name,body}` 承载原版 0x48 字节外部标签枚举的**表示差异仍登记**"])
 
-    # ---- (4) 非 serde 结构体 ----
+    # ---- (4) 非 serde 结构体：E7 窗口 + **E8 上界夹逼**（T66）----
+    # 判定按 fixtures/struct_audit_plan3.txt §1.2/§1.3 的规则**现场重算**：
+    #   * U 到手且我方字段偏移集合（按标量尺寸表算）== [0,U) 内窗口偏移集合 ⇒ match（偏移+宽度档）
+    #   * U 到手且对不上（或我方字段数明显少于窗口偏移数）⇒ mismatch
+    #   * U 不成立、或我方布局算不出（枚举/私有复合类型无尺寸表项）⇒ unknown（写清卡点）
     cov = {}
     covp = os.path.join(REPO, "fixtures", "function_coverage.tsv")
     if os.path.exists(covp):
@@ -1233,41 +1289,74 @@ def cmd_tsv2(p, args):
                 continue
             anchor = best[1]
         w = _struct_window(p, anchor)
-        mine = ours_struct.get(name)
-        oline = mine[1] if mine else "-"
-        nf = len(mine[2]) if mine else 0
+        mine = _ours_layout(os.path.join(REPO, ours_path), name)
+        oline = mine[0] if mine else "-"
+        ofields = mine[1] if mine else []
+        nf = len(ofields)
         if mine is None:
-            # 我方该模块没有同一类型名 ⇒ 如实写「结构体边界未对上」，不假装 0 字段
             modfile = os.path.join(REPO, ours_path)
             cands = [r[0] for r in rust_structs([modfile])] if os.path.exists(modfile) else []
-            oline = "（我方该模块**没有**名为 `%s` 的结构体；该文件内 pub struct：%s）" % (
+            oline = "（我方该文件**没有**名为 `%s` 的结构体；该文件内 pub struct：%s）" % (
                 name, ", ".join(cands) or "无")
         if w is None:
             rows.append([name, "%s（%s）" % (ours_path, oline), "%d 字段" % nf,
                          "E7 @%s：未命中固定偏移窗口" % fmt(anchor), "?", "unknown", "推断 E7", "登记"])
             continue
         cnt, span, lower, reg, offs = w
-        judge = "unknown"
-        note = "只有 E7 下界（max 偏移+宽度），上界需调用方夹逼 ⇒ 按预注册只登记不猜"
-        if offs_hint:
-            if all(any(o == int(x, 16) for x in offs_hint.split("/")) for o in offs[:len(offs_hint.split("/"))]):
-                judge = "match"
-                note = "E3 偏移逐项命中（%s）⇒ 字段偏移 match；字段**类型**仍只有宽度证据" % offs_hint
+        # --- E8：上界夹逼（判据见 fixtures/struct_audit_plan3.txt §1.2）---
+        u, found = e8_bounds(p, anchor)
+        if found:
+            e8txt = "；".join("%s **U=0x%x**（%s）" % (src, uu, why) for src, uu, why in found[:3])
+            if len(found) > 3:
+                e8txt += "；…共 %d 条合格源，取 min" % len(found)
+        else:
+            callers = sorted({p.ix.func_of(x) for x in p.ix.calls.get(anchor, [])} - {None})
+            e8txt = "E8a/E8b **无合格源**（直接调用者 %d 个：%s；判据要求 U≥下界）" % (
+                len(callers), ", ".join(fmt(c) for c in callers[:4]) or "无") + "；E8c 无自夹逼"
+        inside = [o for o in offs if u is not None and o < u]
+        # --- 判定 ---
+        ours_off = _ours_offsets(ofields) if ofields else None
+        judge, note, src_tag = "unknown", "", "推断 E7/E8"
+        if u is None:
+            note = "只有 E7 下界（max 偏移+宽度）；E8 三条源都不成立 ⇒ 上界仍缺（卡点见「二进制证据」列）"
+        elif ours_off is not None:
+            want = [o for _, o, _ in ours_off]
+            if want == inside:
+                judge, src_tag = "match", "推断 E7/E8（偏移+宽度档，名字未证）"
+                note = "E8 把上界夹到 0x%x：`[0,U)` 内窗口偏移 == 我方字段偏移（%s）" % (
+                    u, ",".join(fmt(o) for o in want))
+            else:
+                judge, src_tag = "mismatch", "推断 E7/E8"
+                note = "E8 把上界夹到 0x%x，但 `[0,U)` 内窗口偏移 %s ≠ 我方 %s" % (
+                    u, ",".join(fmt(o) for o in inside), ",".join(fmt(o) for o in want))
+        else:
+            note = ("E8 夹到 **U=0x%x**（下界 0x%x）⇒ 尺寸 ∈ [0x%x, 0x%x]；"
+                    "但我方字段里有尺寸表外的类型（%s）⇒ 逐字段偏移算不出，仍需人工比" % (
+                        u, lower, lower, u,
+                        ", ".join(t for _, t in ofields if t.rstrip(",") not in FIELD_SIZE) or "-"))
+        if len(offs) >= 3 and offs[:3] == [0, 8, 0x10] and span >= 0x30:
+            note += "；⚠️ 窗口前三个偏移 0x0/0x8/0x10 是 `Vec<T>` 的头（ptr/len/cap）⇒ 锚点很可能在操作某个 `Vec<T>` 的**父结构体**或另一个类型，不是本行这个 T 本身（窗口归属存疑，不许当结论）"
+        if nf and inside and nf * 2 <= len(inside) and judge == "unknown":
+            # 我方字段数远少于窗口偏移数 ⇒ 窗口几乎不可能是我方这个结构体（多字段/多对象混采）
+            note += "；⚠️ 我方只 %d 个字段而窗口有 %d 个偏移 ⇒ 窗口大概率不是该结构体" % (nf, len(inside))
         rows.append([name, "%s（%s）" % (ours_path, oline), "%d 字段：%s" % (
-                         nf, ", ".join(f for f, _ in mine[2]) if mine else "?"),
-                     "E7 @%s：基址 %s，%d 个不同偏移 %s，跨度 %d，E4 下界 **0x%x**" % (
-                         fmt(anchor), reg, cnt, ",".join(fmt(o) for o in offs[:16]), span, lower),
-                     "窗口下界 0x%x（无字段名/顺序证据）" % lower, judge, "推断 E7（只有下界）", note])
+                         nf, ", ".join("%s: %s" % (f, t) for f, t in ofields) if ofields else "?"),
+                     "E7 @%s：基址 %s，%d 个不同偏移 [%s]，跨度 %d，下界 **0x%x**；%s" % (
+                         fmt(anchor), reg, cnt,
+                         ",".join(fmt(o) for o in offs[:16]) + ("…" if len(offs) > 16 else ""),
+                         span, lower, e8txt),
+                     "窗口下界 0x%x%s" % (lower, ("、上界 **0x%x**" % u) if u is not None else "（上界缺）"),
+                     judge, src_tag, note])
 
     rows.sort(key=lambda r: (r[0].lower(), r[1]))
     head = [
-        "# struct_audit2.tsv —— T56 数据结构审计表（第二轮）",
+        "# struct_audit2.tsv —— T56 数据结构审计表（第二轮；T66 第三轮**重算**：GameInfo 枚举落地 + 3 处形态 2 处 + E8 上界）",
         "# 重算：../.reference/venv/bin/python tools/struct_audit.py tsv2        只校验：tsv2 --check",
-        "# 预注册（判据 + 清单 + 先写死「我方几个字段/期望对上几个」）：fixtures/struct_audit_plan2.txt（先于本表提交）",
+        "# 预注册：fixtures/struct_audit_plan2.txt（判据 E1–E7，第一轮）与 fixtures/struct_audit_plan3.txt（E8 上界 + 本轮改法，先于本表提交）",
         "#",
         "# 列：结构体 | 我方定义位置 | 我方字段集 | 二进制证据(地址→指令/串/单态/跳表) | 二进制字段集 | 判定 | 依据档 | 备注",
         "# 判定 = **当前源码** vs 二进制的状态（判据见预注册 §1，一字未改）。",
-        "# 证据档：逐位 = 串/跳表/变体名/单态是编译期常量且 LEN 自校验；观测 = 指令级偏移/写回；推断 = 只有尺寸下界。",
+        "# 证据档：逐位 = 串/跳表/变体名/单态是编译期常量且 LEN 自校验；观测 = 指令级偏移/写回；推断 = 尺寸上下界（E7 下界 / E8 上界）。",
         "# 地址口径：ELF vaddr（RVA）；Ghidra/REA 地址 = 本表地址 + 0x100000（只加一次）。",
     ]
     text = "\n".join(head + ["\t".join(r) for r in rows]) + "\n"
@@ -1289,6 +1378,169 @@ def cmd_tsv2(p, args):
     print("判定：", dict(Counter(r[5] for r in rows)))
     return 0
 
+
+
+# ---------------------------------------------------------------------------
+# E8 上界夹逼（T66；判据预先写死在 fixtures/struct_audit_plan3.txt §1.2，跑完不许改）
+# ---------------------------------------------------------------------------
+# 三条源，全部**指令级**，且都只证明"某块缓冲有多大"，不证明"那就是这个结构体"⇒ 推断：
+#   E8a 调用方栈缓冲：调 f 时 rdi = lea [rsp+k] ⇒ U = 调用方 frame - k
+#   E8b 分配尺寸立即数：调 f 时 rdi 来自 rax，而 rax 来自 `mov e?x,IMM; call <alloc>` ⇒ U = IMM
+#   E8c 同函数栈窗口：f 里 `lea/mov <窗口基址>,[rsp+k]` ⇒ U = frame - k
+# 拒绝规则：U < E7 下界 ⇒ 该源不成立（缓冲不是这个结构体）；多条取 min。
+FRAME_MNEMS = ("sub",)
+
+
+def _e8_dataflow(p, f, call_targets):
+    """在 f 里做**直线**数据流：reg → ("stack", k) / ("heap_imm", n) / ("mem", 0)。
+
+    ⚠️ 跨 `call/jmp/j*/ret` 一律清空（陈旧值会伪造夹逼）；因此只会**漏**，不会凭空造。
+    返回 (frame, [(call_addr, target, rdi_state)], {basereg: ("stack", k)})。
+    """
+    ins = _insn_list(p, f)
+    if not ins:
+        return 0, [], {}
+    frame = 0
+    for x in ins:
+        if x.mnemonic in FRAME_MNEMS and x.op_str.startswith("rsp,"):
+            im = _imms(x)
+            if im:
+                frame = max(frame, im[0])
+    state, out, basestack, prev = {}, [], {}, []
+    for x in ins:
+        if x.mnemonic == "lea" and len(x.operands) == 2 and x.operands[1].type == X86_OP_MEM \
+                and x.operands[1].mem.base == X86_REG_RSP:
+            state[x.reg_name(x.operands[0].reg)] = ("stack", x.operands[1].mem.disp)
+        elif x.mnemonic == "mov" and len(x.operands) == 2 and x.operands[0].type == X86_OP_REG:
+            dst, src = x.reg_name(x.operands[0].reg), x.operands[1]
+            if src.type == X86_OP_REG and x.reg_name(src.reg) in state:
+                state[dst] = state[x.reg_name(src.reg)]
+            elif src.type == X86_OP_IMM:
+                state[dst] = ("imm", int(src.imm))
+            elif src.type == X86_OP_MEM:
+                state[dst] = ("mem", 0)
+            else:
+                state.pop(dst, None)
+        elif x.mnemonic in ("add", "sub") and len(x.operands) == 2 \
+                and x.operands[0].type == X86_OP_REG:
+            reg = x.reg_name(x.operands[0].reg)
+            im = _imms(x)
+            if im and reg in state and state[reg][0] == "stack":
+                k = state[reg][1] + (im[0] if x.mnemonic == "add" else -im[0])
+                state[reg] = ("stack", k)
+            else:
+                state.pop(reg, None)
+        if x.mnemonic == "call":
+            # E8b：紧邻 ≤6 条里有 `mov e?x/edi/esi/edx/ecx/r8d, IMM` ⇒ 分配尺寸立即数
+            size = None
+            for y in reversed(prev[-6:]):
+                if y.mnemonic == "mov" and len(y.operands) == 2 and y.operands[0].type == X86_OP_REG:
+                    rn = y.reg_name(y.operands[0].reg)
+                    if rn in ("edi", "esi", "edx", "ecx", "r8d", "r9d") and y.operands[1].type == X86_OP_IMM:
+                        size = int(y.operands[1].imm)
+                        break
+            if size is not None:
+                state["rax"] = ("heap_imm", size)
+            # 目标：`call rel32` 的立即数在 call_targets 里
+            im = _imms(x)
+            if im and im[0] in call_targets:
+                out.append((x.address, im[0], state.get("rdi"), state.get("rcx"),
+                            state.get("rdx"), state.get("r8")))
+        if x.mnemonic.startswith(("ret", "call", "jmp", "j", "loop")):
+            state.clear()
+            state = {}
+        prev.append(x)
+    return frame, out, basestack
+
+
+def e8_bounds(p, anchor):
+    """E8：返回 (U 或 None, [(源, U, 说明)])。判据见 fixtures/struct_audit_plan3.txt §1.2。"""
+    w = _struct_window(p, anchor)
+    lower = w[2] if w else 0
+    found = []
+    callers = sorted({p.ix.func_of(s) for s in p.ix.calls.get(anchor, [])} - {None})
+    targets = {anchor, 0}
+    for f in callers:
+        frame, calls, _ = _e8_dataflow(p, f, targets)
+        for (addr, tgt, rdi, rcx, rdx, r8) in calls:
+            if tgt != anchor:
+                continue
+            if rdi is not None and rdi[0] == "stack":
+                u = frame - rdi[1]
+                if 0 < u >= lower:
+                    found.append(("E8a", u, "caller %s @%s: frame 0x%x, rdi=[rsp+0x%x]"
+                                  % (fmt(f), fmt(addr), frame, rdi[1])))
+            if rdi is not None and rdi[0] == "heap_imm":
+                u = rdi[1]
+                if 0 < u >= lower:
+                    found.append(("E8b", u, "caller %s @%s: 分配立即数 0x%x" % (fmt(f), fmt(addr), u)))
+    # E8c：锚点函数自己把窗口基址指向栈
+    if w is not None:
+        base = w[3]
+        ins = _insn_list(p, anchor)
+        frame = 0
+        for x in ins:
+            if x.mnemonic in FRAME_MNEMS and x.op_str.startswith("rsp,"):
+                im = _imms(x)
+                if im:
+                    frame = max(frame, im[0])
+        for x in ins:
+            if x.mnemonic == "lea" and len(x.operands) == 2 \
+                    and x.operands[0].type == X86_OP_REG and x.reg_name(x.operands[0].reg) == base \
+                    and x.operands[1].type == X86_OP_MEM and x.operands[1].mem.base == X86_REG_RSP:
+                u = frame - x.operands[1].mem.disp
+                if 0 < u >= lower:
+                    found.append(("E8c", u, "self @%s: %s=[rsp+0x%x], frame 0x%x"
+                                  % (fmt(x.address), base, x.operands[1].mem.disp, frame)))
+    found.sort(key=lambda r: r[1])
+    return (found[0][1] if found else None), found
+
+
+# 我方 Rust 结构体字段偏移估算（只认标量 + 少数已知尺寸；未知类型 ⇒ 返回 None，不猜）
+FIELD_SIZE = {
+    "f64": 8, "f32": 4, "u64": 8, "i64": 8, "usize": 8, "isize": 8,
+    "u32": 4, "i32": 4, "bool": 1, "u8": 1, "i8": 1, "u16": 2, "i16": 2,
+    "String": 24, "Vec<EventInfo>": 24, "Vec<&'static str>": 24,
+}
+
+
+def _ours_offsets(fields):
+    """[(field, offset, size)]；任一字段类型没有尺寸表项 ⇒ None（不猜）。"""
+    off, out = 0, []
+    for name, ty in fields:
+        ty = ty.strip().rstrip(",")
+        sz = FIELD_SIZE.get(ty)
+        if sz is None:
+            return None
+        off = (off + sz - 1) // sz * sz if sz < 8 else (off + 7) // 8 * 8
+        out.append((name, off, sz))
+        off += sz
+    return out
+
+
+def cmd_bounds(p, args):
+    """E8 上界夹逼（判据：fixtures/struct_audit_plan3.txt §1.2，一字未改）。"""
+    rc = 0
+    for a in args.addr:
+        va = int(a, 0)
+        w = _struct_window(p, va)
+        if w is None:
+            print("%-10s 无 E7 窗口" % fmt(va))
+            continue
+        cnt, span, lower, reg, offs = w
+        u, found = e8_bounds(p, va)
+        print("== %s  基址 %s  %d 偏移  跨度 %d  下界 0x%x" % (fmt(va), reg, cnt, span, lower))
+        for src, uu, why in found:
+            print("   %s  U=0x%-4x  %s" % (src, uu, why))
+        if u is None:
+            callers = sorted({p.ix.func_of(s) for s in p.ix.calls.get(va, [])} - {None})
+            print("   ⇒ 无合格夹逼（直接调用者 %d 个：%s）" % (
+                len(callers), ", ".join(fmt(c) for c in callers[:6]) or "无"))
+            rc = 1
+        else:
+            inside = [o for o in offs if o < u]
+            print("   ⇒ U=0x%x；[0,U) 内偏移 %s" % (u, ",".join(fmt(o) for o in inside)))
+    return 0
 
 def main(argv):
     ap = argparse.ArgumentParser()
@@ -1326,6 +1578,9 @@ def main(argv):
     s = sub.add_parser("tsv2"); s.add_argument("--check", action="store_true")
     s.set_defaults(fn=cmd_tsv2)
 
+    s = sub.add_parser("bounds")
+    s.add_argument("addr", nargs="+")
+    s.set_defaults(fn=cmd_bounds)
     s = sub.add_parser("structs")
     s.add_argument("--min-off", type=int, default=3)
     s.add_argument("--limit", type=int, default=0)
