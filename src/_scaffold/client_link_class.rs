@@ -1,6 +1,6 @@
 //! **不是原版的东西**：把**已经是复原实现**的连接状态机接给 GDScript 的 socket 层。
 //!
-//! # 为什么会有这一份（T67 / `docs/06` §115 / `docs/06` §90 C 档第 5 段）
+//! # 为什么会有这一份（T67 / `docs/06` §118 / `docs/06` §90 C 档第 5 段）
 //!
 //! `client/src/net/link.gd`（改前 224 行）是一条 TCP 连接：非阻塞 `StreamPeerTCP`
 //! + 每帧 `poll()` + 状态机（`idle → connecting → connected / failed / closed`）。

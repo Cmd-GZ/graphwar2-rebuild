@@ -1,6 +1,6 @@
 //! **不是原版的东西**：把**已经是复原实现**的战役关卡表接给 GDScript。
 //!
-//! # 为什么会有这一份（T67 / `docs/06` §115 / `docs/06` §90 C 档第 10 段）
+//! # 为什么会有这一份（T67 / `docs/06` §118 / `docs/06` §90 C 档第 10 段）
 //!
 //! `client/src/app/campaign.gd`（改前 157 行）里有一张 **21 条全参数表** `const LEVELS`：
 //! 标题 / 描述 / 四分模式字节 / 士兵数 / 靶子数 / Bot 皮肤号 / 回合上限 / 障碍模式 / `min_count`。
@@ -150,7 +150,7 @@ impl GwCampaignControl {
     /// 这里不 panic，把"原版会炸"留在文档里）。
     ///
     /// 改前 `app.gd` 用 `int(cmd.substr(len))` —— **宽容**解析：`"level_x"` 会得到 `0`
-    /// ⇒ 静默选中第 0 关，而真值那一步是解析失败。这是一处**语义错**（`docs/06` §115.4）。
+    /// ⇒ 静默选中第 0 关，而真值那一步是解析失败。这是一处**语义错**（`docs/06` §118.4）。
     #[func]
     fn parse_level_key(text: GString) -> i64 {
         match cc::parse_level_key(text.to_string().as_str()) {

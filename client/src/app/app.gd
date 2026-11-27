@@ -25,7 +25,7 @@ signal sfx_played(sound: String, slot: String)
 var BASE_SCREENS: Array = GwRootNode.base_screen_names()
 
 ## 8 个"弹窗"：叠加在基础界面之上。
-## ⚠️ 与原版 15 槽屏表**两处对不上**（T67 发现，`docs/06` §115.6，本轮不改）：
+## ⚠️ 与原版 15 槽屏表**两处对不上**（T67 发现，`docs/06` §118.6，本轮不改）：
 ## ① 原版是 `ConfirmPlay`(0x1bdb0d,11 B) + `ExitPopUp`(0x1bdb18,9 B) **两个相邻槽**
 ## （合起来 = `"ConfirmPlayExitPopUp"` 20 B = `0x3b3783` 的长度立即数 `0x14`），我方当一个屏；
 ## ② `ChatPopUp` 原版 15 槽里没有（全库也没有对应 `.rodata` 名字）—— 我方自造。
@@ -167,7 +167,7 @@ func show_screen(screen_name: String) -> bool:
 			# 它们只在 `ads_slot = true` 时出现（自检覆盖），真机路径恒为空。
 			call_deferred(String(item["deferred"]))
 	current_screen = screen_name
-	# 换基础界面时把弹窗全关掉。⚠️ **模型分叉**（T67 发现，`docs/06` §115.6）：原版是
+	# 换基础界面时把弹窗全关掉。⚠️ **模型分叉**（T67 发现，`docs/06` §118.6）：原版是
 	# **单可见**（弹窗也走 `0x3af850` ⇒ 显示弹窗会把基础屏置不可见），我方是叠层。
 	# 像素上目前等价（弹窗面板不透明），但节点 visible 不同；本轮不改，登记为下一步。
 	for p in open_popups.duplicate():
@@ -249,7 +249,7 @@ func command(cmd: String) -> void:
 	if cmd.begins_with(GwCommands.LEVEL_PREFIX):
 		# 关卡号解析在 Rust（原版 `0x417ef0` 的 `rsplit('_')` + 严格 `parse::<u32>()`）。
 		# 改前这里用 `int(substr)`: 宽容 —— `"level_x"` 会静默选中第 0 关；真值是**解析失败**
-		# （原版在 `get_current_level` 里直接 `unwrap` ⇒ 会 panic）。见 docs/06 §115.4。
+		# （原版在 `get_current_level` 里直接 `unwrap` ⇒ 会 panic）。见 docs/06 §118.4。
 		var n := GwCampaignControl.parse_level_key(cmd)
 		if n < 0:
 			push_error("[gw2] 关卡命令键解析失败：%s" % cmd)
