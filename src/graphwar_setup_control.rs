@@ -377,13 +377,12 @@ impl TimeMode {
 // 同一个 crate 内给别处定义的类型写 inherent impl 是合法的（不是 trait impl）。
 
 impl AxisMode {
-    /// 四个取值，按判别值升序。
-    pub const ALL: [AxisMode; 4] = [
-        AxisMode::NoAxis,
-        AxisMode::OnlyMain,
-        AxisMode::EveryFive,
-        AxisMode::EveryUnit,
-    ];
+    // ⚠️ T78（`docs/06` §120）：这里原有的 `pub const ALL: [AxisMode; 4]` **已删**。
+    // 合并前 `AxisMode` 有两份定义（`axis_drawer.rs` + `graphwar_mode_manager.rs`），
+    // 而 `ALL` 在两个 `impl` 里各写了一遍；把定义收敛成一个类型后，同名关联常量会
+    // `E0592` ⇒ 只留 `axis_drawer.rs` 那份（元素与顺序与本处**逐元素相同**，
+    // 由 `axis_drawer::tests::axis_mode_all_survives_the_convergence` 钉住）。
+    // 下面这些界面侧固有项（`as_u8`/`icon_path`/`name`/`next`/`prev`）**都还在**。
 
     pub const fn as_u8(self) -> u8 {
         self as u8
@@ -1622,6 +1621,67 @@ mod time_mode_convergence_tests {
         assert_eq!(ROOM_DEFAULT_OPTIONS.time, TimeMode::Timer1m);
     }
 }
+
+// ---------------------------------------------------------------------------
+// T78 收敛的 pin 测试 · `AxisMode`（`docs/06` §120，lead 授权动 `src/axis_drawer.rs`）
+//
+// 本轮把 `axis_drawer.rs` 里那份 `pub enum AxisMode` 删了、改成再导出规范位置的类型，
+// 同时把**本模块**原有的 `pub const ALL: [AxisMode; 4]` 删掉（同类型两个 `ALL` ⇒ E0592）。
+// 本组测试钉住「删掉的那个 `ALL` 与调用点现在拿到的 `ALL` 逐元素相同」以及
+// 本模块这 5 个界面侧固有项（`as_u8`/`icon_path`/`name`/`next`/`prev`）都还在。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod axis_mode_convergence_tests {
+    use super::*;
+
+    /// **`ALL` 的逐元素等价**（lead 条件③）：下面这个数组就是合并前
+    /// `graphwar_setup_control.rs` 里那份 `const ALL` 的**字面内容**（原样抄下来当基准）。
+    /// 合并后调用点走的是 `axis_drawer.rs` 保留下来的那一份，两者必须逐元素相同。
+    #[test]
+    fn setup_control_axis_mode_all_is_element_identical_after_the_delete() {
+        const DELETED_SETUP_CONTROL_ALL: [AxisMode; 4] = [
+            AxisMode::NoAxis,
+            AxisMode::OnlyMain,
+            AxisMode::EveryFive,
+            AxisMode::EveryUnit,
+        ];
+        assert_eq!(AxisMode::ALL, DELETED_SETUP_CONTROL_ALL);
+        // `ALL` 只能在**一处**（`grep -c 'pub const ALL: [AxisMode'` 应为 1）。
+        assert_eq!(AxisMode::ALL.len(), 4);
+    }
+
+    /// 本模块的 5 个界面侧固有项都还在（收敛只删了 `ALL`，别的一个没动）。
+    #[test]
+    fn setup_control_axis_mode_impl_items_survive() {
+        for (i, mode) in AxisMode::ALL.iter().enumerate() {
+            assert_eq!(mode.as_u8(), i as u8);
+            assert_eq!(mode.icon_path(), AXIS_ICONS[i], "图标表下标 = 判别值（逐位）");
+            assert_eq!(mode.name(), axis_name(i));
+        }
+        // 循环：`next`/`prev` 走判别值序，与 `AxisMode::ALL` 一致。
+        assert_eq!(AxisMode::NoAxis.prev(), AxisMode::EveryUnit);
+        assert_eq!(AxisMode::EveryUnit.next(), AxisMode::NoAxis);
+        for mode in AxisMode::ALL {
+            assert_eq!(mode.next().prev(), mode);
+        }
+    }
+
+    /// 名字表 2..6 项就是四个 `AxisMode` 变体名（`MODE_NAME_TABLE` 布局：先
+    /// `FunctionMode` 2 个、再 `AxisMode` 4 个、再 `TimeMode` 6 个）。
+    fn axis_name(i: usize) -> &'static str {
+        MODE_NAME_TABLE[2 + i]
+    }
+
+    /// 默认值来自规范位置（`#[default] NoAxis`）—— 收敛前 `axis_drawer` 那份**没有**
+    /// `Default`，收敛后可见；这个变化不影响任何调用点（`_scaffold` 里用的是
+    /// `AxisMode::NoAxis as u8`，不是 `Default`）。
+    #[test]
+    fn axis_mode_default_is_no_axis() {
+        assert_eq!(AxisMode::default(), AxisMode::NoAxis);
+        assert_eq!(AxisMode::NoAxis as u8, 0);
+    }
+}
+
 #[cfg(feature = "gdext-bindings")]
 mod node_class {
 // ---------------------------------------------------------------------------

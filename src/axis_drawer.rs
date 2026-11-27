@@ -186,21 +186,30 @@ pub enum Primitive {
 /// `OnlyMain` 被常量去重到别处（`0x19f3a0`）；所以 `0=NoAxis … 3=EveryUnit`
 /// 是从**代码行为**（0 一条线都不画、3 画最细的网格）反推的，缺的是
 /// `AxisMode::deserialize` 的跳表到判别值的直接映射。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AxisMode {
-    /// 只画白底，不画任何线。
-    NoAxis = 0,
-    /// 白底 + 两条主轴（x=0、y=0）。
-    OnlyMain = 1,
-    /// 再加每 5 单位一条的粗网格。
-    EveryFive = 2,
-    /// 再加每 1 单位一条的细网格。
-    EveryUnit = 3,
-}
+// # 收敛：本模块**不再定义** `AxisMode`（T78，`docs/06` §120，lead 授权改本文件）
+//
+// 本轮之前这里有**第二份** `AxisMode` 定义（4 变体、`#[repr(u8)]`、derive
+// `Clone/Copy/Debug/PartialEq/Eq`），与规范位置
+// `crate::graphwar_mode_manager::AxisMode`（同一批变体，多一个 `Default`）重复。
+// 原版只有一个 `enum AxisMode`（单态 `0x3cb560`；跳表 `0x1be124` 给 4 个变体名，
+// 见 `fixtures/struct_audit2.tsv` 的 `AxisMode` 行）⇒ 这里改成**再导出**，
+// 定义只剩 `src/graphwar_mode_manager.rs` 一处。
+//
+// * 变体集合与判别值**逐项相同**（`NoAxis=0 / OnlyMain=1 / EveryFive=2 / EveryUnit=3`）；
+// * derive 取并集 ⇒ 规范位置的 `Default`（`#[default] NoAxis`）现在对本模块可见；
+// * 本模块的 6 个绘图用固有项（`ALL`/`from_discriminant`/`draws_minor_grid`/
+//   `draws_major_grid`/`draws_main_axis`/`from_raw`）**原样留下**，仍是同一个 crate 里
+//   给该类型写的 inherent impl；
+// * 界面侧 `graphwar_setup_control.rs` 里那份 `impl AxisMode { const ALL }` **删掉了**
+//   （否则同类型两个 `ALL` ⇒ `E0592`）。合并后 `ALL` 只有本模块一处，元素与顺序
+//   与合并前两份**逐元素相同** —— 由 `axis_mode_convergence_tests` 钉住。
+pub use crate::graphwar_mode_manager::AxisMode;
 
 impl AxisMode {
     /// 四个取值，按判别值升序。
+    ///
+    /// **合并后 `ALL` 只此一处**（T78）：`graphwar_setup_control.rs` 里那份同名常量
+    /// 已删（两份元素与顺序本来就相同：`NoAxis, OnlyMain, EveryFive, EveryUnit`）。
     pub const ALL: [AxisMode; 4] = [
         AxisMode::NoAxis,
         AxisMode::OnlyMain,
@@ -387,3 +396,140 @@ const _: () = {
     assert!(AxisMode::EveryFive as u8 == 2);
     assert!(AxisMode::EveryUnit as u8 == 3);
 };
+
+// ---------------------------------------------------------------------------
+// T78 收敛的 pin 测试（`docs/06` §120，lead 授权改本文件）
+//
+// 本轮把本模块那份 `pub enum AxisMode` 删了、改成 `pub use crate::graphwar_mode_manager::AxisMode;`，
+// 同时把 `graphwar_setup_control.rs` 里重复的 `const ALL` 删掉（只留本模块这份）。
+// 下面这一组是"行为风险"的护栏：变体集合、判别值、`ALL` 的元素与顺序、三个
+// `draws_*` 判据、`from_discriminant`/`from_raw` 两个方向的映射，逐项钉住 ——
+// 收敛前它们分散在两个类型上，收敛后必须**一模一样**。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod axis_mode_convergence_tests {
+    use super::*;
+
+    /// **唯一定义**：本模块的 `AxisMode` 就是规范位置那一个类型（类型同一性，编译期）。
+    #[test]
+    fn axis_mode_is_the_canonical_type() {
+        fn same_type<T>(_: T, _: T) {}
+        same_type(
+            AxisMode::EveryFive,
+            crate::graphwar_mode_manager::AxisMode::EveryFive,
+        );
+        assert_eq!(
+            core::mem::size_of::<AxisMode>(),
+            1,
+            "`#[repr(u8)]` 由规范位置提供 ⇒ 尺寸必须是 1 字节"
+        );
+    }
+
+    /// 判别值逐项（E6 读数 `0x3cb560` / 跳表 `0x1be124`，**逐位**）。
+    #[test]
+    fn axis_mode_discriminants_are_unchanged() {
+        assert_eq!(AxisMode::NoAxis as u8, 0);
+        assert_eq!(AxisMode::OnlyMain as u8, 1);
+        assert_eq!(AxisMode::EveryFive as u8, 2);
+        assert_eq!(AxisMode::EveryUnit as u8, 3);
+        // 界面侧的 `as_u8`（impl 在 `graphwar_setup_control.rs`）与 `as u8` 必须同值。
+        for mode in AxisMode::ALL {
+            assert_eq!(mode.as_u8(), mode as u8);
+        }
+    }
+
+    /// `ALL`：元素与顺序 = 判别值升序。合并前**两份** `ALL` 的写法是
+    /// `[NoAxis, OnlyMain, EveryFive, EveryUnit]`，这里把它当**合并前的真值**硬编码。
+    #[test]
+    fn axis_mode_all_survives_the_convergence() {
+        const PRE_MERGE_ALL: [AxisMode; 4] = [
+            AxisMode::NoAxis,
+            AxisMode::OnlyMain,
+            AxisMode::EveryFive,
+            AxisMode::EveryUnit,
+        ];
+        assert_eq!(AxisMode::ALL, PRE_MERGE_ALL);
+        assert_eq!(AxisMode::ALL.len(), 4);
+        for (i, mode) in AxisMode::ALL.iter().enumerate() {
+            assert_eq!(*mode as u8, i as u8, "ALL[{i}] 的判别值必须是 {i}");
+        }
+    }
+
+    /// `from_discriminant`：4 个合法值双向一致；越界 ⇒ `None`（256 个值全扫）。
+    #[test]
+    fn axis_mode_from_discriminant_covers_the_whole_u8_domain() {
+        for mode in AxisMode::ALL {
+            assert_eq!(AxisMode::from_discriminant(mode as u8), Some(mode));
+        }
+        for raw in 0u8..=255 {
+            let got = AxisMode::from_discriminant(raw);
+            if raw <= 3 {
+                assert!(got.is_some(), "raw={raw} 应当有变体");
+            } else {
+                assert_eq!(got, None, "raw={raw} 越界必须 None");
+            }
+        }
+    }
+
+    /// `from_raw`（越界兜底）：原版三条判断是 `==3` / `>=2` / `!=0` ⇒ 越界值
+    /// （4..=255）**画轴、画粗网格、不画细网格** = `EveryFive`。
+    #[test]
+    fn axis_mode_from_raw_keeps_the_original_fallback_branch() {
+        for mode in AxisMode::ALL {
+            assert_eq!(AxisMode::from_raw(mode as u8), mode);
+        }
+        for raw in 4u8..=255 {
+            assert_eq!(
+                AxisMode::from_raw(raw),
+                AxisMode::EveryFive,
+                "raw={raw} 的兜底必须是 EveryFive（= 画轴 + 粗网格、不画细网格）"
+            );
+        }
+    }
+
+    /// 三个 `draws_*` 判据逐变体（= 二进制里的 `al == 3` / `al >= 2` / `al != 0`）。
+    #[test]
+    fn axis_mode_draw_predicates_are_unchanged() {
+        // (变体, 细网格, 粗网格, 主轴)
+        const TABLE: [(AxisMode, bool, bool, bool); 4] = [
+            (AxisMode::NoAxis, false, false, false),
+            (AxisMode::OnlyMain, false, false, true),
+            (AxisMode::EveryFive, false, true, true),
+            (AxisMode::EveryUnit, true, true, true),
+        ];
+        for (mode, minor, major, main) in TABLE {
+            assert_eq!(mode.draws_minor_grid(), minor, "{mode:?} 细网格");
+            assert_eq!(mode.draws_major_grid(), major, "{mode:?} 粗网格");
+            assert_eq!(mode.draws_main_axis(), main, "{mode:?} 主轴");
+        }
+    }
+
+    /// 画出来的线数（`_scaffold/axis_drawer_class.rs` 的验收表就是这四个数，
+    /// 收敛后必须不变：0 / 2 / 20 / 102）。
+    #[test]
+    fn axis_line_counts_are_unchanged_by_the_convergence() {
+        let size = Vec2::new(50.0, 30.0);
+        for (raw, expect) in [
+            (AxisMode::NoAxis as u8, 0usize),
+            (AxisMode::OnlyMain as u8, 2),
+            (AxisMode::EveryFive as u8, 20),
+            (AxisMode::EveryUnit as u8, 102),
+        ] {
+            assert_eq!(line_count(AxisMode::from_raw(raw)), expect, "raw={raw}");
+            // `axis_primitives` 除了线还有**两条固定图元**：`draw_set_transform`（`0x4e0667`）
+            // 与白底 `draw_rect`（`0x4e06ca`）⇒ 图元总数 = 2 + 线数。
+            assert_eq!(
+                axis_primitives(AxisMode::from_raw(raw), size).len(),
+                2 + expect,
+                "raw={raw} 的图元条数（2 条固定 + 线）"
+            );
+        }
+    }
+
+    /// `Default` 现在从规范位置来（收敛前本模块那份**没有** `Default`）——
+    /// 这是 derive 并集的可见效果，钉住它免得有人以为默认值变了。
+    #[test]
+    fn axis_mode_default_comes_from_the_canonical_side() {
+        assert_eq!(AxisMode::default(), AxisMode::NoAxis);
+    }
+}
