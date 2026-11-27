@@ -2710,10 +2710,14 @@ mod tests {
     #[test]
     fn drive_frame_advances_at_the_fixed_60hz_step() {
         const P: u64 = crate::graphwar_tick_handler::NANOS_PER_TICK as u64;
-        // 正好一个周期 ⇒ 1 个 tick、余数 0
-        assert_eq!(ticks_for_frame(0, 1.0 / 60.0, 600), (1, 0));
-        // 一秒 ⇒ 60 个 tick
-        assert_eq!(ticks_for_frame(0, 1.0, 600), (60, 0));
+        // 正好一个周期（用纳秒精确表示，避免 `1.0/60.0` 的 0.67 ns 表示误差）⇒ 1 个 tick、余数 0
+        let step_s = P as f64 / crate::graphwar_tick_handler::NANOS_PER_SECOND as f64;
+        assert_eq!(ticks_for_frame(0, step_s, 600), (1, 0));
+        // 1/60 s 的 f64 表示是 16666666.67 ns ⇒ round **进到** 16666667 ⇒ 余 1 ns
+        // （原版同样按纳秒记累加器，1 ns 的余数不丢，下一帧会补进去）
+        assert_eq!(ticks_for_frame(0, 1.0 / 60.0, 600), (1, 1));
+        // 一秒 = 1e9 ns ⇒ 60 个 tick（60×16666666 = 999999960）⇒ 余 40 ns
+        assert_eq!(ticks_for_frame(0, 1.0, 600), (60, 40));
         // 半周期 ⇒ 0 个 tick，余数 = 半个周期
         assert_eq!(ticks_for_frame(0, 0.5 / 60.0, 600), (0, P / 2));
         // 余数跨帧累计：两次半周期 ⇒ 1 个 tick

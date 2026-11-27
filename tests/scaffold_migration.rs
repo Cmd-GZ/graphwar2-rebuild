@@ -142,15 +142,29 @@ fn function_setters_emit_function_info_active_points() {
 }
 
 /// ② `get_active_functions_on_tick`（`0x456df0`）的在场判据：`tick > active_tick` **严格**，
-/// 且 `30*(tick-active) < 1800`（本表不存整条曲线 ⇒ 窗口 60 tick，见函数文档的差异登记）。
+/// 且 `30*(tick-active) < points.len() + 1800`。
+///
+/// **T88 更正（2026-11-27）**：本测试原先断言窗口边界是 `<=`（`d=60` 仍算在场），
+/// 那是从**我方当时那份实现**抄来的口径（当时 `points.len()` 按 0 算，注释自认"本层差异"）。
+/// 反汇编的真值是**严格小于**：`0x3be611 cmp %edi,%edx / jae skip`（`jae` = 无符号 ≥ ⇒ 不在场）、
+/// `0x3be60b add $0x708,%edi`（= `len + 1800`）。所以 `d=60`（`30·60 = 1800`）**不**在场；
+/// 边界值随 `points.len()` 前移，本测试用 `set_function_points_len` 把两种情形都钉住。
 #[test]
 fn active_functions_predicate_is_strict_and_windowed() {
     let mut t = FunctionTable::new();
     t.set_function_active_tick(9003, 100);
     assert_eq!(t.get_active_functions_on_tick(100), Vec::<u32>::new(), "同 tick 不算在场（严格 >）");
     assert_eq!(t.get_active_functions_on_tick(101), vec![9003]);
-    assert_eq!(t.get_active_functions_on_tick(160), vec![9003], "30*60 = 1800 ⇒ 仍 <= 1800");
-    assert_eq!(t.get_active_functions_on_tick(161), Vec::<u32>::new(), "30*61 > 1800 ⇒ 不在场");
+    // 没报点序列长度 ⇒ len = 0 ⇒ 尾巴 1800/30 = 60 tick ⇒ d ≤ 59
+    assert_eq!(t.get_active_functions_on_tick(159), vec![9003], "d=59 ⇒ 30*59 = 1770 < 1800");
+    assert_eq!(t.get_active_functions_on_tick(160), Vec::<u32>::new(), "d=60 ⇒ 1800 不 < 1800");
+    // 报 600 点 ⇒ len/30 = 20 ⇒ 窗口 d ≤ 79
+    t.set_function_points_len(9003, 600);
+    assert_eq!(t.get_active_functions_on_tick(179), vec![9003], "d=79 ⇒ 2370 < 600+1800");
+    assert_eq!(t.get_active_functions_on_tick(180), Vec::<u32>::new(), "d=80 ⇒ 2400 不 < 2400");
+    // no_fade 变体（`0x456f80`）：末项没有 +1800 ⇒ 只问"还在揭示吗"
+    assert_eq!(t.get_active_functions_on_tick_no_fade(119), vec![9003], "d=19 ⇒ 570 < 600");
+    assert_eq!(t.get_active_functions_on_tick_no_fade(120), Vec::<u32>::new(), "d=20 ⇒ 揭完");
 }
 
 /// ③ `subscribe_to_event`（`0x3d38f0`）：只认那张 72 条名字表里的名字；`process_events`

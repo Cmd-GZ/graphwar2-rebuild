@@ -261,7 +261,12 @@ func _check_window(plane: Control) -> void:
 	ok(int(plane.call("removed_function_total")) == 1, "出界 ⇒ remove_function 调了 1 次（0x4b6418）")
 	ok(int(drawer.call("function_count")) == 0, "drawer 里那条线被删了（function_count() == 0）")
 	ok(_line_of(drawer, 7) == null, "旧的 Line2D 句柄查不到了")
-	ok(int(plane.call("function_count")) == 0, "plane 里也没了（function_count() == 0）")
+	# ⚠️ **T88 更正**：`0x4b6418` 调的是 **`FunctionDrawer::remove_function`**（`0x498b70`：
+	# `queue_free` + 删**抽屉自己**那张表）——`GraphwarFunctionManager` 里那一格**留着**。
+	# 这一格必须留：联机上 `FunctionPoints` 先到、`FunctionActive` 后到是常态，
+	# 起飞 tick 迟到时要靠它把线重新建出来（探针 `fixtures/t88_active_window_probe.gd` 第 6 条）。
+	ok(int(plane.call("function_count")) == 1,
+		"plane 的管理器里**还留着**那一格（function_count() == 1；`0x4b6418` 只删 Line2D）")
 
 	# tick == active_tick 不算在场（`jbe`：无符号的"小于等于"）。
 	plane.call("clear_function_points")
@@ -270,7 +275,8 @@ func _check_window(plane: Control) -> void:
 	ok(_active_ids(plane).size() == 0, "tick == active_tick ⇒ 不在场（严格大于）")
 	ok(int(plane.call("feed_functions")) == 0, "不在场 ⇒ 不喂")
 	# 上面那次 `feed_functions()` 会把它当成"已经不在场"删掉（`0x4b6418`）⇒ 再判之前要重注。
-	ok(int(plane.call("function_count")) == 0, "不在场的条目被删掉了（function_count() == 0）")
+	ok(int(plane.call("function_count")) == 1,
+		"不在场的条目**仍在表里**（function_count() == 1）——只删了线，起飞 tick 迟到还能救回来")
 	plane.call("set_function_points", 3, _make_points(), 20, COLOR_A)
 	plane.call("set_fractional_tick", 21.0)
 	ok(_active_ids(plane).size() == 1, "tick = active_tick+1 ⇒ 在场")
