@@ -1522,7 +1522,8 @@ mod node_class {
 //    原版 `game_setup.tscn` 装进 `client/scenes/screens/`（节点 `GraphwarSetupControl/RoomName/
 //    RoomNameLineEdit` 由场景提供）⇒ 替身子节点是否还该建 = **待定**（改它会动屏幕像素，不在本轮范围）；
 // 2. `join_text` 与 `src/graphwar_button.rs` 里那份**逐字符相同**（台账 `scaffold_triage.tsv` 的
-//    C 档）—— 本轮只搬位置，不合并（合并要动 `graphwar_button` 的可见性，属另一条改动）。
+//    C 档）—— **T72 已办**：两份都删掉，唯一实现在 `_scaffold/api.rs::join_text`（见那里的文档；
+//    它是**我方自造**的验收钩子助手，原版没有这个函数）。
 
 //! **不是原版的东西**：把复原的 [`crate::graphwar_setup_control`] 挂成**真 Godot 节点类**的绑定外壳。
 //!
@@ -1631,6 +1632,8 @@ use godot::obj::WithUserSignals;
 use godot::prelude::*;
 
 use crate::graphwar_level_manager::{AxisMode, FunctionMode, TurnMode};
+// T72 归一：`join_text` 的唯一实现在 `_scaffold/api.rs`（原版没有这个助手）。
+use crate::_scaffold::api::join_text;
 use crate::graphwar_setup_control::{
     self as setup, PlayerEntry, SetupAction, SetupOptions, Team, TimeMode, ROOM_DEFAULT_OPTIONS,
 };
@@ -2148,20 +2151,8 @@ fn team_of(raw: i64) -> Team {
     }
 }
 
-/// 把一串字符串接成 `a|b|c`。
-///
-/// **返回 `String` 而不是 `GString`**：`GString::from` 要调引擎的构造函数，没有 Godot 进程
-/// 就 panic，所以纯 Rust 的那一半留在 `String` 上，到 `#[func]` 边界才转。
-fn join_text<S: AsRef<str>>(items: &[S]) -> String {
-    let mut out = String::new();
-    for (i, item) in items.iter().enumerate() {
-        if i > 0 {
-            out.push('|');
-        }
-        out.push_str(item.as_ref());
-    }
-    out
-}
+// `join_text` **不在这里**（T72 归一，台账 C 档 `join_text`）：见上方 §11 头注第 2 条留下的
+// 待办 —— 本轮已办，唯一实现在 `_scaffold/api.rs`（原版没有这个助手）。
 
 /// 让 `AxisMode` / `FunctionMode` / `TurnMode` / `TimeMode` 的 `next()` 在编译期被用到
 /// （它们只经 `#[func]` 调用，单测里也直接跑一遍）。

@@ -746,6 +746,8 @@ use godot::obj::WithUserSignals;
 use godot::prelude::*;
 
 use crate::graphwar_button::{self, ButtonState, Stamp};
+// T72 归一：`join_text` 的唯一实现在 `_scaffold/api.rs`（原版没有这个助手，两处曾各一份）。
+use crate::_scaffold::api::join_text;
 
 /// 一次派发之后，`dispatch_log` 最多留多少条（防止长按连发把内存吃光）。
 const DISPATCH_LOG_LIMIT: usize = 32;
@@ -1149,21 +1151,9 @@ impl GraphwarButton {
     }
 }
 
-/// 把一串字符串接成 `a|b|c`（空表 → `""`）。
-///
-/// **返回 `String` 而不是 `GString`**：`GString::from` 要调引擎的构造函数，没有 Godot 进程
-/// 就 panic（`single_threaded.rs:170`），所以纯 Rust 的那一半必须留在 `String` 上，
-/// 到 `#[func]` 边界才 `GString::from`。本文件初版就在这里栽过一次（`cargo test` 红）。
-fn join_text<S: AsRef<str>>(items: &[S]) -> String {
-    let mut out = String::new();
-    for (i, item) in items.iter().enumerate() {
-        if i > 0 {
-            out.push('|');
-        }
-        out.push_str(item.as_ref());
-    }
-    out
-}
+// `join_text` **不在这里**（T72 归一，台账 C 档 `join_text`）：它是**我方自造**的文本助手
+// （原版没有这个函数），T63 搬类时被带进了本模块，与 `graphwar_setup_control.rs` 那份
+// **逐字符相同**。现在收回 `_scaffold/api.rs`（唯一一份），本模块只 `use`。
 
 /// `catch_unwind` 的 payload → 可读文本（`panic!` 的两种载荷都照顾到）。
 fn panic_text(payload: &Box<dyn std::any::Any + Send>) -> String {
