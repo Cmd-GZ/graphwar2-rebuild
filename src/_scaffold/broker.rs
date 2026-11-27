@@ -61,7 +61,7 @@ pub fn game_info_event(info: &Broadcast) -> String {
 
 /// 反向：从一条线上报文里取出房间表项。
 ///
-/// **T75 收严**：帧用 [`parse_frame_message`]（单键 + 值必须是对象 + 尾部只许空白），
+/// **T76 收严**：帧用 [`parse_frame_message`]（单键 + 值必须是对象 + 尾部只许空白），
 /// 外壳下钻交给 `GameInfo::parse` 自己（它按 `JsonObject::is_event_payload` 区分
 /// "事件负载"与"裸广播原文"两种形态）。改前这里靠本文件的 `inner_object()`（又一次
 /// `body.find("\"game_info\":")` 子串查找），现在整条链上**没有**第二处子串解析。

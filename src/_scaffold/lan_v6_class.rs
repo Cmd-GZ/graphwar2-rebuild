@@ -196,9 +196,9 @@ impl GwLanV6 {
         };
         let raw = bytes.to_vec();
         // 受控实验（`docs/archive/115` §5.3）的两条结论都落在**解析层**：
-        // ① 变体 B（事件外壳）/ 变体 D（`{"game_info":…}`）—— `Broadcast::parse` 在 T75 之后
+        // ① 变体 B（事件外壳）/ 变体 D（`{"game_info":…}`）—— `Broadcast::parse` 在 T76 之后
         //    只认**顶层** 9 字段（字段读取不下钻）⇒ 这两条直接 `None`。T67 曾在这里补一道
-        //    具名闸 `is_bare_object()`（"裸对象里没有 `{`"），T75 把它删了：正确修法在
+        //    具名闸 `is_bare_object()`（"裸对象里没有 `{`"），T76 把它删了：正确修法在
         //    `protocol.rs`，而且那道形状闸会**误拒**房名里带 `{` 的合法广播（推断级缺陷）。
         // ② 变体 E（`"Timers1m"`）—— `TimeMode::from_str` 严格（T66）⇒ 也是 `None`。
         // 判据发生在**入表之前**，所以被丢的报文既不建行、也不刷新已有行的 `seen_at`。
@@ -362,14 +362,14 @@ impl GwLanV6 {
 
     /// 解析一条广播原文（不动表；给自检/排障用）。不合格 ⇒ `{}`。
     ///
-    /// 与 [`GwLanV6::ingest`] **同一套判据**：变体 B/D（事件外壳）⇒ 空（T75 起由
+    /// 与 [`GwLanV6::ingest`] **同一套判据**：变体 B/D（事件外壳）⇒ 空（T76 起由
     /// `Broadcast::parse` 的「只认顶层 9 字段」直接拒）；`time_mode` 形状不对（变体 E）⇒ 空。
     /// 这样"能被解析"就等价于"能进房间表"。
     #[func]
     fn parse_broadcast(text: GString) -> VarDictionary {
         let t = text.to_string();
         let t = t.trim();
-        // 与 `ingest` 同一套判据（T75 起全部在 `Broadcast::parse` 里）：
+        // 与 `ingest` 同一套判据（T76 起全部在 `Broadcast::parse` 里）：
         // 变体 B/D 由"只认顶层 9 字段"拒，变体 E 由枚举严格解析拒。
         match Broadcast::parse(t) {
             Some(info) if is_known_time_mode(info.time_mode.as_str()) => {

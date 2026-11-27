@@ -80,7 +80,7 @@ pub fn parse_message(text: &str) -> Option<RawMessage> {
 /// 判据（与原版 serde 外部标签同口径）：整段文本必须是**恰好一个**顶层键、它的值必须是
 /// **对象**、尾部只许空白。多一个键 / 值不是对象 / 尾随垃圾 ⇒ `None`。
 ///
-/// 为什么要两个入口（T75 台账 `fixtures/protocol_parse_audit.tsv` 的 2 号行）：
+/// 为什么要两个入口（T76 台账 `fixtures/protocol_parse_audit.tsv` 的 2 号行）：
 /// [`parse_message`] 的契约是"**按前缀**取第一个键的对象"—— 回放行是
 /// `{"event":{…},"tick":N}`，`graphwar_replay_reader::parse_event_line` 正靠这个前缀语义
 /// 取 `event` 再回到原文取 `tick`；把它改严会让**整条回放读取链路**失效。
@@ -126,7 +126,7 @@ pub trait JsonObject {
 
     /// 这个输入是**事件负载**还是**线上裸对象原文**？
     ///
-    /// 两种形态的严格性不同，所以必须由**输入类型**区分（T75）：
+    /// 两种形态的严格性不同，所以必须由**输入类型**区分（T76）：
     /// * `&str` / `&String` = LAN 数据报原文。原版受控实验（`docs/archive/115` §5.3）证明
     ///   只有"裸的 9 字段对象"被接受 ⇒ **绝不**下钻，否则变体 B/D 会漏过去；
     /// * `&RawMessage` = 已经由 [`parse_message`] 解出名字的**事件负载**。原版 `GameInfo`
@@ -160,7 +160,7 @@ impl JsonObject for &RawMessage {
 
 /// 从消息体里取一个字符串字段，例如 `get_str(m, "game_name")`。
 ///
-/// **严格（T75）**：只认 `body` 的**顶层**字段（子串式的 `find` 会让嵌套对象里的同名字段
+/// **严格（T76）**：只认 `body` 的**顶层**字段（子串式的 `find` 会让嵌套对象里的同名字段
 /// 也命中 ⇒ 变体 B 漏网）；值必须是一个完整的 JSON 字符串字面量，返回**内部原文、不解转义**
 /// （带转义的值请用 [`get_str_unescaped`]）。
 pub fn get_str(msg: &RawMessage, key: &str) -> Option<String> {
@@ -169,7 +169,7 @@ pub fn get_str(msg: &RawMessage, key: &str) -> Option<String> {
 
 /// 从消息体里取一个整数字段。
 ///
-/// **严格（T75）**：顶层 + JSON 整数文法精确匹配。改前是"取数字前缀" ⇒ `"tick":12abc`
+/// **严格（T76）**：顶层 + JSON 整数文法精确匹配。改前是"取数字前缀" ⇒ `"tick":12abc`
 /// 会得到 12、`"tick":1.5` 会得到 1（serde 这两种都是类型错 ⇒ 反序列化失败）。
 pub fn get_int(msg: &RawMessage, key: &str) -> Option<i64> {
     top_int(&msg.body, key)
@@ -177,7 +177,7 @@ pub fn get_int(msg: &RawMessage, key: &str) -> Option<i64> {
 
 /// 取 `{"r":149,"g":5,"b":62}` 这样的颜色字段。
 ///
-/// **严格（T75）**：顶层 + 三个通道都必须是 `u8` 范围（改前 `as u8` 会把 `r:300` 静默
+/// **严格（T76）**：顶层 + 三个通道都必须是 `u8` 范围（改前 `as u8` 会把 `r:300` 静默
 /// 回绕成 44；serde 的 `u8` 越界是反序列化失败）。
 pub fn get_color(msg: &RawMessage, key: &str) -> Option<(u8, u8, u8)> {
     top_color(&msg.body, key)
@@ -268,10 +268,10 @@ fn read_object(s: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// 严格字段读取（T75）：只认**对象顶层**的字段，值与类型按线上文法精确校验
+// 严格字段读取（T76）：只认**对象顶层**的字段，值与类型按线上文法精确校验
 // ---------------------------------------------------------------------------
 //
-// 为什么要有这一层（T75 的起点，`docs/06` §118.4 → §120）：
+// 为什么要有这一层（T76 的起点，`docs/06` §118.4 → §120）：
 // 改前 6 个 `get_*` 全是 `body.find("\"k\":")` —— 它在**任意深度**都能命中
 // （嵌套对象里、甚至别的字符串值内部），于是 `{"GameInfo":{"game_info":{…9 字段…}}}`
 // 这种**带事件外壳的整帧**也能被 `Broadcast::parse` "解析成功"（T67 实测：一接上去
@@ -413,7 +413,7 @@ fn scan_pairs(body: &str) -> Option<Vec<(&str, &str)>> {
 
 /// `body` 顶层字段 `key` 的值原文（含引号/括号）；键不在顶层 ⇒ `None`。
 ///
-/// ⚠️ 这是 T75 的**核心**：**不下钻**。嵌套对象里的同名字段一律看不见 ——
+/// ⚠️ 这是 T76 的**核心**：**不下钻**。嵌套对象里的同名字段一律看不见 ——
 /// 这正是"变体 B（事件外壳）不再漏网"的原因。
 pub fn top_level_value<'a>(body: &'a str, key: &str) -> Option<&'a str> {
     scan_pairs(body)?.into_iter().find(|(k, _)| *k == key).map(|(_, v)| v)
@@ -437,7 +437,7 @@ pub fn top_level_object<'a>(body: &'a str, key: &str) -> Option<&'a str> {
     object_body(top_level_value(body, key)?)
 }
 
-/// 变体名闸（T75）：线上事件的键名**就是** serde 外部标签的变体名，`Deserialize` 时
+/// 变体名闸（T76）：线上事件的键名**就是** serde 外部标签的变体名，`Deserialize` 时
 /// serde 先按名字选变体 —— 名字不认识就是 "unknown variant" **解析失败**。
 ///
 /// ⇒ 每个强类型 `parse` 的第一句都必须是它。改前没有这一句：`PosInfo::parse` 之类
@@ -855,7 +855,7 @@ mod tests {
         assert!(parse_message(r#"{"A":{"x":1}"#).is_none(), "不配对的括号应拒绝");
     }
 
-    /// **T75 真值依据的机器化**：`fixtures/protocol_live_frames.jsonl` 的 **1717 条线上真帧**，
+    /// **T76 真值依据的机器化**：`fixtures/protocol_live_frames.jsonl` 的 **1717 条线上真帧**，
     /// **每一帧**的顶层键集与键序都必须等于 `WIRE_SPEC`（本测试是本轮机核，不是抽查）。
     ///
     /// 为什么这条能当"严格解析"的判据：严格化的方向是「字段只认顶层 + 类型精确」，
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(by_kind.get("TickReply"), Some(&504usize), "TickReply 帧数变了");
     }
 
-    /// **反面对照（T75）**：字段只认顶层 —— 嵌套对象里的同名字段、以及别的**字符串值内部**
+    /// **反面对照（T76）**：字段只认顶层 —— 嵌套对象里的同名字段、以及别的**字符串值内部**
     /// 出现的 `"key":` 都不许被当成顶层字段。改前这 4 条全都能"解析成功"（substring `find`）。
     #[test]
     fn nested_or_quoted_field_names_are_not_top_level_fields() {
@@ -930,7 +930,7 @@ mod tests {
         );
     }
 
-    /// **反面对照（T75）**：数字/字符串字面量按线上文法精确校验。
+    /// **反面对照（T76）**：数字/字符串字面量按线上文法精确校验。
     ///
     /// 改前 `get_int` 是"取数字前缀" ⇒ `1.5`→1、`12abc`→12 都"解析成功"，
     /// 而 serde 对 `i64` 的这两种输入都是**类型错 = 反序列化失败**。
@@ -960,7 +960,7 @@ mod tests {
         assert_eq!(PosInfo::parse(&m).map(|p| p.pos_x), Some(-21.5));
     }
 
-    /// **反面对照（T75）**：`u8` 通道越界必须拒绝。
+    /// **反面对照（T76）**：`u8` 通道越界必须拒绝。
     ///
     /// 改前 `get_color` 用 `as u8` ⇒ `r:300` 静默回绕成 44；serde 的 `u8` 越界是
     /// 反序列化失败（`GraphwarColor` 三个通道都是 `u8`，单态 `0x3cc330`）。
@@ -985,7 +985,7 @@ mod tests {
         assert_eq!(GraphwarColor::parse(&m), None, "嵌套对象里的 r/g/b 不是顶层字段");
     }
 
-    /// **反面对照（T75）**：变体名是 serde 外部标签的"选路键" —— 名字不同就是**别的**类型，
+    /// **反面对照（T76）**：变体名是 serde 外部标签的"选路键" —— 名字不同就是**别的**类型，
     /// 字段恰好齐也不许当成自己。
     ///
     /// 改前 17 个手写 + 19 个宏生成实例的 `parse` 里**没有一处**比较 `m.kind`：
@@ -1018,7 +1018,7 @@ mod tests {
         );
     }
 
-    /// **反面对照（T75）**：必填的 `String` 字段缺失必须拒绝。
+    /// **反面对照（T76）**：必填的 `String` 字段缺失必须拒绝。
     ///
     /// 改前 `FunctionInfo::parse` / `FunctionUpdateRequest::parse` 用 `unwrap_or_default()`
     /// ⇒ 缺 `function` 时静默变成空串（"静默丢字段"），而 serde 的 `Str` 是必填。
@@ -1060,7 +1060,7 @@ mod tests {
         r#""turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}"#
     );
 
-    /// **负向测试（T75 ③）**：带事件外壳的"变体 B"喂给 `Broadcast::parse` 必须返回 `None`。
+    /// **负向测试（T76 ③）**：带事件外壳的"变体 B"喂给 `Broadcast::parse` 必须返回 `None`。
     ///
     /// 真值（不是自写断言）：`docs/archive/115-broker.md` §5.3 的**原版客户端受控实验** ——
     /// 往 LAN 端口灌 5 个变体，只有"裸的 9 字段对象 + 结尾换行"（C）出现在 UI 里；
@@ -1184,14 +1184,14 @@ pub struct FunctionInfo {
 
 /// 取一个浮点字段。
 ///
-/// **严格（T75）**：顶层 + JSON 数字文法（改前是"取数字前缀"）。
+/// **严格（T76）**：顶层 + JSON 数字文法（改前是"取数字前缀"）。
 pub fn get_f64(msg: &RawMessage, key: &str) -> Option<f64> {
     top_f64(&msg.body, key)
 }
 
 /// 取布尔字段。
 ///
-/// **严格（T75）**：顶层 + 只认 `true` / `false` 两个字面量（改前 `starts_with("true")`
+/// **严格（T76）**：顶层 + 只认 `true` / `false` 两个字面量（改前 `starts_with("true")`
 /// ⇒ `trueX` 也会被当成 `true`）。
 pub fn get_bool(msg: &RawMessage, key: &str) -> Option<bool> {
     top_bool(&msg.body, key)
@@ -2060,7 +2060,7 @@ mod emit_end_of_turn_tests {
 /// [`get_str`] 不解转义，遇到 `\"` 会原样返回；昵称与外观名都可能带引号，
 /// 所以本节统一用这个。
 ///
-/// **严格（T75）**：顶层 + 必须是完整字符串字面量（改前是 `body.find`，任意深度都命中）。
+/// **严格（T76）**：顶层 + 必须是完整字符串字面量（改前是 `body.find`，任意深度都命中）。
 pub fn get_str_unescaped(msg: &RawMessage, key: &str) -> Option<String> {
     top_str_unescaped(&msg.body, key)
 }
@@ -2701,7 +2701,7 @@ impl GraphwarColor {
 
     /// `{"r":..,"g":..,"b":..}` 的三个通道。
     ///
-    /// **严格（T75）**：三个键都必须是**顶层**字段、值都必须是 `u8` 范围（serde 的 `u8`
+    /// **严格（T76）**：三个键都必须是**顶层**字段、值都必须是 `u8` 范围（serde 的 `u8`
     /// 越界/负数 = 反序列化失败；改前 `get_int(..)? as u8` 会把 `r:300` 静默回绕成 44）。
     /// 多加的字段忽略（serde derive 默认）。
     ///
@@ -2771,7 +2771,7 @@ impl GameInfo {
     ///
     /// 5 个枚举字段**严格**按变体名解析（`GameState::from_str` 等），未知名字 ⇒ `None`：
     /// 与 serde 派生出来的 `Deserialize` 同口径（未知变体 = 反序列化失败）。
-    /// ## 严格性（T75：把 T67 记在 `docs/06` §118.4 的那条闸**收进 protocol.rs**）
+    /// ## 严格性（T76：把 T67 记在 `docs/06` §118.4 的那条闸**收进 protocol.rs**）
     ///
     /// 两种入口形态的严格性**不同**，由输入类型定（见 [`JsonObject::is_event_payload`]）：
     ///

@@ -1,6 +1,6 @@
-# protocol.rs 全部 parse / from_str / as_* 入口台账（T75，2026-11-27）
+# protocol.rs 全部 parse / from_str / as_* 入口台账（T76，2026-11-27）
 #
-# 收口读数（T75 做完后实测）：51 行里 38 行本轮改/新增；改后 49 行严格（含 1 行『严格（形状）』
+# 收口读数（T76 做完后实测）：51 行里 38 行本轮改/新增；改后 49 行严格（含 1 行『严格（形状）』
 #   与 2 行『严格（未使用）』），只剩 2 行登记不改（parse_message 的载重契约、split_fields 的宽容契约）。
 #   改前：严格 13 / 子串式 33 / 宽容语法 3 / 半严 1（第 51 行是本轮新增的严格入口）。
 #
@@ -19,10 +19,10 @@
 #   exp115   = docs/archive/115-broker.md §5.3 原版客户端受控实验（变体 A/B/C/D/E，只有 C 被接受）。
 #   serde    = serde derive 语义（未知变体=失败、缺必填=失败、类型不符=失败、未知字段=忽略、Option 字段缺失=None）。
 #
-# 复算命令（全部在 docs/06 §120.8 有一份可照抄的完整版）：
+# 复算命令（全部在 docs/06 §122.8 有一份可照抄的完整版）：
 #   1) 1717 帧顶层键集/键序 vs WIRE_SPEC —— 已变成常驻测试（真值机核，逐帧断言）：
 #        cargo test --offline every_live_frame_has_exactly_the_wire_spec_top_level_fields
-#      （未改动前的机核口径：本轮用它跑出 1717 帧 0 mismatch，见 docs/06 §120.2）
+#      （未改动前的机核口径：本轮用它跑出 1717 帧 0 mismatch，见 docs/06 §122.2）
 #   2) 两条真帧硬闸：
 #        cargo test --offline captured_samples_are_the_live_wire_bytes
 #        cargo test --offline replays_every_live_frame_of_the_supplemented_kinds
