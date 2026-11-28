@@ -28547,3 +28547,12 @@ _ZN133_$LT$graphwarrust..graphwar_setup_control..GraphwarSetupControl$u20$as$u20
 = 6 条生命周期单测 + 2 条本函数单测）；`coverage_matrix.py --check` **OK**（`src_fns` 4135→4138）；
 其余门槛（gdext / 三轴 / boundary_audit / check_doc_refs / docsec）与 §148.7 相同、未退。
 **三个数仍一位未动**：A `333/527 = 63.2 %`、B `333/438 = 76.0 %`、1:1 `261/527 = 49.5 %`（`--stats` 复算）。
+
+**HEAD 复查（`f1e55d8` + `77fde89` 之后，全部重跑一遍，数字都是本机实跑）**：
+`cargo test --offline` **1642 / 0 / 1ignored**（基线 1634 ⇒ **+8**）；
+`cargo test --offline --features gdext-bindings` **1797 / 0 / 1ignored**（基线 1789 ⇒ **+8**）；
+`coverage_matrix.py --check` **OK**（`src_fns` 4138）；`boundary_audit.py --check` **match 441 / mismatch 0**；
+`check_doc_refs.py` **rc=0**；`docsec.py check docs/06` **通过**（146 节 / 范围 1..148 / 仅历史断号 [43,89]）；
+三轴 **fire 647 / batch 647 / batch_conv 637**，三条 `bit_exact_attrib.py --check-baseline` 全部
+「**校验结果：全部一致**」。**三个数一位未动**：A `333/527 = 63.2 %`、B `333/438 = 76.0 %`（招牌）、
+1:1 `261/527 = 49.5 %`。
