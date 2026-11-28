@@ -1966,8 +1966,26 @@ func _on_shot_arrived(phase: String, stop: Vector2) -> void:
 	if phase != "online":
 		_spawn_effect("ExplosionEffect", stop)
 	_note_shot_status()
-	# 打完就**清掉曲线**（`docs/143` §2：原版一发结算完不再留线，用户实测）。
-	_clear_curve()
+	# ⚠️ **联机路径不在这里清线**（T100，`docs/06` §144）：原版**没有**"弹道到点就清"这个动作，
+	# 线的退场只有一条路 —— `GraphwarPlane::draw` 尾部那段循环里"出了活跃窗口就
+	# `FunctionDrawer::remove_function`"（`0x4b6418` → `0x498b70`，只 queue_free + 删抽屉的表）。
+	#
+	# 活跃窗口的**逐位**真值（两处独立给出同一个长度）：
+	#   * `0x3be611 cmp %edi,%edx / jae skip`，其中 `0x3be60b add $0x708,%edi`（1800 = 60×30）
+	#     ⇒ 在场谓词 `30·d < len + 1800` ⇒ 揭示 `len/30` tick **之后**还有 **60 tick**；
+	#   * `0x455a40` 的淡出算式 `max(0, 1 − (d − len/30)/60)`（分母正是那 60）。
+	# 而 `graphwar_plane.rs::feed_functions` 每帧已经把 alpha 交给 `update_function_fade`
+	# （`0x4b6a0e` → `0x4992b0`）、并在出窗口时删线 —— 所以联机路径**什么都不用做**，
+	# 让平面自己按 tick 轴退场就是原版行为。以前这里"立刻 `_clear_curve()`"把整段淡出砍掉，
+	# 密集采样里看得见：原版那一帧还留 1 743 px 的半透明线，我方已经是 0（`docs/06` §137.5.2 #14）。
+	#
+	# 另外两条路径**保留清线**，理由各自成立、都不是"原版也这样"：
+	#   * **回放**：喂进去的 `fractional_tick` 本身就是"已揭示量"（`active_tick` 恒 0），
+	#     时钟不会越过揭完那一格 ⇒ 在场谓词**永远为真** ⇒ 不清就永远不退场（§137.6 第 5 条）；
+	#   * **本地局**：时钟是墙钟 `_advance_curve`，到"揭完"就夹住不再走，与回放同一个原因；
+	#     且 `advance_shot_for_test()`/自检依赖这条确定性（§137.6 第 4 条）。
+	if phase != "online":
+		_clear_curve()
 	_pending_shot = {}
 	_shot_in_flight = false
 	if phase == "online":
