@@ -298,3 +298,13 @@ T89 驳回 `0x438880` 的机理是：**游戏闭包被整体内联进 std 的 wr
 两条 `CALLERS=0` 的 std 正对照靠 **R-STD B/C 命中**过闸（不是靠 indirect）。
 `indirect` 只作为「依据」列里的诊断信息保留（新的第四档形态 `indirect` 仍然产出，供重扫表用）。
 复跑：`.reference/venv/bin/python tools/f3_triage.py --control`（F 组 13 行全 ✓，rc=0）。
+
+### E12 落地勘误（追加式，写于「全量跑通之后」）：台账 `name` 列取 `boundary_audit.tsv` 的名字
+
+改成「重跑生成」后第一次跑，`tools/function_coverage.py` 的 **M7 闸**（台账 name 必须 == boundary name）
+报了 **5 条假违例**：`write()` 原来照抄 `function_coverage.tsv` 的**符号名**列，而它在 5 个地址上带
+`::{{closure}}`，boundary 的 v2 `role=outer` 名不带
+（`0x4c5c00` / `0x4c5cb0` / `0x4c5d60` / `0x5153f0` / `0x520100`）。
+旧台账（T82 手写）用的就是 boundary 名，所以 M7 一直是绿的。
+⇒ `write()` 显式取 boundary 名（`read_boundary()` 一次读入，找不到才回落到 cov 名）。
+**这条不改任何判据**，只改生成物的一列来源；改完 `function_coverage.py` rc=0、三口径一位未变。
