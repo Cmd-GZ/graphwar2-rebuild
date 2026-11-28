@@ -1,0 +1,190 @@
+denom_outside.tsv 刷新预注册 —— T110（审计：只改台账与工具 MANUAL 层，不改 src/）
+================================================================================
+状态：**先提交本文件，再跑工具**（本文件 commit 之后才允许出现 §MANUAL-T110 的改判结果）。
+作者/角色：审计员 t110（任务板 `task-106`；分支 `agent/ledger-audit`；工作树 `.agent-work/cg/wt-t110`）
+上游判据（**逐字继承，一条阈值都没新立**）：`fixtures/denom_outside_plan.txt`（T105，commit 342b534）
++ `fixtures/denom_serde_plan.txt`（T107，commit cabe0b6）；本文件只定义「**落码后刷新**」这一步的判据。
+
+--------------------------------------------------------------------------------
+§0 任务书前提的实机核查（**先核，再动手**）
+--------------------------------------------------------------------------------
+P-1 「`tools/global_triage.py --denom-outside` 很慢，全 .text 特征抽取 >40 min，T108 跑了一次被 kill」
+    ⇒ **本机不成立**。实测（2026-11-28，AMD Ryzen 9 7945HX / 32 核；命令见 §7）：
+        run1 rc=0 wall=15.716 s ；run2 rc=0 wall=15.519 s
+    台账 1244 行的全量重算 = **约 16 秒**，两次读数一致。⇒ 「慢到不能跑」是**错误前提**，
+    台账长期过期不是性能问题；建议把 `--denom-outside` 纳入常规门槛（见 docs/06 §157.7）。
+    注：本前提的可证伪边界 = 只在本机 + 本提交的 `tools/`（md5 见 §7 日志头）成立。
+
+P-2 「台账里还标着 43 条 real-missing，之后 T106/T108/T109 落的码没回写」
+    ⇒ **成立**。`fixtures/denom_outside.tsv` 头部计数块与 43 行 verdict 都停在 T107（commit ba3950c）。
+    T106 §154 / T108 §156 / T109 §153 的落码在 `src/` 里能查到（§2 P1 表逐条给 `file:line`），
+    但台账一行没动。
+
+P-3 「X 现在落码后应该更少」
+    ⇒ **不成立（概念错误，本文件先纠正，避免把口径算错）**：
+    X = 分母外**真实源码函数总数** = real-missing + implemented + implemented-alt + scaffold-only。
+    **落码不改变 X**（只是把同一批源码函数从 `real-missing` 挪到 `implemented`，分子分母两边都不动分母）。
+    X 只被「分类改判」改变（T107 的 13 条 serde 派生体就是这样把 X 从 143 压到 132 的）。
+    ⇒ 本轮预期：**X 不变（132），变的只有 real-missing 43 → 10、implemented 80 → 122**。
+    ⇒ 口径 A/B/B′/D_A/D_B 的**分母一个都不该动**，D_A+ 敏感度会动（分子含分母外已实现）。
+
+--------------------------------------------------------------------------------
+§1 判据（刷新 = 逐行把 `verdict` 与 `src/` 实际实现对齐）
+--------------------------------------------------------------------------------
+所有判据只作用于 `form=business` 且已判 `denom:no-loc` 的行（= 分母外候选）。地址口径 **ELF vaddr (RVA)**。
+
+C-IMPL-1（工具已实现，本轮**沿用**）：我方**本模块映射文件**里有同名 `fn <method>`。
+  映射取 `docs/coverage-matrix.tsv` 的 `ours` 列（T105 口径），判据不变。
+
+C-IMPL-2（**本轮新增，修工具盲区**）：`_denom_ours_lookup()` 只查「映射文件」+「**别的**模块文件」，
+  而 `if mod == module: continue` 把**同名模块文件**跳过了。实例：`graphwar_event.rs`（矩阵映射
+  `src/events.rs`）的真实落点在 `src/graphwar_event.rs`，工具两头都查不到 ⇒ 已落码却判 real-missing。
+  判据：**`src/graphwar_<module>.rs` 或 `src/<module>.rs` 里存在同名 `fn`**（全 `src/` 递归，含 `_scaffold` 但
+  `_scaffold` 只能落 `scaffold-only`，沿用 T105 规则）⇒ `implemented`。
+
+C-IMPL-3（**本轮新增，分层落码**）：没有同名 `fn`，但 `src/` 里有**指到该 vaddr 的注释**且该注释
+  ±8 行内**有函数体定义**（= 把一条原版函数拆成若干纯逻辑函数落地，模块注释写明「按预注册 P1/P2 分层落」）
+  ⇒ 判 `implemented`，`subclass` 记 **`no-loc:layered`**（与名字命中的 implemented 区分，弱证据）。
+
+C-MISS（负判定）：只有
+  (a) 地址表/文档表格里的一行 `arm64: 0x…`，或
+  (b) 注释明确写「本轮没有落码 / 仅边界+常量 / 缺什么」
+  ⇒ **维持 real-missing**。表格行不是函数体，注释自述"没落"更不是。
+
+C-NA（T107 判据的**独立复核**）：`<impl serde::ser|de::…  for M::T>`（D1：是 trait impl）
+  且 **同类型 M::T** 在本构建里有 serde_derive 硬编码私有名符号
+  `…<impl serde::de::Deserialize for M::T>::deserialize::__Visitor|__FieldVisitor|__Field`
+  （D2：只有 `#[derive]` 生成这些私有名）⇒ 判 `na:other` + `subclass=serde-derive`，**不进 X**。
+  手写固有方法（`M::T::serialize`，不带 `<impl … for`）D1 就不成立 ⇒ 继续 `business`。
+
+--------------------------------------------------------------------------------
+§2 正对照（必须全过，否则本轮改判作废）
+--------------------------------------------------------------------------------
+P1（**主对照**）：后台刷新（无 MANUAL）跑出来的 **real-missing → implemented** 共 **31 行 / 31 组**，
+  必须**逐条**能给出「同名 `fn` + 指到该 vaddr 的注释」。31 行清单（下方 §2.1 表）**一条不许多、一条不许少**。
+P2（分工核对）：31 行里必须**包含** T106 §154 / T108 §156 / T109 §153 点名落码的那些函数
+  （三节正文点名的地址列表交集；缺一条就要在报告里写明「某某说落了但台账/源码里没有」）。
+P3（T107 B 组）：`0x4693c0 graphwar_event::GraphwarEvent::make_new_connection_request_event`
+  必须由 **C-IMPL-2** 判成 implemented（落点 `src/graphwar_event.rs:207`，vaddr 注释在同文件:176）。
+P4（T107 A 组）：13 条 serde 行必须**全部**满足 C-NA（D1∧D2），且**不得多出第 14 条**。
+
+§2.1 P1 清单（31 行；`我方同名 fn` 由独立脚本扫全 `src/` 得到，不是抄工具输出）
+| # | android vaddr | module | method | 我方同名 fn |
+|---|---|---|---|---|
+| 1 | `0x3913e4` | graphwar_version | `graphwar_version_get_full_version` | `src/graphwar_version.rs:68` |
+| 2 | `0x392f18` | graphwar_campaign_control | `get_current_level` | `src/graphwar_campaign_control.rs:772` |
+| 3 | `0x393128` | graphwar_campaign_control | `save_current_level` | `src/graphwar_campaign_control.rs:796` |
+| 4 | `0x3a5d60` | graphwar_root_node | `show_pop_up` | `src/graphwar_root_node.rs:3406` |
+| 5 | `0x3ab19c` | graphwar_root_node | `print_help_and_exit_if_requested` | `src/graphwar_root_node.rs:3473` |
+| 6 | `0x3b5374` | graphwar_shot_calculator | `calculate_function` | `src/graphwar_shot_calculator.rs:288` |
+| 7 | `0x3b79a8` | graphwar_shot_calculator | `calculate_corrected_function` | `src/graphwar_shot_calculator.rs:346` |
+| 8 | `0x3b7c70` | graphwar_shot_calculator | `calculate_function_offset_str` | `src/graphwar_shot_calculator.rs:315` |
+| 9 | `0x3da370` | graphwar_replay_reader | `load_game` | `src/graphwar_replay_reader.rs:236` |
+| 10 | `0x3deb08` | graphwar_play_screen_control | `clear_state` | `src/graphwar_play_screen_control.rs:2038` |
+| 11 | `0x3fc6d4` | graphwar_level_manager | `get_level_data` | `src/graphwar_level_manager.rs:1715` |
+| 12 | `0x406ba4` | graphwar_backend | `stop_client` | `src/graphwar_backend.rs:829` |
+| 13 | `0x406c0c` | graphwar_backend | `stop_server` | `src/graphwar_backend.rs:867` |
+| 14 | `0x406c64` | graphwar_backend | `start_server` | `src/graphwar_backend.rs:906` |
+| 15 | `0x407068` | graphwar_backend | `stop_lan_broadcaster` | `src/graphwar_backend.rs:1085` |
+| 16 | `0x407220` | graphwar_backend | `start_lan_broadcaster` | `src/graphwar_backend.rs:1033` |
+| 17 | `0x40745c` | graphwar_backend | `get_next_clip_checkpoint` | `src/graphwar_backend.rs:970` |
+| 18 | `0x4074f8` | graphwar_backend | `stop_server_broker_handler` | `src/graphwar_backend.rs:1182` |
+| 19 | `0x4077bc` | graphwar_backend | `start_server_broker_handler` | `src/graphwar_backend.rs:1128` |
+| 20 | `0x408460` | graphwar_ban_list | `is_connection_banned` | `src/graphwar_ban_list.rs:168` |
+| 21 | `0x444d2c` | effect_drawer | `step_effect` | `src/effect_drawer.rs:575` |
+| 22 | `0x447390` | math_function | `adjust_tokens` | `src/math_function.rs:635` |
+| 23 | `0x44daec` | graphwar_function_input | `clear` | `src/graphwar_function_input.rs:2330` |
+| 24 | `0x482a5c` | graphwar_game_server | `get_server_port` | `src/graphwar_game_server.rs:921` |
+| 25 | `0x4afef0` | graphwar_computer_player_manager | `computer_function_thread` | `src/graphwar_computer_player_manager.rs:858` |
+| 26 | `0x4bf690` | entity_drawer | `update_name_label` | `src/entity_drawer.rs:1986` |
+| 27 | `0x4bf880` | entity_drawer | `draw_offset_triangle` | `src/entity_drawer.rs:2015` |
+| 28 | `0x4c46f4` | graphwar_audio_control | `soldier_info_event` | `src/graphwar_audio_control.rs:408` |
+| 29 | `0x4c488c` | graphwar_audio_control | `entity_removed_event` | `src/graphwar_audio_control.rs:423` |
+| 30 | `0x4ca340` | graphwar_crash_reporter | `clear_report` | `src/graphwar_crash_reporter.rs:252` |
+| 31 | `0x4ca444` | graphwar_crash_reporter | `send_pending_report` | `src/graphwar_crash_reporter.rs:386` |
+
+--------------------------------------------------------------------------------
+§3 负对照（**必须一条都不许被改判**）
+--------------------------------------------------------------------------------
+N1 `0x3ab2bc graphwar_root_node::user_args` —— `src/graphwar_root_node.rs:3489` 注释自述「**本轮没有落码**」
+   ⇒ 维持 real-missing（**注释里有 vaddr 也不算实现**：C-MISS(a)）。
+N2 `0x4c378c graphwar_plane::GraphwarPlane::update_entities` —— 只在 `src/graphwar_plane.rs:182` 的
+   `FuncAddr{...arm64: 0x4c378c}` 地址表里出现，无函数体 ⇒ 维持 real-missing。
+N3 `0x4475fc mutate_function` / `0x448160 create_random_region` —— 只在 `src/math_function.rs:573/574`
+   的表格行里 ⇒ 维持 real-missing（T108 §156 亦写明「随机源 `rand::thread_rng` ⇒ 值级对拍原理上做不到」）。
+N4 `0x4691a4` / `0x46947c`（`GraphwarEvent::deserialize` / `GraphwarEvent::serialize`，**固有方法手写**）
+   —— 必须维持 `business`+real-missing，**不许**被 C-NA 吞掉（= T107 C 组，边界由 D1 把关）。
+N5 `docs/coverage-matrix.tsv` 里的 `ADDR_MANUAL` 有两条**永不生效**的人工裁决
+   （`0x4f44c0` / `0x4f4a60`，登记时 pin 是 `name-soft` 而闸门只认 `pin=="addr"`）。
+   本轮的独立复算**按工具的实际闸门**（只对 `pin==addr` 生效）⇒ 这两行的 F 档仍是 **F1**；
+   同时把「人工裁决表里有两条死条目且其理由（'函数体不存在'）与源码矛盾（体在 :965/:979）」登记为缺陷。
+N6 `0x4c3408 graphwar_plane::GraphwarPlane::clear_state` —— 刷新后变 `implemented-alt`，
+   命中的是**另一个模块**的 `GraphwarPlayScreenControl::clear_state`（`src/graphwar_play_screen_control.rs:2038`）
+   ⇒ **不算落码**（T105 自己写明 alt 是弱证据）；本轮**不**把它改成 implemented，只在报告里点名。
+
+--------------------------------------------------------------------------------
+§4 MANUAL 层（本轮唯一动 `tools/` 的地方；不修检测启发式）
+--------------------------------------------------------------------------------
+`--denom-outside` 原本**没有** MANUAL 层（对比 `--android-census` 有 `T93_MANUAL_NA`）⇒ 重跑会把
+人工裁决冲掉。§152 那条「重跑会冲掉 13 行」**实测证实**（本轮无 MANUAL 重跑：13 行 na:other → real-missing）。
+本轮加**两张表**，都在 L4/L5 判决之后应用，风格与 `T93_MANUAL_NA` 一致：
+
+  4.1 `T107_MANUAL_NA`：13 条 `{vaddr: ("serde-derive", 依据一句话)}` → verdict=`na:other`，subclass=`serde-derive`。
+      自校验（任一失败 ⇒ 直接退出，非 0，**不静默覆盖**）：
+        S1 每条在工具**自己**的判决里当前必须是 `real-missing/denom:no-loc`（有漂移就别跑）；
+        S2 每条符号必须是 `<impl serde::…>` trait impl（D1）；
+        S3 每条的类型必须有 serde_derive 私有名兄弟（D2）。
+  4.2 `T110_MANUAL_IMPL`：2 条 C-IMPL-2 / C-IMPL-3 的落码 → verdict=`implemented/denom:no-loc`，
+      subclass 分别 `no-loc:module-file-split` / `no-loc:layered`，并写入 `ours_src` 锚点。
+      自校验：S1 当前 verdict 必须是 real-missing；S2 锚点文件里必须仍存在该 `fn`（C-IMPL-2）
+      或该 vaddr 标记 + 其后 8 行内有 `fn`（C-IMPL-3）。
+  4.3 表内容随结果写进 `fixtures/denom_outside.tsv` 尾部 `§MANUAL-T110` 块（**逐行留痕**），
+      同时 `--no-manual`（新开关，与 `--no-noloc` 同位）必须能复现**无 MANUAL 的旧算式**（用于出对照数）。
+
+--------------------------------------------------------------------------------
+§5 四口径**独立复算**（不复用 `function_coverage.py` 的 `stats()`/`classify()`）
+--------------------------------------------------------------------------------
+输入（全部是仓库里已入库的原料，只有 X 用本分支刷新后的台账）：
+  n        = `fixtures/boundary_audit.tsv` 的数据行数
+  F1..F4   = `fixtures/function_coverage.tsv` 的**证据列**重新判档：
+             F1 ⟺ 指认方式 ∈ {name,name-other,addr,name-soft,macro} ∧ 模块档位 ∈ {逐位,观测}
+                    ∧ 我方实现位置非空 ∧ 不在 `ADDR_MANUAL`（仅 `pin==addr` 时生效）
+             F2 ⟺ 有指认但档位不足 / name-free / hyb / scaffold ；F3 ⟺ 其余；F4 ⟺ 无文件
+             → 再与生成器的「判档」列**逐行**比对（不一致的必须逐条解释）
+  n_na / n_strong = `fixtures/f3_triage.tsv` **主表**（读到 `# ----` 分节横幅即停；横幅后的
+             F2-scan 14 行是机判候选，**不得**计入 —— 天真地整文件读会得到 102/95，属已知陷阱）
+  X        = 刷新后台账里 verdict 以 `/denom:no-loc` 结尾的 `form=business` 源码组数（组键 = src_fn_group）
+口径：A=F1/n ｜B=F1/(n−n_na) ｜B′=F1/(n−n_strong) ｜D_A=F1/(n+X) ｜D_B=F1/((n−n_na)+X) ｜D_B′=F1/((n−n_strong)+X)
+      ｜D_A+ =(F1+分母外已实现)/(n+X)（敏感度，混档，不当招牌）
+比对规则：与 `tools/function_coverage.py --stats` **逐项**比；任一项不等 ⇒ 报告写「谁错了 + 依据」，不许改成"口径不同"。
+
+--------------------------------------------------------------------------------
+§6 台账**内部矛盾**扫描（T107 抓 13 条的手法，本轮扫全 1244 行）
+--------------------------------------------------------------------------------
+S1 verdict vs `ours_src`：`real-missing` 但 `ours_src≠—`（T107 就是这么抓的）。
+S2 同组一致：同一 `src_fn_group` 的 `form=business` 行 verdict 必须全同。
+S3 宏兄弟：`business`+no-loc 行，其 (module, type) 里存在 `macro-derive` 的 na 行 ⇒ 矛盾嫌疑（C-NA 复扫）。
+S4 端口注释：`note`/`ours_src` 里写「我方 own-module: …」但 verdict 不是 implemented。
+S5 表头计数 vs 实际行数（头部计数块是手写的，必须与逐行统计逐项相等）。
+S6 `implemented` 但 `ours_src` 指向的 `fn` 名是通用名（`new`/`default`/`serialize`/`deserialize`/
+   `clone`/`tick`/`process`/`ready`）⇒ 同名不等同 ⇒ 单列为**弱证据**，不改判、只登记。
+S7 `implemented` 行在 `src/` 里重扫同名 fn（独立脚本，全 `src/` 递归）—— 查工具的"已实现"里有没有假阳性。
+
+--------------------------------------------------------------------------------
+§7 复跑命令与门槛（本文件 commit 之后才跑 §4 的正式一轮）
+--------------------------------------------------------------------------------
+  PY=.reference/venv/bin/python
+  # 计时（P-1）：两次 control-only
+  time $PY tools/global_triage.py --denom-outside --control-only
+  # 正式刷新（含 MANUAL 层）
+  $PY tools/global_triage.py --denom-outside
+  # 无 MANUAL 对照（§4.3）
+  $PY tools/global_triage.py --denom-outside --no-manual
+  # 四口径
+  $PY tools/function_coverage.py --stats
+  # 独立复算（本文件 §5/§6 的实现，随本轮入库）
+  $PY fixtures/denom_outside_audit_t110.py --calibers
+  $PY fixtures/denom_outside_audit_t110.py --contradictions
+门槛：`python3 tools/check_doc_refs.py` rc=0 ｜ `python3 tools/docsec.py check docs/06-verification.md` 通过
+     ｜ `cargo test --offline` 全绿（基线 1765 passed / 0 failed / 1 ignored）｜
+     `python3 tools/coverage_matrix.py --check` OK ｜三轴 fire 647 / batch 647 / batch_conv 637（不动 `src/`，不应变）
