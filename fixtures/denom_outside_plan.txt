@@ -217,6 +217,36 @@
 # 3. **不改** `fixtures/boundary_audit.tsv` / `fixtures/f3_triage.tsv` / `fixtures/global_triage.tsv` 的任何判据与阈值。
 # 4. **不动** `docs/00-status.md` / `README.md` / `docs/coverage-matrix.*`。
 
-## §9 勘误（跑完只许在此追加）
+## §9 勘误（跑完只许在此追加；§1–§8 一字未改）
 
-（无 —— 尚未开跑）
+**E1（形态表漏了一个 gdext 宏形态）** §2.2 的 `reg-table` 只列了 `__register_methods` /
+`__register_constants`，漏了 **`__register_exports`**。实测 `0x43f634` =
+`<graphwar_button::GraphwarButton as godot_core::obj::traits::cap::ImplementsGodotExports>::__register_exports`
+（540 B）按 §2.2 会落 `business` ⇒ 被误算进 X。
+**依据（已发表，不是我改判）**：T97 `fixtures/gap_button.tsv` 里同一个地址判 **`na:gdext-glue/reg-table`**
+（`ImplementsGodotExports` 是 gdext 的宏 trait，同族还有 4 个 `ptrcall_fn` + 4 个 `varcall_fn` 同款判 na）。
+⇒ 修法：`reg-table` 形态加 `__register_exports`，X 减 1 组。**这是"漏判形态"，不是"放宽判据"**（方向是让 na 更多、X 更小）。
+
+**E2（C1 的期望值写旧了）** §5 C1 写"18 条全部判 `real-missing/denom:no-loc`"。实测它们现在是
+**`implemented/denom:no-loc`** —— 因为 **T101 本轮之前已经把 `get_node_by_name_rec` / `get_node_by_type_rec`
+两条源码函数落码了**。控制要验的性质是「判进 `denom:no-loc` 且 gameLOC=0」，这一点 18/18 成立；
+`real-missing` 与 `implemented` 的差别只反映"我方写没写"，不是判法差异。⇒ C1 判据按**性质**过，不按字面过。
+
+**E3（C4c 的条数写少了）** §5 C4c 说 T98 的 3 条手写方法；实测在 G 里是 **5 条机器码**
+（`GraphwarEvent::{serialize, deserialize, make_new_connection_request_event}` 3 条
++ `<… as serde::Serialize/Deserialize>::{serialize,deserialize}` 2 条单态化），
+5/5 都判 `business` ⇒ 宏边界成立，只是条数写成 3 是"方法名个数"不是"机器码条数"。
+
+**E4（我方实现的判定从两级变三级）** §2.4 只写了 `implemented` / `real-missing` / `scaffold-only`。
+实测发现两条必须分开的事实：模块→我方文件要用 `docs/coverage-matrix.tsv` 的 `ours` 列
+（例如 `graphwar_event.rs` 的内容在 **`src/events.rs`**，§2.4 的"同名文件"会找不到）；
+且"只在**别的** src 文件里同名"（如 `FunctionDrawer::draw` 命中 `src/effect_drawer.rs`）是**弱证据**
+（同名 ≠ 同一个函数）⇒ 单列 `implemented-alt`。**X（分母）不受影响**，只有 `X_impl/X_missing` 的拆分受影响。
+本轮 `scaffold-only` 实测 0 组（`_scaffold` 里没有命中）。
+
+**E5（一条已发表结论被本轮证伪，登记给台账主人）** `docs/06` §139（T93）说
+`graphwar_module_container` 的 49 条代理缺口 =「48 条单态化副本 + 1 条 drop glue，源码级缺口 **0**」。
+本轮 Android 真名逐条显示：那 48 条 = **`add_module`×25 + `get_module`×23**，是**两条不同的源码函数**，
+而 527 里该模块的 20 行**全部**是 `get_module_wk` —— 三者是三个不同方法。
+⇒ 该模块的源码级缺口是 **2 个函数**（我方**都已实现**，只是没有 Location ⇒ 527 看不见），
+**不是 0**。详细证据见 `docs/06` §150。**本文件不改 §139，按 AGENTS.md §0.6 交台账主人裁决。**

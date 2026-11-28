@@ -41,6 +41,9 @@ T82（`docs/06` §129）给了 F3 的 153 条的判据（`na:std-mono` / `na:gde
     $PY tools/global_triage.py --control           # 正/负对照（T82 的 F3 裁决 + T71 的 31 条）
     $PY tools/global_triage.py                     # 全量：写 fixtures/global_triage.tsv + 打印统计
     $PY tools/global_triage.py --android-census    # 兄弟构建真名普查 + fixtures/global_triage_modules.tsv
+    $PY tools/global_triage.py --denom-outside     # T105：527 分母**之外**的真实源码函数 → fixtures/denom_outside.tsv
+                                                   #   （预注册 fixtures/denom_outside_plan.txt；C0–C5 全过才写文件）
+                                                   #   --control-only 只跑对照；--no-noloc 让 --android-census 输出与 T105 之前逐字节相同
     $PY tools/global_triage.py --dump 0x4600e0 ... # 单条取证（人工复核用）
     $PY tools/global_triage.py --sample 20         # 预注册抽样（人工复核用）
 
@@ -1288,6 +1291,12 @@ def cmd_android_census(argv):
     print("写出 %s（%d 条函数；game %d）" % (CENSUS_TSV, tot,
                                         sum(v for k, v in cen.items() if k.startswith("game"))))
     # ---- 模块表：Android 真名计数 + Linux 527 台账 ----
+    noloc = None if getattr(argv, "no_noloc", False) else load_noloc_counts()
+    if getattr(argv, "no_noloc", False):
+        print("（--no-noloc：不写 lin_fns_noloc 列，输出与 T105 之前逐字节相同）")
+    elif noloc is None:
+        print("⚠ 缺 fixtures/denom_outside.tsv ⇒ 不出 lin_fns_noloc 列"
+              "（先跑 $PY tools/global_triage.py --denom-outside）")
     bnd = read_boundary()
     cov = {int(r["addr"], 16): r for r in read_cov()}
     lin = collections.Counter()
@@ -1317,18 +1326,643 @@ def cmd_android_census(argv):
                  "T82 原判 153 条，到 2026-11-28 已有 11 条落码归档、1 条 T89 新登记；主表另留 6 条 T94 落码后待归档的陈旧行被本列过滤）；"
                  "lin_F3_real = 其中 T82 判 real-missing\n")
         fh.write("# gap_proxy = android_fns − lin_F1F2（**代理估计**：Android 比 Linux 少 654 条函数，平台层差异未扣）\n")
-        fh.write("module\tandroid_fns\tlin527\tlin_F1F2\tlin_F3\tlin_F3_real\tgap_proxy\n")
+        if noloc is not None:
+            fh.write("# lin_fns_noloc = **T105 新增**：该模块「有源码身份但**没有** `panic::Location`」的**原版源码函数**数\n")
+            fh.write("#   （= `fixtures/denom_outside.tsv` 里 verdict 以 `/denom:no-loc` 结尾、且 form=business 的**源码组**数；\n")
+            fh.write("#    源码组 = 同一条泛型 fn 的多条单态化机器码合并后的个数。判据预注册 fixtures/denom_outside_plan.txt）\n")
+            fh.write("#   ⚠️ 这一列**不在** gap_proxy 里：gap_proxy 是机器码减法，本列是源码函数减法；两者**不可相加**。\n")
+        hdr_cols = "module\tandroid_fns\tlin527\tlin_F1F2\tlin_F3\tlin_F3_real\tgap_proxy"
+        if noloc is not None:
+            hdr_cols += "\tlin_fns_noloc"
+        fh.write(hdr_cols + "\n")
         rows = []
         for m in allmods:
             key = m[:-3] if m.endswith(".rs") else m
-            rows.append((m, mods.get(key, 0), lin.get(m, 0), lin_f12.get(m, 0),
-                         f3.get(m, 0), f3real.get(m, 0),
-                         mods.get(key, 0) - lin_f12.get(m, 0)))
+            row = [m, mods.get(key, 0), lin.get(m, 0), lin_f12.get(m, 0),
+                   f3.get(m, 0), f3real.get(m, 0), mods.get(key, 0) - lin_f12.get(m, 0)]
+            if noloc is not None:
+                row.append((noloc or {}).get(m, 0))
+            rows.append(tuple(row))
         rows.sort(key=lambda r: (-r[1], -r[2]))
         for r in rows:
             fh.write("\t".join(str(x) for x in r) + "\n")
     print("写出 %s（%d 个模块）" % (MODULES_TSV, len(rows)))
     return 0
+
+
+# ---------------------------------------------------------------------------
+# T105：**527 分母之外**的真实源码函数（"分母外缺口"）全量量化
+#   预注册：fixtures/denom_outside_plan.txt（commit 342b534，**先提交后跑**）
+#   产出：fixtures/denom_outside.tsv（一行 = Android 游戏本 crate 的一条机器码）
+#   用途：`--android-census` 给 `fixtures/global_triage_modules.tsv` 加 `lin_fns_noloc` 列；
+#         `tools/function_coverage.py` 读同一份 TSV 给 527 台账加同名列并打第四口径 D。
+#
+#   为什么：527 分母用 `panic::Location` 建 ⇒ **体内没有 Location 的原版函数永远进不了分母、
+#   也永远不出现在"缺口"里**。t97（root_node 3 条）/ t102（graphwar_plane 3 条）/
+#   t101（graphwar_nodes 18 条 = 2 个源码函数）三个 agent 各自撞上同一堵墙。
+# ---------------------------------------------------------------------------
+DENOM_TSV = os.path.join(ROOT, "fixtures", "denom_outside.tsv")
+DENOM_BINARY = os.path.join(ROOT, ".reference", "steam", "2026-08-28", "libgraphwarrust.so")
+DENOM_VOL_CAP = 0x800                 # T82/T85 M4，**逐字继承**，一条阈值都没改
+_DENOM_NOISE = ("/rustc/", "/.cargo/", "cargo/registry")
+_DENOM_HASH = re.compile(r"::h[0-9a-f]{16}$")
+_DENOM_CLOSURE = "{{closure}}"
+# 形态 → (类别, 子类)。形态判据见预注册 §2.2
+DENOM_FORM_CLASS = {
+    "drop-glue": ("na:other", "drop-glue"),
+    "reg-table": ("na:gdext-glue", "reg-table"),
+    "call-shim": ("na:gdext-glue", "call-shim"),
+    "ctor-shell": ("na:gdext-glue", "ctor-shell"),
+    "virtual-shim": ("na:gdext-glue", "virtual-shim"),
+    "class-id": ("na:gdext-glue", "class-id"),
+    "clap-derive": ("na:other", "clap-derive"),
+    "macro-derive": ("na:other", "macro-derive"),
+    "closure": ("na:other", "closure-in-fn"),
+}
+
+
+def _denom_game_key(path):
+    return path.endswith(".rs") and not any(n in path for n in _DENOM_NOISE)
+
+
+def _denom_android():
+    """G = Android `.text` 内任一 `.symtab` 名含 `graphwarrust` 的地址（去重）。
+
+    枚举口径与 `_android_syms()` 同源（同一份 `.symtab`），但这里**保留 size** 并算
+    `real_span = min(st_size, 下一个 FUNC 地址 − 本地址)`（T101 §149：`st_size` 会被重叠符号骗）。
+    """
+    import naming_android as NA
+    side = NA.Side(ANDROID_SO, "android")
+    t = side.text
+    lo, hi = t["addr"], t["addr"] + t["size"]
+    syms = [s for s in side.elf.symtab()
+            if s["type"] == NA.STT_FUNC and s["size"] > 0 and lo <= s["value"] < hi]
+    by, size = collections.defaultdict(list), {}
+    for s in syms:
+        by[s["value"]].append(s["name"])
+        size[s["value"]] = max(size.get(s["value"], 0), s["size"])
+    addrs = sorted(a for a, ns in by.items() if any("graphwarrust" in n for n in ns))
+    starts = sorted(by)
+    nxt = {v: (starts[i + 1] if i + 1 < len(starts) else hi) for i, v in enumerate(starts)}
+    return side, by, size, nxt, addrs
+
+
+def _denom_demangle(by, addrs):
+    import naming_android as NA
+    flat, owner = [], []
+    for va in addrs:
+        for n in by[va]:
+            flat.append(n)
+            owner.append(va)
+    dem = NA.demangle_all(flat)
+    out = collections.defaultdict(list)
+    for va, d in zip(owner, dem):
+        out[va].append(d)
+    return out
+
+
+def _denom_pick(dems):
+    """预注册 §2.0：能解出游戏模块的第一个名字；否则 `.symtab` 顺序第一个。"""
+    import naming_android as NA
+    for d in dems:
+        p = NA.parse_name(d)
+        if p is not None:
+            return d, p
+    return dems[0], NA.parse_name(dems[0])
+
+
+def _denom_ident(d, parsed):
+    """源码身份 (module, owner, method)：抹泛型实参、抹 h<hash>、`{{closure}}` 归父。"""
+    d = _DENOM_HASH.sub("", d)
+    if _DENOM_CLOSURE in d:
+        d = d.split(_DENOM_CLOSURE)[0]
+    method = None
+    if ">::" in d:
+        method = d[d.rindex(">::") + 3:]
+    elif "::" in d:
+        method = d.split("::")[-1]
+    if method:
+        method = re.sub(r"<.*", "", method).strip(":<> ")
+    if not method and parsed:
+        method = re.sub(r"<.*", "", parsed[2] or "").strip()
+    module = (parsed[0] if parsed else None) or "<none>"
+    owner = (parsed[1] if parsed else None) or "_"
+    return (module, owner, method or "_")
+
+
+def _denom_form(d, mangled):
+    """预注册 §2.2 形态判定（顺序 = §2.5 优先级）。"""
+    if "drop_in_place" in mangled or "drop_in_place" in d:
+        return "drop-glue"
+    if "ptrcall_fn" in mangled or "varcall_fn" in mangled:
+        return "call-shim"          # 先于 reg-table：T97 对 `__register_exports::ptrcall_fn` 判 call-shim
+    for k in ("__register_methods", "__register_constants", "__register_exports"):
+        if k in mangled:
+            return "reg-table"      # __register_exports：§9 勘误 E1（T97 已发表先例 0x43f634）
+    if ("virtual_fn" in mangled or "virtual_call" in mangled
+            or "__default_virtual_call" in mangled):
+        return "virtual-shim"
+    if "class_id" in mangled:
+        return "class-id"
+    if "__inner_init" in mangled or "__init" in mangled:
+        return "ctor-shell"
+    if "clap_builder::derive" in d or "clap::derive" in d:
+        return "clap-derive"
+    if re.search(r" as serde::de::(Visitor|Expected)>", d) \
+            or re.search(r" as core::clone::Clone>::clone", d):
+        return "macro-derive"
+    if _DENOM_CLOSURE in d:
+        return "closure"
+    return "business"
+
+
+def _denom_android_feats(side, ranges):
+    import naming_android as NA
+    feats = NA.extract(side, ranges, arm64=True)
+    out = {}
+    for va, f in feats.items():
+        game = sorted({"%s:%d" % (os.path.basename(p), ln)
+                       for p, ln in f["locs"] if _denom_game_key(p)})
+        other = sorted({"%s:%d" % (os.path.basename(p), ln)
+                        for p, ln in f["locs"] if not _denom_game_key(p)})
+        out[va] = dict(size=f["size"], game=game, other=other, calls=tuple(f["calls"]))
+    return out
+
+
+def _denom_arm64_callsites(side):
+    """全 `.text` 一遍：{target: [bl 调用点…]}。"""
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+    md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    md.detail = True
+    t = side.text
+    code = side.elf.data[t["offset"]:t["offset"] + t["size"]]
+    out = collections.defaultdict(list)
+    for ins in md.disasm(code, t["addr"]):
+        if ins.mnemonic == "bl" and ins.operands and ins.operands[0].type == 2:
+            out[ins.operands[0].imm].append(ins.address)
+    return out
+
+
+def _denom_relative_addends(elf):
+    import naming_android as NA
+    c = collections.Counter()
+    for _roff, typ, _sym, radd in NA.rela_entries(elf, ".rela.dyn"):
+        if typ == 1027:                    # R_AARCH64_RELATIVE
+            c[radd] += 1
+    return c
+
+
+def _denom_linux_keys():
+    """L527 的 Location 键集：**只用已入库的 `fixtures/boundary_audit.tsv`**（不重扫 Linux）。"""
+    out = {}
+    for ln in open(os.path.join(ROOT, "fixtures", "boundary_audit.tsv"), encoding="utf-8"):
+        if ln.startswith("#"):
+            continue
+        p = ln.rstrip("\n").split("\t")
+        if p[0] == "addr" or not p[0].startswith("0x"):
+            continue
+        lines = set(int(x) for x in p[4].split(",") if x.strip().isdigit())
+        others = {}
+        for chunk in p[6].split(";"):
+            m = re.match(r"src/(\S+?)\((\d+)\)", chunk.strip())
+            if m:
+                others[m.group(1)] = int(m.group(2))
+        out[int(p[0], 16)] = dict(name=p[1], main=os.path.basename(p[3]), lines=lines,
+                                  others=others)
+    return out
+
+
+def _denom_linux_selftest(lin):
+    """预注册 §5 C5：用同一套 Location 解析对 527 行复算 `(主文件, 主文件行数)` 与台账对照。"""
+    import naming_android as NA
+    import pickle
+    l = NA.Side(DENOM_BINARY, "linux")
+    g = pickle.load(open(NA.find(NA.GHIDRA_REL), "rb"))
+    gs = sorted(int(x, 16) if isinstance(x, str) else int(x) for x in g)
+    fdes = dict(NA.fde_ranges(l.elf))
+    starts = sorted(set(gs) | set(fdes))
+    pos = {v: i for i, v in enumerate(starts)}
+    ranges = {}
+    for va in lin:
+        if va in fdes:
+            ranges[va] = fdes[va]
+        else:
+            i = pos.get(va)
+            nxt = starts[i + 1] if (i is not None and i + 1 < len(starts)) else va + 0x40
+            ranges[va] = max(0x10, nxt - va)
+    feats = NA.extract(l, ranges, arm64=False)
+    same, diff, noloc, detail = 0, 0, 0, []
+    for va, rec in sorted(lin.items()):
+        per = collections.Counter()
+        for path, _line in feats[va]["locs"]:
+            if _denom_game_key(path):
+                per[os.path.basename(path)] += 1
+        if not per:
+            noloc += 1
+            detail.append((va, "复算无 game 键", "%s×%d" % (rec["main"], len(rec["lines"]))))
+            continue
+        main = min(per, key=lambda m: (-per[m], m))     # = boundary_audit.pick_main 同规则
+        if main == rec["main"] and per[main] == len(rec["lines"]):
+            same += 1
+        else:
+            diff += 1
+            detail.append((va, "%s×%d" % (main, per[main]),
+                           "%s×%d" % (rec["main"], len(rec["lines"]))))
+    return dict(total=len(lin), same=same, diff=diff, noloc=noloc, detail=detail)
+
+
+def _denom_ours_index():
+    """{module: [(path, lineno, text)]}；module→我方文件 用 `docs/coverage-matrix.tsv` 的 ours 列。"""
+    matrix = os.path.join(ROOT, "docs", "coverage-matrix.tsv")
+    files = {}
+    for ln in open(matrix, encoding="utf-8"):
+        if ln.startswith("#"):
+            continue
+        p = ln.rstrip("\n").split("\t")
+        if len(p) < 6 or not p[0].endswith(".rs"):
+            continue
+        mod = p[0][:-3]
+        ours = p[5].strip()
+        files[mod] = [x for x in re.split(r"[+,]", ours) if x.strip().endswith(".rs")]
+    out, extra = {}, {}
+    for fn in sorted(os.listdir(os.path.join(ROOT, "src"))):
+        if not fn.endswith(".rs"):
+            continue
+        path = os.path.join(ROOT, "src", fn)
+        try:
+            rows = [(path, i, t) for i, t in
+                    enumerate(open(path, encoding="utf-8", errors="replace"), 1)]
+        except OSError:
+            continue
+        extra[fn[:-3]] = rows
+    for mod in set(list(files) + list(extra)):
+        want = [os.path.basename(x) for x in files.get(mod, [])] or [mod + ".rs"]
+        bag = []
+        for fn in want:
+            key = fn[:-3] if fn.endswith(".rs") else fn
+            bag.extend(extra.get(key, []))
+        if not bag:                        # 映射文件不在 src（如被拆/改名）⇒ 回退到同名文件
+            bag = extra.get(mod, [])
+        out[mod] = bag
+    return out, extra
+
+
+def _denom_find_fn(rows, method):
+    if not method or method == "_":
+        return None
+    pat = re.compile(r"\bfn\s+" + re.escape(method) + r"\s*(?:<|\()")
+    for path, i, t in rows or []:
+        s = t.lstrip()
+        if s.startswith("//") or s.startswith("#["):
+            continue
+        if pat.search(t):
+            return "%s:%d" % (os.path.relpath(path, ROOT), i)
+    return None
+
+
+def _denom_ours_lookup(module, method, own_idx, all_idx):
+    """三级：①本模块映射文件里（强）②别的 src 文件里同名 fn（弱，跨模块同名）③_scaffold。"""
+    hit = _denom_find_fn(own_idx.get(module), method)
+    if hit:
+        return "own-module", hit
+    for mod, rows in all_idx.items():
+        if mod == module:
+            continue
+        hit = _denom_find_fn(rows, method)
+        if hit:
+            return "elsewhere", hit
+    d = os.path.join(ROOT, "src", "_scaffold")
+    if os.path.isdir(d):
+        pat = re.compile(r"\bfn\s+" + re.escape(method) + r"\s*(?:<|\()")
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".rs"):
+                continue
+            try:
+                txt = open(os.path.join(d, fn), encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if pat.search(txt):
+                return "scaffold-only", "src/_scaffold/" + fn
+    return "missing", ""
+
+
+def _denom_classify(side, by, size, nxt, addrs, dems, feats, bl, rel, lin, own_idx, all_idx):
+    rows = []
+    for va in addrs:
+        d, parsed = _denom_pick(dems[va])
+        ident = _denom_ident(d, parsed)
+        form = _denom_form(d, by[va][0])
+        f = feats[va]
+        ks = set()
+        for k in f["game"]:
+            fn, _, line = k.rpartition(":")
+            ks.add((fn, int(line)))
+        k_join = sorted(lv for lv, lr in lin.items()
+                        if ks & {(lr["main"], x) for x in lr["lines"]})
+        n_join = sorted(lv for lv, lr in lin.items()
+                        if _denom_norm(lr["name"]) == _denom_norm(d))
+        rows.append(dict(addr=va, d=d, ident=ident, form=form, st_size=size[va],
+                         real_span=min(size[va], max(1, nxt[va] - va)),
+                         n_sym=len(by[va]), game=f["game"], other=f["other"],
+                         rel32=len(bl.get(va, ())), slot=rel.get(va, 0),
+                         k_join=k_join, n_join=n_join))
+    return rows
+
+
+def _denom_norm(d):
+    d = _DENOM_HASH.sub("", d).split(_DENOM_CLOSURE)[0]
+    d = re.sub(r"<.*", "", d).replace("graphwarrust::", "")
+    if d.endswith(".rs"):
+        d = d[:-3]
+    return "::".join(x for x in d.split("::") if x)
+
+
+def _denom_verdicts(rows, own_idx, all_idx):
+    grp_loc, grp_ours = {}, {}
+    for r in rows:
+        k = r["ident"]
+        grp_loc[k] = grp_loc.get(k, False) or bool(r["game"])
+        if k not in grp_ours:
+            grp_ours[k] = _denom_ours_lookup(k[0], k[2], own_idx, all_idx)
+    for r in rows:
+        form = r["form"]
+        if form != "business":
+            cat, sub = DENOM_FORM_CLASS[form]
+            if r["st_size"] > DENOM_VOL_CAP:
+                r["verdict"], r["subclass"] = "unknown", "volume-gate"
+                r["note"] = ("宏形态但 st_size 0x%x > VOL_CAP 0x%x ⇒ 逐字继承 T82 §2.5 降 unknown"
+                             "（T97 有同款先例 unknown/volcap:past-cap）" % (r["st_size"], DENOM_VOL_CAP))
+            else:
+                r["verdict"], r["subclass"] = cat, sub
+                r["note"] = "名字形态=%s；st_size 0x%x ≤ VOL_CAP" % (form, r["st_size"])
+            continue
+        if grp_loc[r["ident"]]:
+            r["verdict"], r["subclass"] = "denom:in", "has-game-loc"
+            r["note"] = "组内至少一条地址体内有游戏 Location 键（观测）⇒ 源码函数有 panic 点 ⇒ 不属分母外"
+        else:
+            how, where = grp_ours[r["ident"]]
+            r["verdict"] = {"own-module": "implemented", "elsewhere": "implemented-alt",
+                            "scaffold-only": "scaffold-only"}.get(how, "real-missing")
+            r["verdict"] += "/denom:no-loc"
+            r["subclass"] = "denom:no-loc"
+            r["ours_hint"], r["ours_how"] = where, how
+            r["note"] = ("组内全部地址 gameLOC=0（**观测**）⇒ 结构上进不了 527 分母"
+                         "（Linux 侧亦无 = **推断**，缺跨构建键）"
+                         + ("；我方 %s: %s" % (how, where) if where else ""))
+        if r["st_size"] > DENOM_VOL_CAP:
+            r["note"] += "；st_size 0x%x > VOL_CAP（business 不受体积闸约束，只登记）" % r["st_size"]
+    return rows, grp_loc, grp_ours
+
+
+def _denom_control(rows, by_verdict, verbose=True):
+    """预注册 §5 的 C0–C5。返回 (ok, 明细行)。"""
+    import naming_android as NA
+    out = []
+    ok = True
+
+    def gap_rows(path, iver=10, isub=11):
+        rows_ = {}
+        for ln in open(os.path.join(ROOT, path), encoding="utf-8"):
+            if ln.startswith("#"):
+                continue
+            p = ln.rstrip("\n").split("\t")
+            if len(p) > isub and p[0].startswith("0x"):
+                rows_[int(p[0], 16)] = dict(size=p[1], name=p[2], ver=p[iver], sub=p[isub])
+        return rows_
+
+    def get(va):
+        return by_verdict.get(va)
+
+    # C0：口径自校验
+    c0_g = len(rows)
+    c0_l = len(_denom_linux_keys())
+    out.append(("C0", "|G| = %d（期望 1244）、|L527| = %d（期望 527）" % (c0_g, c0_l),
+                c0_g == 1244 and c0_l == 527))
+    ok &= out[-1][2]
+    # C1/C2/C3：t101 18 / t102 3 / t97 3
+    for tag, path, kw, n_exp in (("C1", "fixtures/gap_nodes.tsv", {}, 18),
+                                 ("C2", "fixtures/gap_plane.tsv", dict(iver=3, isub=4), 3),
+                                 ("C3", "fixtures/gap_rootnode.tsv", {}, 3)):
+        g = gap_rows(path, **kw)
+        want = [va for va, r in g.items() if r["ver"].startswith("real-missing")]
+        bad = []
+        for va in want:
+            r = get(va)
+            if r is None or not r["verdict"].endswith("denom:no-loc") or r["game"]:
+                bad.append((va, r["verdict"] if r else "缺失",
+                            len(r["game"]) if r else -1))
+        out.append((tag, "%s：%d/%d 条判进 denom:no-loc 且 gameLOC=0" % (path, len(want) - len(bad), len(want)),
+                    not bad and len(want) == n_exp))
+        if bad:
+            out.append((tag, "   偏差 %s" % bad, False))
+        ok &= out[-1][2]
+    # C4a：负对照（有 Location 的必须 denom:in）
+    r = get(0x39A6F0)
+    good = bool(r) and r["verdict"] == "denom:in" and len(r["game"]) > 0
+    out.append(("C4a", "android 0x39a6f0（root_node::ready，K=%s）判 %s"
+                % (len(r["game"]) if r else "?", r["verdict"] if r else "缺失"), good))
+    ok &= good
+    # C4b：t97 的 27 条 na:* 一条都不许变 business
+    g = gap_rows("fixtures/gap_rootnode.tsv")
+    na_rows = [(va, r) for va, r in g.items() if r["ver"].startswith("na:")]
+    bad = [(va, get(va)["verdict"] if get(va) else "缺失") for va, _r in na_rows
+           if not (get(va) and get(va)["verdict"].startswith("na:"))]
+    out.append(("C4b", "t97 27 条 na:* 里仍判 na:* 的 %d / %d" % (len(na_rows) - len(bad), len(na_rows)),
+                not bad and len(na_rows) == 27))
+    if bad:
+        out.append(("C4b", "   偏差 %s" % bad[:6], False))
+    ok &= out[-1][2]
+    # C4c：T98 三条手写方法的边界（serialize/deserialize 不许被 macro-derive 吞掉）
+    t98 = [r for r in rows
+           if r["ident"][0] == "graphwar_event"
+           and r["ident"][2] in ("serialize", "deserialize",
+                                 "make_new_connection_request_event")]
+    bad = [r["addr"] for r in t98 if r["form"] != "business"]
+    out.append(("C4c", "T98 手写方法 %d 条（机器码）form=business %d 条（serialize/deserialize 没被吞）"
+                % (len(t98), len(t98) - len(bad)), bool(t98) and not bad))
+    ok &= out[-1][2]
+    # C4d：体积闸负对照
+    c4d = [r for r in rows if r["st_size"] > DENOM_VOL_CAP and r["form"] != "business"]
+    bad = [r["addr"] for r in c4d if r["verdict"].startswith("na:")]
+    out.append(("C4d", "宏形态且 st_size>VOL_CAP 的 %d 条里判 na:* 的 %d 条（必须 0）"
+                % (len(c4d), len(bad)), not bad and bool(c4d)))
+    ok &= out[-1][2]
+    # C5：Linux 侧 LOC 复算
+    c5 = _denom_linux_selftest(_denom_linux_keys())
+    pct = 100.0 * c5["same"] / c5["total"]
+    out.append(("C5", "Linux 527 行 LOC 复算 vs boundary_audit：%d/%d = %.1f%%（≥95%% 才算过）"
+                % (c5["same"], c5["total"], pct), pct >= 95.0))
+    ok &= out[-1][2]
+    if verbose:
+        for tag, msg, good_ in out:
+            print("  %-4s %s %s" % (tag, "✓" if good_ else "✗", msg))
+        if c5["detail"]:
+            print("       C5 残差 %d 条：" % len(c5["detail"]))
+            for va, got, want in c5["detail"][:12]:
+                print("         %#010x 复算 %-38s 台账 %s" % (va, got, want))
+    return ok, out, c5
+
+
+def cmd_denom_outside(argv=None):
+    """`--denom-outside`：跑 C0–C5 → 全量判决 → 写 `fixtures/denom_outside.tsv`。"""
+    import naming_android as NA
+    control_only = bool(getattr(argv, "control_only", False))
+    print("=== T105 分母外量化（预注册 fixtures/denom_outside_plan.txt）")
+    side, by, size, nxt, addrs = _denom_android()
+    dems = _denom_demangle(by, addrs)
+    lin = _denom_linux_keys()
+    print("  G = %d 条机器码；L527 = %d 行" % (len(addrs), len(lin)))
+    print("\n=== 全量特征抽取（LOC / rel32 / slot）…", flush=True)
+    feats = _denom_android_feats(side, {va: size[va] for va in addrs})
+    bl = _denom_arm64_callsites(side)
+    rel = _denom_relative_addends(side.elf)
+    own_idx, all_idx = _denom_ours_index()
+    rows = _denom_classify(side, by, size, nxt, addrs, dems, feats, bl, rel, lin,
+                          own_idx, all_idx)
+    rows, grp_loc, grp_ours = _denom_verdicts(rows, own_idx, all_idx)
+    by_verdict = {r["addr"]: r for r in rows}
+
+    print("\n=== 正/负对照（预注册 §5）")
+    ok, ctl, c5 = _denom_control(rows, by_verdict)
+    if not ok:
+        print("\n✗ 对照未全过 ⇒ 按预注册 **不写文件**、不出全量数。")
+        return 2
+
+    # ---- 计数 ----
+    groups = collections.defaultdict(list)
+    for r in rows:
+        groups[r["ident"]].append(r)
+    agg = collections.Counter(r["verdict"] for r in rows)
+    form_mat = collections.Counter((r["form"], r["verdict"]) for r in rows)
+
+    # 组级判定用 **form=business 的实例**（闭包实例按 §2.4 归父，不单独算源码函数；
+    # 它们可能是 na:other/closure-in-fn，但父函数仍是 denom:no-loc 的一个源码函数）
+    def grp_of(prefix):
+        out = {}
+        for k, v in groups.items():
+            bs = [x for x in v if x["form"] == "business"]
+            if bs and all(x["verdict"] == prefix + "/denom:no-loc" for x in bs):
+                out[k] = bs                    # 只保留 business 实例（= 该源码函数的机器码）
+        return out
+    g_miss, g_impl, g_alt, g_scaf = (grp_of("real-missing"), grp_of("implemented"),
+                                     grp_of("implemented-alt"), grp_of("scaffold-only"))
+    x_total = len(g_miss) + len(g_impl) + len(g_alt) + len(g_scaf)
+    x_mc = sum(len(v) for v in list(g_miss.values()) + list(g_impl.values())
+               + list(g_alt.values()) + list(g_scaf.values()))
+    mixed_form = sum(1 for k, v in groups.items()
+                     if len([x for x in v if x["form"] == "business"]) != len(v))
+    per_mod = collections.Counter()
+    per_mod_mc = collections.Counter()
+    per_mod_impl = collections.Counter()
+    for k, v in list(g_miss.items()) + list(g_impl.items()) + list(g_alt.items()) + list(g_scaf.items()):
+        per_mod[k[0]] += 1
+        per_mod_mc[k[0]] += len(v)
+        if k in g_impl or k in g_alt:
+            per_mod_impl[k[0]] += 1
+    print("\n=== 计数（机器码 %d / 源码组 %d）" % (len(rows), len(groups)))
+    for k, v in sorted(agg.items()):
+        print("   %-34s %d" % (k, v))
+    print("\n   form × verdict：")
+    for (f, v), n in sorted(form_mat.items()):
+        print("     %-14s %-34s %4d" % (f, v, n))
+    print("\n   **分母外真实源码函数 X = %d**（机器码 %d）："
+          "real-missing %d / implemented(本模块) %d / implemented(跨模块同名) %d / scaffold-only %d"
+          % (x_total, x_mc, len(g_miss), len(g_impl), len(g_alt), len(g_scaf)))
+    # mixed 组灵敏度
+    mixed = sum(1 for v in groups.values()
+                if any(x["game"] for x in v) and any(not x["game"] for x in v))
+    print("   混合组（同组部分实例有 game 键）%d 组 ⇒ 若改「全部实例有键才算 in」，X 最多再涨 %d"
+          % (mixed, mixed))
+    print("   另有 %d 组的组内混着 `closure` 实例（按 §2.4 归父，不单独算源码函数）" % mixed_form)
+
+    if control_only:
+        print("\n（--control-only：不写文件）")
+        return 0
+
+    # ---- 写 TSV ----
+    head = []
+    head.append("denom_outside.tsv —— T105：**527 分母之外**的真实源码函数全量量化（do not edit）")
+    head.append("重算：$PY tools/global_triage.py --denom-outside   判据：fixtures/denom_outside_plan.txt（预注册，commit 342b534）")
+    head.append("地址口径：ELF vaddr（RVA）。android_addr = **Android 2.0.60 arm64**；linux 侧只出现在 linux_pair 列的 K/N-join 里")
+    head.append("来源：Android = .reference/steam/android-2.0.60/libgraphwarrust.so（未 strip，sha256 8a612e95…54df）")
+    head.append("      Linux   = .reference/steam/2026-08-28/libgraphwarrust.so（stripped，sha256 9a538115…b187）")
+    head.append("G = Android .text 内任一 .symtab 名含 graphwarrust 的地址（本表 %d 行）；L527 = fixtures/boundary_audit.tsv 的 527 行" % len(rows))
+    head.append("判据（预注册 §2）：形态 → 类别（na:* 要求 st_size ≤ VOL_CAP 0x800，超限降 unknown/volume-gate）；")
+    head.append("  business 再按**组级**判：组内任一条体内有**游戏** panic::Location 键 ⇒ denom:in；全组无 ⇒ denom:no-loc；")
+    head.append("  源码组 = (module, owner, method) 抹泛型实参/抹 h<hash>/closure 归父 ⇒ 同组多条机器码 = 1 个源码函数。")
+    head.append("列：android_addr | st_size | real_span | module | owner | method | form | n_sym | game_loc | other_loc")
+    head.append("    | rel32 | slot | linux_pair | verdict | subclass | src_fn_group | ours_src | evidence | note")
+    head.append("  st_size = .symtab 的 st_size（T101 §149：会被重叠符号骗）；real_span = min(st_size, 下一个 FUNC − 本地址)，**只入表不进判决**")
+    head.append("  game_loc = Android 侧命中的**游戏** Location 键（basename:line）；other_loc = std/godot/第三方键（不是游戏键）")
+    head.append("  rel32 = 全 .text 里 bl 直呼本地址的调用点条数；slot = .rela.dyn 的 R_AARCH64_RELATIVE addend == 本地址的条数（T89 口径，只入表）")
+    head.append("  linux_pair 三态：K-join:<linux vaddr>（(file,line) 键集相交 = 观测同源）/ N-join:<linux vaddr>（源码身份名相等 = 推断）")
+    head.append("                  / —(L空)（无任何跨构建键 —— 不是\"没有对应函数\"，是\"冻结夹具证不到对应\"）")
+    head.append("  evidence：gameLOC 为空是**观测**；\"Linux 侧也没有 Location\"、\"该由我们写\"是**推断**（缺跨构件键：Linux stripped + 无 Location 无键）")
+    head.append("计数（机器码 %d / 源码组 %d）：" % (len(rows), len(groups)))
+    for k, v in sorted(agg.items()):
+        head.append("  %-34s %d" % (k, v))
+    head.append("**分母外真实源码函数 X = %d 组 / %d 条机器码**：" % (x_total, x_mc))
+    head.append("  real-missing %d 组 / %d 条｜implemented(本模块) %d 组 / %d 条｜implemented-alt(跨模块同名, 弱证据) %d 组 / %d 条｜scaffold-only %d 组 / %d 条"
+                % (len(g_miss), sum(len(v) for v in g_miss.values()),
+                   len(g_impl), sum(len(v) for v in g_impl.values()),
+                   len(g_alt), sum(len(v) for v in g_alt.values()),
+                   len(g_scaf), sum(len(v) for v in g_scaf.values())))
+    head.append("⚠️ 「implemented」= 我方 `src/` 里有同名 `fn`（名义 + 模块级文件映射），**不是**逐位/行为证据；")
+    head.append("   「implemented-alt」名字命中的是**别的模块**的 fn，只算弱证据（可能不是同一个函数）。X（分母）与二者的拆分无关。")
+    head.append("正/负对照（本轮实跑，全过）：")
+    for tag, msg, good_ in ctl:
+        head.append("  %-4s %s %s" % (tag, "✓" if good_ else "✗", msg))
+    head.append("按模块（X 组数 / 机器码 / 其中已实现）：")
+    for m, n in per_mod.most_common():
+        head.append("  %-34s %3d 组 / %4d 条 / 已实现 %d" % (m, n, per_mod_mc[m], per_mod_impl[m]))
+    with open(DENOM_TSV, "w", encoding="utf-8") as fh:
+        for ln in head:
+            fh.write("# " + ln + "\n")
+        fh.write("android_addr\tst_size\treal_span\tmodule\towner\tmethod\tform\tn_sym\tgame_loc"
+                 "\tother_loc\trel32\tslot\tlinux_pair\tverdict\tsubclass\tsrc_fn_group\tours_src"
+                 "\tevidence\tnote\n")
+        for r in sorted(rows, key=lambda x: x["addr"]):
+            if r["k_join"]:
+                pair = "K-join:" + ";".join("0x%06x" % x for x in r["k_join"])
+            elif r["n_join"]:
+                pair = "N-join:" + ";".join("0x%06x" % x for x in r["n_join"])
+            else:
+                pair = "—(L空)"
+            mod, own, meth = r["ident"]
+            ev = "观测:gameLOC=%d" % len(r["game"])
+            if r["verdict"].endswith("denom:no-loc"):
+                ev += "；推断:Linux 侧无键可证"
+            fh.write("\t".join([
+                "0x%06x" % r["addr"], str(r["st_size"]), str(r["real_span"]),
+                mod, own, meth, r["form"], str(r["n_sym"]),
+                ",".join(r["game"]) or "0", ",".join(r["other"]) or "0",
+                str(r["rel32"]), str(r["slot"]), pair, r["verdict"], r["subclass"],
+                "%s::%s::%s" % (mod, own, meth), r.get("ours_hint") or "—",
+                ev, r.get("note", ""),
+            ]) + "\n")
+    print("\n写出 %s（%d 行）" % (DENOM_TSV, len(rows)))
+    return 0
+
+
+def load_noloc_counts():
+    """读 `fixtures/denom_outside.tsv` → {module(.rs 后缀): 分母外源码函数数}。
+
+    缺文件返回 None（调用方按"没有这列"处理，**不猜测、不静默填 0**）。
+    """
+    if not os.path.exists(DENOM_TSV):
+        return None
+    groups = {}
+    for ln in open(DENOM_TSV, encoding="utf-8"):
+        if ln.startswith("#"):
+            continue
+        p = ln.rstrip("\n").split("\t")
+        if p[0] == "android_addr" or not p[0].startswith("0x"):
+            continue
+        if not p[13].endswith("denom:no-loc"):
+            continue
+        groups[p[15]] = p[3]
+    cnt = collections.Counter(groups.values())
+    return {m + ".rs": n for m, n in cnt.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -1505,7 +2139,8 @@ def _read_modules_tsv(path):
             p = ln.rstrip("\n").split("\t")
             if p[0] == "module" or len(p) < 7:
                 continue
-            out[p[0]] = tuple(int(x) for x in p[1:])
+            # T105：第 8 列 lin_fns_noloc 不参与 S1 比对（S1 的口径是 T96 那 6 列）
+            out[p[0]] = tuple(int(x) for x in p[1:7])
     return out
 
 
@@ -1772,6 +2407,13 @@ def main(argv=None):
     p.add_argument("--dump", nargs="+", metavar="VADDR")
     p.add_argument("--sample", action="store_true")
     p.add_argument("--android-census", action="store_true")
+    p.add_argument("--denom-outside", dest="denom_outside", action="store_true",
+                   help="T105：量化 527 分母**之外**的真实源码函数 → fixtures/denom_outside.tsv"
+                        "（预注册 fixtures/denom_outside_plan.txt；C0–C5 全过才写）")
+    p.add_argument("--control-only", dest="control_only", action="store_true",
+                   help="--denom-outside 只跑 C0–C5 正/负对照，不写文件")
+    p.add_argument("--no-noloc", dest="no_noloc", action="store_true",
+                   help="旧行为：--android-census 不写 lin_fns_noloc 列（输出与 T105 之前逐字节相同）")
     p.add_argument("--seed", type=int, default=20261127)
     p.add_argument("--no-write", action="store_true")
     p.add_argument("--no-manual", action="store_true",
@@ -1794,6 +2436,8 @@ def main(argv=None):
     if a.sample:
         cmd_sample(a)
         return 0
+    if a.denom_outside:
+        return cmd_denom_outside(a)
     if a.android_census:
         load_f3_label()
         return cmd_android_census(a)
