@@ -30852,9 +30852,9 @@ rebase 后：43→36 组 / 43→36 条，见 §156.6）。
 
 | 门槛 | 读数 |
 |---|---|
-| `cargo test --offline` | **1684 passed / 0 failed / 0 ignored**（基线 1674 + 本批 10 条新测试；与任务书的 1666/0/1 不同 —— 那是别的基线的数，本分支 `9887989` 实测基线是 **1674/0/0**） |
-| `cargo test --offline --features gdext-bindings` | 见 §156.7 补充（本节末尾） |
-| `python3 tools/coverage_matrix.py --check`（`COVERAGE_MATRIX_UPSTREAM=.reference/upstream`，venv python） | **OK**（生成物已重跑：`docs/coverage-matrix.tsv` 的 `src_fns` 4187→4218、`src_tree_sha256` 变更；`graphwar_shot_calculator` 的 `ours_funcs` 36→52。**A/B/D 三个数一位未动**） |
+| `cargo test --offline` | **1750 passed / 0 failed / 0 ignored**（rebase 到 `35d3ea2` 后实测；= master 基线 1740 + 本批 **10 条**新测试。⚠️ 任务书写 1666/0/1，那是**更早的**基线读数 —— 本分支基点 `9887989` 实测 1674、rebase 后 master 已 1740，**别拿任务书那个数当基线**） |
+| `cargo test --offline --features gdext-bindings` | **1910 passed / 0 failed / 0 ignored**（rebase 后实测；任务书写 1826，同样是旧基线） |
+| `python3 tools/coverage_matrix.py --check`（`COVERAGE_MATRIX_UPSTREAM=.reference/upstream`，venv python） | **OK**（生成物已重跑：`src_fns` 4187→4218、`graphwar_shot_calculator` 的 `ours_funcs` 36→52、`src_tree_sha256` 变更。**A/B/D 三个数一位未动**） |
 | `python3 tools/check_doc_refs.py` | `rc=0` |
 | `python3 tools/docsec.py check docs/06-verification.md` | 通过（本节 = **§156**，无重复号/空心节） |
 | 三轴 `fire` / `batch` / `batch_conv`（冻结快照 401 份回放） | **647 / 647 / 637，一位未退** |
