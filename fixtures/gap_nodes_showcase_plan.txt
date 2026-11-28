@@ -1,0 +1,252 @@
+# gap_nodes_showcase_plan.txt —— T101 **预注册**：`graphwar_nodes.rs`（29/11）与 `player_showcase.rs`（17/10）
+# 两个"代理缺口"模块的逐条裁决 + real-missing 落码口径（**先提交，后跑**）
+#
+# 为什么先写死再跑：`docs/06` §143（T96 刷新）/`fixtures/global_triage_modules.tsv` 里这两行
+#
+#   | 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+#   |---|---|---|---|---|---|---|
+#   | `graphwar_nodes.rs`   | 29 | 11 | 4 | 7 | **0** | 25 |
+#   | `player_showcase.rs`  | 17 | 10 | 4 | 6 | **0** | 13 |
+#
+# 的 `gap_proxy = android_fns − lin_F1F2` 是**两个不同分母相减**：
+#   · 左边 = Android 2.0.60 `.symtab` 里 demangle 名指向该模块的 **FUNC 符号数**（答案里有名字）；
+#   · 右边 = Linux 2.0.60 里 **`panic::Location` 指向该模块 .rs 行** 的函数数（527 台账）。
+# ⇒ 一个函数不 panic（体内没有 `unwrap/expect/索引`）就**永远进不了 527 分母**，
+#   "没进分母"于是伪装成"没实现"。T97/T98 已证明这是本轮系列"缺口"的主要成分。
+#
+# 本轮的判据**全部继承**，不新立阈值：
+#   * 五类定义 = T82 `fixtures/f3_triage_plan.txt` §1（逐字，见 §2.1）；
+#   * 机判特征与优先级 = T82 §2/§3 + §9 勘误 E1–E4；
+#   * 体积上限 `VOL_CAP = 0x800` = T85 M4 / T86 §134.3（§2.4，硬闸：>0x800 一律**不许**判 `na:*`）；
+#   * **调用形态闸（S 轴）= T89 `docs/06` §137.5**（§2.5，逐条记录，不许省）；
+#   * 落码口径 = T95 `fixtures/gap_f3misc_plan.txt` §4（§4）。
+# 跑完若发现判据有洞，**只许在文件末尾追加 §9「勘误」（追加式）**，不改 §1–§8；
+# 结论写进 `docs/06` 新节（本轮 §149），**不回改本文件**。
+#
+# ## 节号说明（协作事实，不是判据）
+# `docs/06` 的末节在分支基点是 §147。同轮 t102（`entity_drawer` + `graphwar_plane`）先取 **§148**，
+# 本节取 **§149**（两个分支各自独立过 `docsec.py check`；合并后 §148→§149 连续无洞）。
+#
+# ## 口径（一律可复算）
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（**只加一次**）。
+#     **两份构建的地址互不可换算** —— Android 地址与 Linux 地址是两列，不许相减、不许平移。
+#   * Android = `.reference/steam/android-2.0.60/libgraphwarrust.so`
+#     （ELF64 aarch64，`.symtab` 未剥离；sha256 `8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df`）。
+#   * Linux   = `.reference/steam/2026-08-28/libgraphwarrust.so`
+#     （ELF64 x86-64，stripped；sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`）。
+#   * Linux 函数边界 = `.eh_frame` FDE 自解（`tools/addr_probe.py fde`），**不读** Ghidra pkl。
+#   * 反汇编 = capstone（`.reference/venv`）；arm64 侧为 aarch64（`llvm-objdump` 供人工复核）。
+#   * 分母（本轮的新对象）= **Android `.symtab` 真名函数**，不是 527 台账：
+#     `.text` 内 `STT_FUNC`、`st_size>0`、非 `UND`，按 `st_value` 去重，取**该地址在 `.symtab` 顺序里的第一个名字**
+#     判模块（与 T96 普查**逐字同一段代码**）。
+#     自校验 S0：必须逐值等于 `fixtures/global_triage_android_census.tsv` 的
+#     `game_module graphwar_nodes 29` / `game_module player_showcase 17`（差一条就是口径不同，先对齐再跑）。
+
+## 0. 本轮要回答什么
+
+`fixtures/global_triage_modules.tsv`（T96 刷新后）这两行的 `gap_proxy` 分别是 25 / 13，**real-missing 都是 0**。
+⇒ 本轮**不是**去写 25 + 13 条代码，而是回答三件事：
+
+1. **这两块"缺口"分别是什么？** 逐条判成五类之一（+ 本轮两个 `denom:no-loc` 子类）。
+2. **真实待写源码函数数是多少？** 这是本轮的**主产出**，不是机器码差。
+   口径：把一条机器码判成 `real-missing` 之后，**还要按源码层合并同源单态化**（T80 对
+   `get_node_by_name::<T>` 已做过同样的事：11 条机器码 = **1** 个源码泛型 fn）。
+3. **落码**：判成 real-missing 的**源码函数**写到原版模块文件里（真名 + vaddr + 关键指令 + 单测），
+   每处单独 commit。`na:*` / `unknown` **只登记不落码**。
+
+⚠️ 两个模块的"缺口"性质**预期完全不同**（见 §6 P1/P2）：`graphwar_nodes` 的 18 条差全是**真业务**，
+只是**没有 Location**；`player_showcase` 的 7 条差全是 **gdext 宏产物**。**不许先落码再找理由。**
+
+## 1. 目标集合（跑前固定）
+
+| 集合 | 条数 | 定义 |
+|---|---|---|
+| **A1** | 29 | Android 真名含 `graphwar_nodes::` 的函数（按地址去重，S0 对齐普查表） |
+| **A2** | 17 | Android 真名含 `player_showcase::` 的函数（同上） |
+| **L1** | 11 | Linux 527 台账里 `原版模块 == graphwar_nodes.rs` 的行（`fixtures/function_coverage.tsv`） |
+| **L2** | 10 | Linux 527 台账里 `原版模块 == player_showcase.rs` 的行 |
+
+本轮**不新增/不删减** A1/A2 的行；A 与 L 的对应关系是新产出的东西（TSV 的 `linux_addr` 列）。
+L1/L2 里已被 T82 判过的 F3 行**沿用其裁决**（`fixtures/f3_triage.tsv`：nodes 的 7 条 `na:other`、
+showcase 的 6 条 `na:gdext-glue`），本轮只做**复算正对照**（§5 C1/C2），不改它们。
+
+## 2. 判据（继承，不改阈值）
+
+### 2.1 五类定义（T82 `fixtures/f3_triage_plan.txt` §1 逐字）
+
+| 类别 | 定义 | 进不进"诚实缺口" |
+|---|---|---|
+| `real-missing` | **原版有我方没有的业务函数**：函数体承载原版模块自己的语义，能按源码写出来 | **进** |
+| `na:std-mono` | **std/core/alloc 的单态化**：函数体是标准库的，本模块只贡献被内联进去的比较器/步长 | 不进 |
+| `na:gdext-glue` | **gdext 宏产物**：类注册胶水 / 属性访问器 / `#[func]` 分发壳 / 信号 connect 闭包。源码层无独立 `fn` | 不进 |
+| `na:other` | 其它不该手写的编译器生成物：drop glue / panic 展开 / `#[derive]` / trait 对象 shim | 不进 |
+| `unknown` | **判不了**：证据不足以判成上面任一类（**必须写明缺什么证据**） | **进**（保守） |
+
+### 2.2 两个 `denom:no-loc` 子类（写在 `subclass` 列，不改上面五类的语义）
+
+* `implemented / denom:no-loc` ——（T97 §2.2 定义，原样继承）**我方源码里已有同名实现**，但原版该函数在
+  Linux 侧**没有 `panic::Location`** ⇒ 永远进不了 527 分母。既不是 real-missing（我方有），
+  也不是 `na:*`（它是业务代码，该由我们写）。**必须**同时记 `ours_src = 文件:行`。
+* `real-missing / denom:no-loc` —— **本轮新增**（因为本轮第一次遇到）：原版有我方**没有**的业务函数，
+  且 Linux 侧**没有 `Location`** ⇒ 它**可以也应当**被写出来，但**不会**改变 527 口径的任何数字
+  （分母不收它、分子也不收它）。⚠️ 这条必**同时**给出：源码层合并规则（几条机器码 = 几个源码 fn）
+  与「为什么不进分母」的机器证据（`tools/addr_probe.py locs <linux_va>` = 0 条）。
+
+  ⇒ **"落码了但三个数不动"不是失败，是本轮要写清的事实**（§6 P3）。
+
+### 2.3 机判特征（T82 §2，原样继承）
+
+`SZ`（FDE/st_size 尺寸）· `LOC`（`panic::Location` 引用）· `SELF`（自递归次数）· `STRIDE` ·
+`CMP` · `BULK` · `CMOV` · `ATOMIC` · `BORROW` · `CALLERS`（`call rel32` 数）· `SLOTS` ·
+`CALLER_LOC` · `CALLEE`。
+
+### 2.4 体积上限（T85 M4 / T86 `VOL_CAP`，**硬闸**）
+
+`na:*` 要求 **FDE 尺寸（Linux）/ `st_size`（Android）≤ 0x800**。**> 0x800 一律不许判 `na:*`**。
+本轮 A1 里 17 条 `get_node_by_name_rec` 的 Android `st_size` = 1906–2056（其中 2056 / 2070 > 0x800）、
+A2 里 `draw` = 9810 / `ready` = 4360 ⇒ 体积闸对它们自动生效（**不可能被判 `na:*`**）。
+这也是体积闸的**正对照**：若某条 >0x800 的行被印成 `na:*`，判法坏了。
+
+### 2.5 **调用形态闸（T89 `docs/06` §137.5，本轮强制且逐条记录）**
+
+对**每一条** A1/A2 行按 **Android 侧**记录 `rel32`（`bl` 直呼 `.text` 内目标的**调用点条数**）与
+`slot`（`R_AARCH64_RELATIVE` 重定位表项里 addend == 本函数地址的条数）：
+
+| 形态 | 含义 | 结论约束 |
+|---|---|---|
+| `rel32 ≥ 1` **且** `slot = 0` | 被**直接调用** | 泛型单态化的**必要形态**；业务函数也常见 —— **单靠它不能定案** |
+| `rel32 = 0` **且** `slot ≥ 1` | 地址只出现在**数据槽**里（交给 API 的闭包 / 注册表项） | **禁止**据此判 `na:std-mono`（T89 驳回 `0x438880` 的教训） |
+| `rel32 = 0` **且** `slot = 0` | 只经 vtable/间接调用 | **必须另找间接调用链**（`adr`/`adrp+add`/字面量池），否则判 `unknown` 并写明缺哪条链 |
+
+⚠️ 这一列是**排除用的**，不是定案用的：`na:gdext-glue` 的定案依据必须是 §2.6 的两条独立证据。
+
+### 2.6 两条独立证据（T82 §3 纪律；`na:*` 每条至少 2 个）
+
+1. **机器特征**（§2.3/§2.4/§2.5 任一）+ **人工复核过的那条指令/表项**（写进 TSV 的「依据」列）；
+2. **源码级证据**：该函数在源码层**没有独立 `fn`** —— 即 Android demangle 名里的可识别宏形态
+   （`__register_methods` / `__register_constants` / `ptrcall_fn` / `varcall_fn` / `virtual_fn` /
+   `__default_virtual_call` / `class_id` / `_::__init::__inner_init` / `drop_in_place<…>`）**或**反之：
+   名字是**业务函数名**（`GraphwarNodes::<method>` / `PlayerShowcase::<method>`）。
+   ⚠️ 名字是**观测**，但它只说明**原版这一条是什么**，**不**说明"我们该不该手写" —— 后者要第 1 条佐证。
+
+### 2.7 判决顺序（T82 E4 优先级，**不许跳过前面**）
+
+`na:gdext-glue` → `na:std-mono` → `na:other` → `implemented / denom:no-loc` → `unknown`(G4) →
+`real-missing / denom:no-loc` → `real-missing`
+
+## 3. 逐条必须产出的字段（写进 `fixtures/gap_nodes.tsv` / `fixtures/gap_showcase.tsv`）
+
+列（与 T97 `fixtures/gap_button.tsv` **同列同义**，便于跨轮复算）：
+
+```
+android_addr | android_size | android_真名(去 h<hash>) | 名字形态 | linux_addr | linux_fde | in_527/F档
+  | rel32 | slot | LOC(android) | 类别 | subclass | ours_src | 依据(≥40 字符) | 落码
+```
+
+* `linux_addr` 三态：具体地址；`—(L空)` = 该地址在 Linux 侧无任何跨构建键（Android 侧 LOC 为 0 ⇒ 只能用
+  F 轴/调用链定名，定不了就写"组内未定"并给出候选集）；`组内未定` = 候选集见「映射自校验」小节。
+* `in_527` 三态：`F1/F2/F3`（在 527 台账里）或 `—`（不在，就不是缺口也不该算实现）。
+* 「类别」列是**人工裁决结果**；与 §2.7 机判候选不同时必须写明理由。
+* **两条 TSV 都要有「映射自校验」小节**：A1 的 29 行 / A2 的 17 行**每一行都要被覆盖到**
+  （A 行可 `—` 但必须出现；L1 的 11 行 / L2 的 10 行必须至少被一条 A 行指到，或写明"L 行无 A 对应"）。
+
+## 4. 落码口径（什么算"这条真落下来了"）—— 逐字沿用 T95 §4
+
+1. **落点必须是我方同名原版模块文件**（`src/graphwar_nodes.rs` / `src/player_showcase.rs`），
+   **不许**落 `src/_scaffold/**`（`AGENTS.md` §4 + `function_coverage.py` 的 R1）。
+2. **函数名 = 真名的方法段**（Android demangle 名 `GraphwarNodes::get_node_by_name_rec`）。
+3. **注释必须带**：`vaddr`（ELF 口径）+ FDE 尺寸 + 证据档 + **关键指令**（立即数 / 字段偏移 /
+   `.rodata` 串 / 表项地址 / `call rel32` 目标）。**只写"对应 0xNNNN"不算**。
+4. **单测**：期望值只能来自反汇编读出的立即数/分支/表项，不许来自我方实现的输出（`AGENTS.md` §0.5）。
+   隔离不了（要 Godot 节点/分配器）的写明"能做什么、缺什么"，档位降到 `观测`，**不许编语义**。
+5. **接线**：被谁调/调谁要接上；既有测试断言若与本轮证据冲突 ⇒ 改断言并写明地址与理由（**不许删测试**）。
+6. **每处 real-missing 单独一个 commit**。
+
+## 5. 正/负对照（**先做，全对才进全量**）
+
+| 组 | 条数 | 对象 | 期望 |
+|---|---|---|---|
+| **C0** 口径自校验 | 2 | A1 / A2 的行数与地址集 | 逐值等于 `global_triage_android_census.tsv` 的 29 / 17 |
+| **C1** 机判器正对照 | 3 | T97 已发表的 Android 行 `0x394150` / `0x3af58c` / `0x437f18`（`fixtures/gap_button.tsv`） | 本轮 `rel32`/`slot` 复算**逐值等于** T97 的 `2/0`、`1/1`、`0/1` |
+| **C2** na 复算正对照 | 8 | L1 的 7 条 `na:other`（`0x3aaea0` 等）+ L2 的 6 条 `na:gdext-glue`（`0x4e1160` 等） | 本轮复核后**仍是** `na:*`（证判法没退化） |
+| **C3** F1 正对照 | 2 | Linux `0x3aafa0`（nodes 业务薄壳）、`0x4e5400`（showcase `draw`） | `implemented`（我方有同名 fn + 档位 ≥观测） |
+| **C4** 负对照 | 1 | Linux `0x3af430`（`get_node_by_type_rec`） | **不许**因"体积小/无 Location"被判 `na:*`：它体内有 `Node::get_children_full` + `owned_cast` + 自递归（`call 0x3af430`）⇒ 必须判 `real-missing / denom:no-loc` |
+| **C5** 同源合并正对照 | 1 | T80 已发表的 `get_node_by_name::<T>` 11 条 | 本轮必须**不**把它们算成 11 个源码函数，而是 **1** 个（与 T80 §「一个泛型 fn」一致） |
+
+## 6. 跑前的**预期**（写在这里，跑完对不上要解释，不许悄悄改）
+
+* **P1（nodes）**：`fixtures/global_triage_modules.tsv` 的 `29` 不是 29 个待写函数 ——
+  它是 **11 + 17 + 1**（这个拆分**已由 T80 发表**，见 `src/graphwar_nodes.rs` 文件头 §「三个入口」表
+  与 `docs/16-client.md` §25.2，本轮只是**复算**，不是发现）：
+  * 11 条 `get_node_by_name::<T>`：Linux 侧 11 条**全在 527**（4 F1 + 7 `na:other`）⇒ **= 1 个源码泛型 fn（我方已写）**；
+  * 17 条 `get_node_by_name_rec::<T>`：Linux 侧 **0 条在 527**（无 Location）⇒ 预期 **= 1 个源码泛型 fn（我方未写）**；
+  * 1 条 `get_node_by_type_rec::<T>`：同上 ⇒ **= 1 个源码 fn（我方未写）**。
+  ⇒ **real-missing = 18 条机器码 = 2 个源码函数**。`gap_proxy 25` **整块是分母假象**。
+* **P2（showcase）**：`17` = **4 条业务**（`draw`/`ready`/`process`/`on_text_change`，全在 527 F1、我方全有）
+  + **6 条在 527 的宏产物**（2 `__register_*` + 4 `_::__init::__inner_init`，T82 已判 `na:gdext-glue`）
+  + **7 条在分母外**（`__default_virtual_call` 1 + `class_id` 1 + `__virtual_call::virtual_fn` 3 +
+  `ptrcall_fn` 1 + `varcall_fn` 1）⇒ **real-missing = 0**，**源码函数待写 = 0**。
+* **P3**：三个数**一位不动**（基线 **A 333/527 = 63.2%、B 333/438 = 76.0%、严格 1:1 261/527 = 49.5%**）。
+  理由：本轮落的两条源码函数**原版侧没有 Location**（`tools/addr_probe.py locs` = 0 条）⇒
+  527 分母不收、分子也不收。**这是本轮最需要写清的一条**：落码 ≠ 进度条动。
+* **P4**：`src/graphwar_nodes.rs` 现有的 `get_node_by_name(root, name, rec)` 里那个
+  `rec: impl FnOnce(...)` 形参**是占位**（T80 落地时 `_rec` 还没解出来）。本轮落 `_rec` 之后，
+  必须**再加**一条把两者接起来的组合入口 + 单测，并在文件头**就地更正**"占位"的说明。
+  ⚠️ 既有 API 形状（11 个 mono fn 的签名）**不改**，避免动既有测试断言。
+* **P5**：`src/graphwar_nodes.rs` 的 `unknowns()` 第 4 条「节点名比较是 `==` 还是 `format!` 后比较」
+  本轮应能从**未知**升到**观测**：arm64 `0x3a273c bl StringName as Display::fmt` →
+  `0x3a274c cmp len` → `0x3a2760 bl memcmp` ⇒ 是 **`Display` 写进 `String` 后按字节比较**（长度 + memcmp），
+  **不是** `StringName` 的 `PartialEq`。若复核不成立，如实写"仍未解"。
+
+## 7. 交付物 / 门槛 / 复跑命令
+
+**交付物**
+* `fixtures/gap_nodes_showcase_plan.txt`（本文件，**先单独 commit**）；
+* `fixtures/gap_nodes.tsv`（29 行）/ `fixtures/gap_showcase.tsv`（17 行）+ 两文件的「映射自校验」小节；
+* `src/graphwar_nodes.rs` 的 real-missing 落码（`get_node_by_name_rec` / `get_node_by_type_rec`，
+  **每处单独 commit**）+ 单测；`src/player_showcase.rs` 预期 0 条（要在 docs 里写出"为什么 0 条"）；
+* `docs/06` **§149**（先 `python3 tools/docsec.py check docs/06-verification.md` 确认 §148 被 t102 占着、
+  §149 空着）。节内必须给：两个模块的**真实待写源码函数数**（不是机器码差）+ **三个数分开报**。
+
+**门槛（本机实跑，逐条写进 docs）**
+`cargo test --offline` **1634 passed / 0 failed / 1 ignored**（条数只增不减）·
+`cargo test --offline --features gdext-bindings` **1789 / 0 / 1** ·
+`python3 tools/coverage_matrix.py --check` OK · `python3 tools/check_doc_refs.py` rc=0 ·
+`python3 tools/docsec.py check docs/06-verification.md` 通过 ·
+三轴 `fire 647 / batch 647 / batch_conv 637` · `python3 tools/boundary_audit.py --check` mismatch 0。
+
+**复跑命令（不依赖本节结论，任何人可重跑）**
+
+```text
+export CARGO_HOME=$PWD/.reference/cargo-home; export CARGO_TARGET_DIR=$PWD/.cargo-target
+PY=$PWD/.reference/venv/bin/python
+
+# ① A1/A2 的 29 + 17 条真名（S0：与普查表逐值相等）
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | c++filt --format rust \
+  | grep -E 'graphwar_nodes::|player_showcase::' | sort -k2
+
+# ② Linux 侧 527 行（L1/L2）
+grep -E 'graphwar_nodes\.rs|player_showcase\.rs' fixtures/function_coverage.tsv | cut -f1,4,6,14
+
+# ③ Linux 函数边界 / 调用点 / Location（判 denom:no-loc 的关键一条）
+$PY tools/addr_probe.py fde     0x3ad570
+$PY tools/addr_probe.py callers 0x3ad570
+$PY tools/addr_probe.py locs    0x3ad570      # 必须 0 条 Location
+
+# ④ `_rec` 语义（arm64 有符号名，x86 只有指令）：取被调者真名 + 比较点
+llvm-objdump -d --arch-name=aarch64 --start-address=0x3a2638 --stop-address=0x3a2958 \
+  .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E 'bl\s+0x'
+$PY tools/addr_probe.py dis 0x3ad570          # x86 侧同形：子节点循环 + memcmp + 自递归 call
+
+# ⑤ 调用形态闸（rel32 / slot / adr 取址）
+$PY tools/arm64_sym.py at 0x4575ec            # ptrcall_fn/varcall_fn 的取址链（注册闭包内 adr）
+readelf -rW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E '43f988|437fb4'
+
+# ⑥ 门槛
+cargo test --offline
+cargo test --offline --features gdext-bindings
+python3 tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py
+python3 tools/docsec.py check docs/06-verification.md
+python3 tools/boundary_audit.py --check
+```
