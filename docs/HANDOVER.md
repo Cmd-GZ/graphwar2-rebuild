@@ -246,7 +246,7 @@ t6 静态两屏（0 像素）；另由 lead 修掉 `update_sprite` 的源码级�
 2. **我们自己的 F1 被虚抬 33 条**（"登记不是实现"：文件顶部的地址台账注释块被规则贴到第一个 fn）⇒ 负向排除后 `F1 312→279`。
 3. **`GameRecorder` 布局**：`subscribed`/`saves` 是自造字段、`last_state` 错位 ⇒ 真值是结构体 `0x38`（`Vec` + 自指 `Weak` + `Rc` + `Weak` + `u8`），`0x50` 是外层 `RcInner`（旧注释的 `+0x48` 从 RcInner 基址算是对的）。
 4. **`match_ready` 半成品屏**：我方自造的 `_can_join_by_idle()`（静默 0.30 s 就算握手完成，7 条状态同步只到 1 条也进屏）⇒ 删掉后 **12 823 → 2 046 px**。
-   另有 `match_play` **5 798 → 1 740 px（0.2604 % → 0.0782 %，L2 0）**：真因是我方那条弹道**永远不退场**（起飞 tick 恒 0 + 揭示量当累计量 + 在场谓词恒成立 + `remove_function` 从不跑）。
+   另有 `match_play` **5 798 → 1 740 px（0.2604 % → 0.0782 %，L2 0）**（T100 再复测：**1 550 px = 0.0696 %**，同一停帧口径）：真因是我方那条弹道**永远不退场**（起飞 tick 恒 0 + 揭示量当累计量 + 在场谓词恒成立 + `remove_function` 从不跑）。
 
 **被证伪的旧结论 12 条**（挑重要的）：`0x4eb830` 不是常量折叠器（是 `remove_offset`；真折叠 `0x4ebbe0` 只被 AI 进化器调用）· `AxisDrawer`/`GraphicsManager` "0 调用 0 槽"是扫描边界的假象 · `PatternSegment` 的 mismatch 判错对象 · broker 帧格式"换不了" · `GameRemoved`/`TurnLimitInfo`/"403 份回放 `EndingGame` 0 次" 三处都是 **gzip-grep 假阴性** · `TurnLimitInfo` 有 21 帧 · `bit_exact_sweep` 的 `isolated_impossible`（评分核心其实可隔离对拍）· 「原版回放屏不画光标」（是 `--stop-plan` 冻结停帧的相位偏置，原版也画）· `0x4c2b90` 的真名是 `is_leader_local`。
 
