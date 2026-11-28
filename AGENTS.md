@@ -10,8 +10,10 @@
 由此推出六条硬标准：
 
 1. **没有什么是"不重要"的。** 原版 `libgraphwarrust.so` 有 **13503 个函数**（Ghidra 侧 **13,263** 个）、
-   **78 个模块 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（我方 `src/` 顶层有 **59 个**同名 `graphwar_*.rs`；
-   口径与复算命令见 `docs/02-module-map.md` §17 开头 **，旧读数「58 + 12」已作废**），全部在范围内。准备圈、弹窗高度、图标底色**都是源码**——
+   **82 个模块 = 66 个 `scope=graphwar` + 16 个 `scope=other`**（我方 `src/` 顶层有 **65 个**同名 `graphwar_*.rs`；
+   口径与复算命令见 `docs/02-module-map.md` §17 开头；**旧读数「78 = 62 + 16」「59 个同名文件」已作废**，
+   改法见 `docs/06` §157 与 `fixtures/module_denom_plan.txt`：模块清单以前也是按 `panic::Location` 建的，
+   而 Linux `.so` 里 `<模块>.rs` 串出现 0 次的模块连行都不会有），全部在范围内。准备圈、弹窗高度、图标底色**都是源码**——
    它们分别属于 `entity_drawer` / `play_screen_control` 等模块，不是"可以不管的外观细节"。
 2. **进度按原版的分母算，不按我们自己的测试条数算。**
    `cargo test` / `selftest` 的条数**是回归保护，不是复原证据**。
@@ -53,8 +55,9 @@
    上游 `AGENTS.md` 有同样的规则，理由也适用于此处（体积 + 版权）。
 
 4. **文件名就是证据：复原文件用原版名，自造的进 `src/_scaffold/`。**
-   原版是 **78 个模块 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（`docs/coverage-matrix.tsv`；
-   我方 `src/` 顶层 59 个同名 `graphwar_*.rs`，**旧读数「58 + 12」已作废**）。
+   原版是 **82 个模块 = 66 个 `scope=graphwar` + 16 个 `scope=other`**（`docs/coverage-matrix.tsv`；
+   我方 `src/` 顶层 65 个同名 `graphwar_*.rs`；**旧读数「78 = 62 + 16」「59 个」「58 + 12」全部作废**，
+   现口径以未 strip 的 Android 2.0.60 `.symtab` 为准，见 `docs/06` §157）。
    `src/` 根目录下的每个文件都必须能指到其中某一个（`docs/02-module-map.md` §17）；
    指不到的（GDExtension 入口、C ABI、报文装配、对拍器、ChaCha12、gzip、broker 服务端）
    只能放 `src/_scaffold/`，并在那里说明"这不是原版的东西"。
@@ -63,7 +66,7 @@
 ## 目录
 
 ```
-src/          Rust 复原实现。**文件名 = 原版模块名**（78 个原版模块：59 个同名 `graphwar_*.rs`
+src/          Rust 复原实现。**文件名 = 原版模块名**（82 个原版模块：65 个同名 `graphwar_*.rs`
               + 其余落在非前缀文件里；对照表见 docs/02-module-map.md §17）；
               我方自造的桥接/工具全部在 src/_scaffold/（原版没有对应物）
 tests/        与真二进制对齐的验收（**70 个 test 二进制**，`tests/*.rs` 自动发现；条数会变，别写死在这里）
