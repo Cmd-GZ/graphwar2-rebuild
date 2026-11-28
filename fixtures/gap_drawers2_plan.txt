@@ -1,0 +1,242 @@
+# gap_drawers2_plan.txt —— T102 **预注册**：`entity_drawer`（29 / 14 / 5 / 9 / real-missing 3）
+# 与 `graphwar_plane`（27 / 10 / 4 / 6 / real-missing 0）两块缺口逐条定性（先提交本文件，后跑）
+#
+# 为什么先写死再跑：这两行是 `fixtures/global_triage_modules.tsv`（`docs/06` §143 刷新）里
+# `gap_proxy` **最大**的两行（entity_drawer 24 / graphwar_plane 23），而同一张表说它们
+# `lin_F3_real` = **3** 与 **0**。两个方向都能"凑"：
+#   * 把 Android 侧的 `__register_methods` / `__init::__inner_init` / `drop_in_place` 都算成缺口
+#     ⇒ 缺口看着 24 / 23 条，其实一条都写不出来（T97 §145 已在 `button` 上证明这条是**分母假象**）；
+#   * 反过来把真有语义的函数（`get_entity_*_sprite` / `clear_state` / `update_entities`）说成
+#     "编译器产物" ⇒ 缺口变 0，但源码级少 3+3 个函数（T98 §147 的教训）。
+# 所以：**判据先写死、目标集合先钉死、正负对照先跑**，然后才反汇编、才出
+# `fixtures/gap_entity_drawer.tsv` / `fixtures/gap_plane.tsv`。跑完若发现判据有洞，
+# **只许在本文件末尾追加 §9「勘误」（追加式）**，不改 §1–§8 的规则文本；结论写进 `docs/06` §148。
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**。x86 侧 = `.reference/steam/2026-08-28/libgraphwarrust.so`
+#     （sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`，stripped）；
+#     **arm64 侧** = `.reference/steam/android-2.0.60/libgraphwarrust.so`（未 strip）。
+#     ⚠️ 两份构建的地址**绝不能互相换算**（布局不同）；Ghidra/REA 地址 = x86 列 + 0x100000（只加一次）。
+#   * Android 真名 = `.symtab` 的 legacy mangled 名，按长度前缀切段还原（`tools/rust_sym.py`，
+#     **不**用 `"graphwarrust" in name` 这种粗糙判据 —— 它会把 `core::ptr::drop_in_place<游戏类型>` 也算进来）。
+#   * Linux 函数边界 = `.eh_frame` FDE（`tools/addr_probe.py fde <va>`）；归属 = `panic::Location`
+#     多数投票（`fixtures/boundary_audit.tsv`）；判档 = `fixtures/function_coverage.tsv`。
+#   * 引擎 API 定名 = **GOT 槽 → thunk → thunk 里那两对 `(名指针, 名长度)` 字面量**
+#     （本轮新增的可机判一步：例如槽 `0x9bc0c8` → thunk `0x8910e0` 里的 `'Control'`(7) +
+#     `'set_size'`(8) ⇒ `Control::set_size`）。这是把 `docs/16` §23.3 的
+#     "`Control::set_*` ×3 方法名未解" 变成**可解**的那一步，判据写在本节，跑的时候不许临时换法。
+#
+# ================================================================================
+
+## 0. 本轮要回答什么
+
+| # | 问题 | 判据在哪 |
+|---|---|---|
+| ① | `android_fns` 29 / 27 这个"缺口"是真的要写 29 / 27 个函数吗？ | §2 + §4 + §5 |
+| ② | `real-missing` 到底几条？（`§143` 说 3 / 0） | §4 R-REAL 的追加要求（§4.2） |
+| ③ | 这两个模块**真实待写源码函数数**是多少？（跨 527 分母内外） | §4.3 + §6 |
+| ④ | `graphwar_plane` 的 `+0x1f8` 闸门与 `drive_frame` 发件箱（T99 §144.6-3）能不能解？ | §6.3（只判"能不能"，不许猜语义） |
+
+## 1. 三个口径（**分开定义、分开报，禁止合并**）
+
+| 代号 | 分母 | 含义 | 本表列 |
+|---|---|---|---|
+| **M** | 527（`function_coverage.tsv`） | 机器码口径：Linux 侧能按 `panic::Location` 硬归属到该模块的函数 | `linux_527` |
+| **A** | Android `.symtab` 真名 | 兄弟构建口径：同源 arm64 构建里带名字的函数数（**含**跨 crate 单态化 / drop glue / gdext 宏产物） | `android_addr`（本表主键） |
+| **S** | 源码函数 | 原版源码里**真有一行 `fn`** 的函数数（= M ∪ 逃出 M 的真函数） | `class` 列统计 |
+
+**报数纪律**：`gap_proxy` 是 **A − M 的 F1F2**，它是**代理**，不是缺口条数；"要写几个函数"只能由 **S** 回答。
+本轮的招牌三个数（A 333/527、B 333/438、1:1 261/527）**不许**因为本轮的落码而移动 ——
+落码只加我方函数体 + 常量，不给原版函数新增 Linux 地址锚 ⇒ 机器码口径一位不动（同 T98 §147 的先例）。
+
+## 2. 目标集合（**跑前固定**；顺序 = vaddr 升序，重复跑必须逐字节相同）
+
+**取集合的机判规则**（复用 `tools/global_triage.py --android-census` 的模块归属，本轮独立复算过）：
+① `.text` 内 `FUNC` 符号（`st_value` 落在 `.text` 区间）、按地址去重；
+② 每个地址取**第一个**符号名，按长度前缀切段得路径；
+③ 模块 = 路径第 2 段（`graphwarrust::<module>::…`）；impl-head 形态取 `<SELF as TRAIT>` 的 SELF；
+④ 名字里带 `graphwarrust::<module>::` 但 crate 是 `core` 的（drop glue 实例）**也算进 A**（这正是
+   `android_fns` 列的口径），但在 `class` 列一律判 `na:other/drop-glue`。
+自校验（**硬闸，对不上就停**）：本轮独立复算必须得到 **entity_drawer = 29、graphwar_plane = 27**，
+与 `fixtures/global_triage_modules.tsv` 逐数相等。
+
+### 2.1 `entity_drawer`：29 条（A 口径）
+
+| # | vaddr | `st_size` | demangled（原样，`.llvm.` 克隆按地址去重） |
+|---|---|---|---|
+| 1 | 0x394018 | 156 | `core::ptr::drop_in_place<godot_core::storage::single_threaded::InstanceStorage<EntityDrawer>>` |
+| 2 | 0x394b30 | 564 | `core::ptr::drop_in_place<EntityDrawer>` |
+| 3 | 0x3aef60 | 564 | 同上（`.llvm.` 克隆） |
+| 4 | 0x4b8b40 | 400 | `<EntityDrawer as ImplementsGodotApi>::__register_methods` |
+| 5 | 0x4b8cd0 | 400 | `<EntityDrawer as ImplementsGodotApi>::__register_constants` |
+| 6 | 0x4b921c | 156 | `<EntityDrawer as ImplementsGodotVirtual>::__virtual_call::virtual_fn` |
+| 7 | 0x4b92b8 | 156 | 同上 |
+| 8 | 0x4b9354 | 156 | 同上 |
+| 9 | 0x4b9430 | 5300 | `<EntityDrawer as IControl>::draw` |
+| 10 | 0x4ba8e4 | 608 | `<EntityDrawer as IControl>::init` |
+| 11 | 0x4bab44 | 2100 | `<EntityDrawer as IControl>::ready` |
+| 12 | 0x4bb378 | 400 | `<EntityDrawer as IControl>::ready::{{closure}}` |
+| 13 | 0x4bb508 | 3696 | `<EntityDrawer as IControl>::process` |
+| 14 | 0x4bf418 | 632 | `EntityDrawer::update_sprite` |
+| 15 | 0x4bf690 | 496 | `EntityDrawer::update_name_label` |
+| 16 | 0x4bf880 | 816 | `EntityDrawer::draw_offset_triangle` |
+| 17 | 0x4bfbb0 | 1236 | `EntityDrawer::get_entity_hat_sprite` |
+| 18 | 0x4c0084 | 2832 | `EntityDrawer::get_entity_name_label` |
+| 19 | 0x4c0b94 | 1236 | `EntityDrawer::get_entity_face_sprite` |
+| 20 | 0x4c1068 | 1236 | `EntityDrawer::get_entity_skin_sprite` |
+| 21 | 0x4c153c | 472 | `entity_drawer::_::__init::__inner_init` |
+| 22 | 0x4c1714 | 448 | 同上 |
+| 23 | 0x4c18d4 | 436 | 同上 |
+| 24 | 0x4c1a88 | 464 | 同上 |
+| 25 | 0x4c31ac | 156 | `...::__inner_init::{{closure}}::ptrcall_fn` |
+| 26 | 0x4c3248 | 192 | `...::__inner_init::{{closure}}::varcall_fn` |
+| 27 | 0x4d75dc | 564 | `core::ptr::drop_in_place<EntityDrawer>`（`.llvm.` 克隆） |
+| 28 | 0x4d9238 | 156 | `<EntityDrawer as UserClass>::__default_virtual_call::virtual_fn` |
+| 29 | 0x4d92d4 | 64 | `<EntityDrawer as GodotClass>::class_id` |
+
+### 2.2 `graphwar_plane`：27 条（A 口径）
+
+| # | vaddr | `st_size` | demangled |
+|---|---|---|---|
+| 1 | 0x3940b4 | 156 | `core::ptr::drop_in_place<InstanceStorage<GraphwarPlane>>` |
+| 2 | 0x394f60 | 256 | `core::ptr::drop_in_place<GraphwarPlane>` |
+| 3 | 0x3af200 | 256 | 同上（`.llvm.`） |
+| 4 | 0x4b8e60 | 400 | `<GraphwarPlane as ImplementsGodotApi>::__register_methods` |
+| 5 | 0x4b8ff0 | 400 | `<GraphwarPlane as ImplementsGodotApi>::__register_constants` |
+| 6 | 0x4bc378 | 156 | `<GraphwarPlane as ImplementsGodotVirtual>::__virtual_call::virtual_fn` |
+| 7 | 0x4bc414 | 156 | 同上 |
+| 8 | 0x4bc4b0 | 156 | 同上 |
+| 9 | 0x4bc54c | 4592 | `<GraphwarPlane as IControl>::draw` |
+| 10 | 0x4bd73c | 1336 | `<GraphwarPlane as IControl>::init` |
+| 11 | 0x4bdc74 | 1400 | `<GraphwarPlane as IControl>::ready` |
+| 12 | 0x4be1ec | 404 | `<GraphwarPlane as IControl>::ready::{{closure}}` |
+| 13 | 0x4be380 | 436 | `<GraphwarPlane as IControl>::ready::{{closure}}` |
+| 14 | 0x4be534 | 956 | `<GraphwarPlane as IControl>::process` |
+| 15 | 0x4c1c58 | 464 | `graphwar_plane::_::__init::__inner_init` |
+| 16 | 0x4c1e28 | 472 | 同上 |
+| 17 | 0x4c2000 | 448 | 同上 |
+| 18 | 0x4c21c0 | 436 | 同上 |
+| 19 | 0x4c3308 | 256 | `GraphwarPlane::on_resized` |
+| 20 | 0x4c3408 | 900 | `GraphwarPlane::clear_state` |
+| 21 | 0x4c378c | 332 | `GraphwarPlane::update_entities` |
+| 22 | 0x4c38d8 | 260 | `GraphwarPlane::obstacle_partial_update_event` |
+| 23 | 0x4c39dc | 156 | `...::__inner_init::{{closure}}::ptrcall_fn` |
+| 24 | 0x4c3a78 | 192 | `...::__inner_init::{{closure}}::varcall_fn` |
+| 25 | 0x4d7810 | 256 | `core::ptr::drop_in_place<GraphwarPlane>`（`.llvm.`） |
+| 26 | 0x4d9314 | 156 | `<GraphwarPlane as UserClass>::__default_virtual_call::virtual_fn` |
+| 27 | 0x4d93b0 | 64 | `<GraphwarPlane as GodotClass>::class_id` |
+
+**注意 §2 的两个"预先承认"**：
+* `A` 口径**天然含** drop glue 与宏产物 ⇒ **A 的数字不是缺口**（这正是 §143 的 `gap_proxy` 的性质）。
+* `graphwar_plane` 的 `on_resized`/`clear_state`/`update_entities` **在 527 分母里没有行**
+  （体内 `panic::Location` = 0 ⇒ `function_coverage.py` 抓不到），但它们**是源码函数** ⇒ 必须进 **S**。
+  这就是"`lin_F3_real = 0` 但源码级确实缺 3 个函数"的机理，与 T98 §147.3 同型。
+
+## 3. 类别定义（**原样继承** T82 `fixtures/f3_triage_plan.txt` §1 / T86 §134.3，不新增类别）
+
+| 类别 | 定义 | 进不进"真缺口" |
+|---|---|---|
+| `implemented` | 我方 `src/<module>.rs` 里有同语义实现（**有函数体**，不是只有地址注释） | 不进 |
+| `real-missing` | 原版有我方没有的**业务函数**，且能写出语义（见 §4.2 追加要求） | **进** |
+| `na:gdext-glue` | gdext 宏产物：`__register_*` / `__virtual_call::virtual_fn` / `__default_virtual_call` / `class_id` / `__init::__inner_init` / `ptrcall_fn` / `varcall_fn` | 不进 |
+| `na:other` | 其它编译器产物：`core::ptr::drop_in_place`（含 `.llvm.` 克隆）、`ready::{{closure}}`（父函数体内的闭包） | 不进 |
+| `unknown` | 判不了（**必须写缺什么**） | **进**（保守） |
+
+## 4. 判决规则（命中即停；逐条写进 TSV 的 `rule` 列）
+
+**R1 形态继承（先判"是不是源码里的独立 `fn`"）**：
+* 名字含 `__register_methods` / `__register_constants` / `__virtual_call::virtual_fn` /
+  `__default_virtual_call` / `class_id` / `__init::__inner_init` / `::ptrcall_fn` / `::varcall_fn`
+  ⇒ `na:gdext-glue`（**两条**辅证：该地址在全 `.text` 无 `call rel32` 调用点 **或** 位于 `.data.rel.ro` 表项；
+  本轮沿用 T82 §4 的 G1/G1b 形态读数，不重跑全量扫描）。
+* 名字含 `drop_in_place` / 首段 crate 是 `core` ⇒ `na:other/drop-glue`。
+* 名字含 `ready::{{closure}}` ⇒ `na:other/closure-in-fn`（闭包体在父函数体内，父函数已实现 ⇒ 不单独立项）。
+  若父函数**未**实现，则该条记 `unknown` 并写明"闭包体随父函数一起缺"。
+
+**R2 双视角必答**：每条 Android 真名都要回答两问 ——
+(a) Linux 527 里有没有对应行（`linux_527` 列，`—` = 没有）；(b) 我方 src 里有没有函数体。
+(a) 为 `—` 时必须按 **T98 §147.1 R4** 排除三种解释：① 体内无 `panic::Location`（⇒ 进不了 527 分母，
+**不是**"原版没有"）；② 归属被多数投票压到别的模块；③ 被内联。
+三种解释都排除不了 ⇒ 记 `unknown`，不许判 `implemented` / `real-missing`。
+
+**R3 体积闸（`VOL_CAP = 0x800`）**：`st_size > 0x800` 且未逐条读完 ⇒ 不许判 `na:*`，至少 `unknown`。
+（`get_entity_name_label` 2832 = 0xB10 > 0x800 ⇒ 按此条必须读完或降 `unknown`。）
+
+**R4 调用形态闸（T89 §138.5 / T82 §10 E6/E7，原样继承）**：
+`na:std-mono` 必须 `call rel32 ≥ 1` **或** R-STD 结构组 A/B/C 命中；
+本模块预计用不到 `na:std-mono`，但**判到就按此闸**。
+
+### 4.1 `implemented` 的判据（比 T82 的 P2 更严一档，**T98 §147.6 第 3 条的教训**）
+
+`implemented` 必须满足：**我方 `src/<module>.rs` 里存在同名或同语义函数的函数体**，且
+① 该函数体能指到本表某个 vaddr 的**指令**（不是只贴了地址注释）；或
+② 它是纯算术/纯结构的一部分，已在 `docs/16`/`docs/06` 有逐条算术复原记录，并在我方有对应 `pub fn`
+（例：`draw_offset_triangle` → `entity_drawer::offset_triangle` / `arrow_head`）。
+**只贴了地址注释、没有函数体 ⇒ 一律 `real-missing` 或 `unknown`，不许 `implemented`**
+（`get_entity_*_sprite` 三条上一版就是被 P2 记成 F1 的；本轮按本条重新裁决）。
+
+### 4.2 `real-missing` 的追加要求（比 T82 的 R-REAL 更严一档）
+
+除 T82 R-REAL 的三组 na 规则全不命中 + 能写出一句可复核语义外，本轮**追加**：
+* 必须给出**至少 2 条逐位证据**（指令 + 地址），其中至少 1 条是**判别性**的常量/偏移/字面量
+  （例：`cmp qword ptr [rsi+0x60]` 之于 skin 表、`lea ... @0x19f3c0 'set_size'` 之于槽名）；
+* 必须写清**返回值形态**（由 sret 写入点 `mov [rbp+…]` / 返回寄存器推断；推不出就写"缺 sret 布局"）。
+
+### 4.3 `S`（源码函数）的算法 —— 回答"真实待写几个"
+
+```
+S_real       = |{ 条目 | class == real-missing }|
+S_impl_out527 = |{ 条目 | class == implemented 且 linux_527 == — }|   # 已写但不在 527 分母
+S_unknown    = |{ 条目 | class == unknown }|
+S_total      = S_real + S_impl_out527 + |{ 条目 | class == implemented 且 linux_527 != — }|
+待写源码函数 = S_real（本轮要写的） 与 S_real + S_unknown（保守下界/上界一起报）
+```
+**不许**把 `na:*` 算进"待写"。
+
+## 5. 正 / 负对照（**先跑，全对才进全量**）
+
+| 组 | 样本 | 期望 | 为什么它是对照 |
+|---|---|---|---|
+| P1 正对照（已有 F1 真业务） | `entity_drawer::draw`(0x4b9430) / `ready`(0x4bab44) / `process`(0x4bb508) / `update_sprite`(0x4bf418)；`plane::draw`(0x4bc54c) / `ready`(0x4bdc74) / `process`(0x4be534) | `implemented` | T57/T78/T88 已落码，判法必须不把它们判成 na |
+| P2 正对照（真缺口） | `get_entity_hat_sprite`(0x4bfbb0) / `get_entity_face_sprite`(0x4c0b94) / `get_entity_name_label`(0x4c0084) | `real-missing`（本轮落码后仍记 `real-missing`，`landing` 列写落点） | `fixtures/f3_triage.tsv` 三条 = `real-missing`，判法必须复现 |
+| N1 负对照（宏产物） | `__register_methods`(0x4b8b40) / `__virtual_call::virtual_fn`(0x4b921c) / `class_id`(0x4d92d4) / `__init::__inner_init`(0x4c153c) / `ptrcall_fn`(0x4c31ac) | `na:gdext-glue` | 防"把一切都判 real-missing" |
+| N2 负对照（drop glue） | `drop_in_place<EntityDrawer>`(0x394b30) / `drop_in_place<GraphwarPlane>`(0x394f60) | `na:other/drop-glue` | 防把 `core::ptr` 实例当成原版函数 |
+| N3 负对照（**A 口径假缺口**） | `InstanceStorage<…>::drop_in_place`(0x394018 / 0x3940b4) | `na:other/drop-glue` | 这两条证明 `android_fns` 里天然含非源码产物 |
+| C1 自校验 | §2 的 29 / 27 | 与 `global_triage_modules.tsv` 逐数相等 | 集合口径错了后面全错 |
+| C2 引擎定名自校验 | 槽 `0x9ba680`→`0x89b170`（应给不出 `(类,方法)` 对，它是 gdext base 助手）；槽 `0x9bc0c8`→`0x8910e0` 应为 `('Control','set_size')` | 前者空/后者对 | §thunk 定名法必须**能区分** gdext 助手与引擎方法，不是"凡是 slot 都给个名字" |
+
+## 6. 交付物与边界
+
+* 产物：`fixtures/gap_entity_drawer.tsv`（29 行）、`fixtures/gap_plane.tsv`（27 行）、
+  `docs/06` §148；`real-missing` 落码（每处一个 commit，各带单测）。
+* **不动**：`src/graphwar_nodes.rs` / `src/player_showcase.rs`（t101）、`src/graphwar_backend.rs` /
+  `src/graphwar_game_recorder.rs`（t103）、`src/_scaffold/**`、`client/**`、`tests/`、
+  别人的台账、门槛/护栏文件、`fixtures/function_coverage.tsv`（生成物）。
+* **`src/graphwar_plane.rs` 的 `drive_frame` 发件箱那处 hunk 归 t104**（同轮，分支
+  `agent/flow-semantics`）：本轮**只写查清结论**（引 t104 的两条 vaddr 证据 + 自己复核口径），
+  **不改那一行**。本轮在 `graphwar_plane.rs` 只碰 `on_resized` 及其新增常量/测试。
+
+### 6.3 两条"只判能不能、不许猜"的悬案
+1. **`+0x1f8` 闸门**（T97 §145：全 `.text` 19 条写点，唯一落 527 的是 `setup_control 0x4d4b99`）：
+   本轮**不判语义**，只登记"这两个模块自己有没有 `+0x1f8` 的写点/读点"（正对照：拿 `0x4d4b99` 验扫描器）。
+2. **`drive_frame` 发件箱**：只回答"该不该把 tick 转发回 `GraphwarTickHandler`"。
+
+## 7. 跑前就承认的已知会漏（写在这里，别事后找补）
+
+* **L1** Android 是**兄弟构建**（arm64）：`A` 口径的函数数受平台层差异影响（全仓 Android 12,609 vs
+  Linux 13,263，差 654）；`A` 与 `M` 的**差**不是缺口，只是**代理**。
+* **L2** `ready::{{closure}}` 判 `na:other` 是**保守方向的反面**：闭包体在源码层确实存在。
+  本轮的处理：只有父函数**已实现**且闭包体内容已被父函数体覆盖时才判 `na:other`；否则 `unknown`。
+* **L3** 引擎方法定名（§thunk 法）依赖 thunk 里那两个长度立即数；若某个 thunk 是内联的/经 `GOT`
+  二次转发，法会失效 ⇒ 那一条记 `unknown` 而不是硬给名字。
+* **L4** `VOL_CAP = 0x800` 之下仍有 2832 B 的 `get_entity_name_label`：本轮必须整函数读完（或降 unknown），
+  不许抽几段就下结论。
+* **L5** 本轮**不给** `src/` 里加"看起来像原版但没有物证"的结构；`implemented` 的重判（§4.1）会让
+  `get_entity_*_sprite` 三条从 F1 变 `real-missing` —— 这是**修正**，不是回退，写进 §148。
+
+## 8. 门槛（本分支终点，逐条实跑；读数写进 §148）
+
+cargo `1634/0/1ignored`、gdext `1789/0/1`、`coverage_matrix --check` OK、`check_doc_refs` rc=0、
+`docsec.py check docs/06` 通过、三轴 `647/647/637`（`fire`/`batch`/`batch_conv`，冻结快照 403 条目）、
+`boundary_audit --check` mismatch 0。**招牌三个数分开报**：A `333/527 = 63.2 %`、B `333/438 = 76.0 %`、
+1:1 `261/527 = 49.5 %`。
