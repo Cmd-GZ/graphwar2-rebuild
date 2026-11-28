@@ -5,7 +5,8 @@
 #       Location = panic::Location（.data.rel.ro + .rela.dyn）；调用形态 = call rel32 调用点数 / 值等于本址的重定位槽数。
 # 复跑：PY=.reference/venv/bin/python
 #       $PY tools/addr_probe.py {fde,dis,locs,callers} <vaddr>
-#       $PY .agent-work/android_hit.py <vaddr>...     # na:std-mono 的「Android 侧正向指名」（临时脚本，可丢弃）
+#       $PY tools/naming_android.py build              # 建 arm64/Linux 特征缓存（Location 键集在里面）
+#       再按键集相交取 arm64 `.symtab` 真名 ⇒ na:std-mono 的「Android 侧正向指名」（方法见 docs/06 §142.5）
 #       $PY tools/function_coverage.py --stats        # 落码后的 F1 / 三口径
 # 分类统计：real-missing **13** / na:std-mono **3** / na:gdext-glue 0 / na:other 0 / unknown **0**
 #   （其中 2 条是 T82 判 unknown 的闭包行 0x5153f0/0x520100，本轮用 vtable 0x961fa8 判成 real-missing：

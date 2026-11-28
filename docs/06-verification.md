@@ -26509,7 +26509,9 @@ python3 tools/docsec.py check docs/06-verification.md   # 通过（断号 43/89 
   `rel32=0 & slot=0` = 只经 vtable/间接调用 ⇒ **必须另找间接链，否则判 `unknown` 并写明缺哪条链**；
 * **`na:std-mono` 的正向指名**（T87/T89 判据①）：本址 `panic::Location` 键集在
   `.reference/steam/android-2.0.60/libgraphwarrust.so` 的 `.symtab` 里必须命中**标准库/alloc 的泛型本体**。
-  本轮**独立复跑**（脚本 `.agent-work/android_hit.py`，读 `naming_android` 的特征缓存，可丢弃），不照抄 T89。
+  本轮**独立复跑**（方法：`$PY tools/naming_android.py build` 建特征缓存 → 取本址的 `(file,line)` 键集 →
+  在缓存里找**键集相交**的 arm64 函数 → 报它的 `.symtab` demangled 名与 crate；正对照用已知的
+  `na`/`real` 各两条先验一遍），不照抄 T89。
 
 ### 142.2 逐条裁决（16 条，逐行依据见 `fixtures/gap_f3misc.tsv`）
 
