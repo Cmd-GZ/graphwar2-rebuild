@@ -121,6 +121,8 @@
 
 use crate::events::Event;
 use crate::game::Match;
+use crate::graphwar_mode_manager::{AxisMode, FunctionMode, GraphwarModeManager, TimeMode};
+use crate::turnstate::GameState;
 
 /// `tick_event` 的判别值（订阅 1；也是 [`Event::TickEvent`]）。
 pub const EVENT_TICK: u16 = 0;
@@ -372,6 +374,295 @@ impl Match {
     /// 入件记录（"哪些事件到了哪个处理器"）。
     pub fn delivered_events(&self) -> &[Event] {
         &self.events.delivered
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7. **本轮（T94）落码的 6 条 F3 缺口函数**
+//
+// 判据 = [`fixtures/gap_gamestate_plan.txt`](../../fixtures/gap_gamestate_plan.txt)（预注册）+ `docs/06` §140。
+// 每条都写了 **vaddr**（P2 地址指认）与**真名**（P1 名字指认），函数体逐条按反汇编写，
+// 单测的期望值**全部来自反汇编立即数/跳转表/分支**，没有一条来自我方输出。
+//
+// 这 6 条的共同形状（`观测`+`逐位`，见 §140.4）：**闸门（读 `[self+0x120]` 状态字节）→
+// 改动某一格 → 经 `[self+0xd8]` 的事件队列 `add_event` 发一条 Info 报文**。
+// 原版这三条 `request_*_mode_change` 走的还是 `get_module_wk::<GraphwarModeManager>()`
+// （x86 弱句柄单态 **`0x46e140`**，`docs/02` §22.3 的 `wk` 列）——
+// 也就是说"客户端请求改模式"实际是**本地先改、再广播**（服务器侧同名 setter 在
+// `graphwar_mode_manager::GraphwarModeManager::set_*_mode`，`0x3e2830` 的 45/46/48 臂）。
+// ---------------------------------------------------------------------------
+
+/// 原版 `GraphwarGameStateManager` **自有**的几个控制位（不是实体状态）。
+///
+/// 我方把这个类的**运行实体**放在 [`crate::game::Match`]（模块文档 §0 的切法），
+/// 而下面这几格装的不是实体状态、`Match` 里也没有对应字段 ⇒ 单独成一个纯数据块，
+/// **由调用方持有并传入**（既不往 `Match` 里塞壳字段，也不把原版的位丢掉）。
+///
+/// 每个字段的偏移都由**写点 + 读点**两侧独立钉住（`docs/06` §140.6）：
+/// `data` = 对象指针 + `0x18`（`Gd` 的 `{rc 0x0, ? 0x8, borrow 0x10}` 之后就是实例数据）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ManagerBytes {
+    /// 数据 **`+0x11e`**（对象 `+0x136`）：**房间已锁**。
+    ///
+    /// * 写点**只有一处**：`set_lock` (`0x477fa5` `mov %sil,0x11e(%rdi)`)；
+    /// * 读点：`handle_new_connection_event` (`0x477172` `cmpb $0x0,0x11e(%rbx)`)、
+    ///   `GamewarGameClient::request_lock_change` (`0x5174f0`，**取反**后发 `LockRequest`)、
+    ///   以及经对象口径的两处 `0x3e29c5`（`handle_server_remote_event`，服务端下发的锁位落地）
+    ///   与 `0x4520a7`（`game_server_thread`，线程收尾清零）。
+    ///
+    /// 证据档：**观测**（写点/读点/信号 tag 三齐）。T84 §113.6 第 5 条把它记成"推断"，本轮升档。
+    pub lock: bool,
+    /// 数据 **`+0x11f`**（对象 `+0x137`）：**结局字节**。
+    ///
+    /// * 取值语义 = [`crate::turnstate::winner_byte`]（`0` = Team1 赢 / `1` = Team2 赢 /
+    ///   `2` = 两边都没人）；`3` = **未定**（`start_game` `0x46f761` `movb $0x3,0x11f(%r12)`）；
+    /// * 写点还有 `set_state` (`0x478236` `mov $0x2,%al; sub %dl,%al` ⇒ 写 `2-(x&1)` ∈ {1,2})
+    ///   与 `queue_end_turn_trigger` 的闭包 (`0x475c14`)；
+    /// * 读点 `check_save_level` (`0x3afd95` `movzbl 0x137(%rax)` → `test bpl,bpl; jne ret`)：
+    ///   **非 0 就不写战役存档** ⇒ 战役里只有 Team1（本地玩家）赢的那一局才写进度。
+    ///
+    /// 证据档：**观测**（三处写点 + 两处读点）。`0x46be70` 的 TypeId 见 §140.6。
+    pub winner: u8,
+    /// 数据 **`+0x80`**（data ptr）/ **`+0x88`**（len）的一条 `Vec<u32>`：**敲过 `-skip` 的 entity id**。
+    ///
+    /// 依据 `handle_chat_message` (`0x473d4d`–`0x473daf`)：先在表里线性找 `entity_id`
+    /// （4 字节步长），找不到就 `push`（`0x473daf mov %rbx,0x88(%rdi)` 写回长度）。
+    /// 容量那一格在 `+0x78`（`0x473d89 cmp %rbx,0x78(%rdi)`）。
+    pub skip_votes: Vec<u32>,
+    /// 数据 **`+0x20`**（ptr）/ **`+0x28`**（len）的另一条 `Vec<u32>`：**本局玩家 entity id**。
+    ///
+    /// 依据 `handle_chat_message` (`0x473dbf`–`0x473df6`)：遍历它，逐个查"是否已在
+    /// `skip_votes` 里"，**全都在**才往下走（= 所有人都同意跳过）。
+    pub players: Vec<u32>,
+}
+
+/// 轴档的**换档表**（`request_axis_mode_change`，`0x4764b0`）。
+///
+/// 逐位：`0x4764f8 movzx ecx,byte [rbx+0x31]` / `0x4764fc shl cl,3` /
+/// `0x4764ff mov edx,0x2010003` / `0x476504 shr edx,cl` / `0x47651b mov [rbx+0x31],dl`
+/// ⇒ 新值 = `(0x0201_0003 >> (8·旧值)) & 0xff` = 表中的 `[3,0,1,2][旧值]`
+/// ⇒ **`EveryUnit → NoAxis → OnlyMain → EveryFive → EveryUnit`**（= 旧值 − 1 mod 4）。
+pub const AXIS_MODE_CHANGE: [AxisMode; 4] = [
+    AxisMode::EveryUnit, // 0 → 3
+    AxisMode::NoAxis,    // 1 → 0
+    AxisMode::OnlyMain,  // 2 → 1
+    AxisMode::EveryFive, // 3 → 2
+];
+
+/// 时间档的**换档表**（`request_time_mode_change`，`0x4765f0`）。
+///
+/// 逐位：`0x476638 movzx ecx,byte [rbx+0x30]` / `0x47663c shl cl,3` /
+/// `0x47663f movabs rdx,0x504030201` / `0x476649 shr rdx,cl` / `0x476661 mov [rbx+0x30],dl`
+/// ⇒ 新值 = `(0x0504_0302_01 >> (8·旧值)) & 0xff` = `[1,2,3,4,5][旧值]`，
+/// 旧值 5 时那一位读出来是 0 ⇒ **`Timer30s → Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s`**（+1 mod 6）。
+pub const TIME_MODE_CHANGE: [TimeMode; 6] = [
+    TimeMode::Timer1m,
+    TimeMode::Timer2m,
+    TimeMode::Timer3m,
+    TimeMode::Timer5m,
+    TimeMode::TimerInf,
+    TimeMode::Timer30s,
+];
+
+/// `handle_chat_message`（`0x473d00`）的判决。
+///
+/// 原版这个处理器**没有返回值**：满足全部条件时它是一条 `jmp` 到尾调用
+/// `setup_and_start_game`（该函数的 vaddr 见 `docs/06` §140.4 表；**本体本轮没有落码**）
+/// （= 尾调用 `setup_and_start_game`，`0x473e22`）。我方把"要不要走那一步"显式化，
+/// 因为 `setup_and_start_game` 本体尚未落码（§140.5 遗留 2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipVote {
+    /// 不是 `-skip` / 闸门没过 —— 原版在这里 `ret`（`0x473e27` 那一组出口）。
+    Ignored,
+    /// 记了一票，但还有人没投 ⇒ 原版落到 `0x473e27` `ret`。
+    Recorded,
+    /// 全员都投过 ⇒ 原版尾跳 `setup_and_start_game`（`0x473e1e`/`0x473e22`）。
+    AllVoted,
+}
+
+impl Match {
+    /// 原版 `GraphwarGameStateManager::set_lock`（**`0x477fa0`**，`0x68` 字节）。
+    ///
+    /// 全函数只有三步（逐条指令）：
+    ///
+    /// ```text
+    /// 0x477fa5  mov byte [rdi+0x11e], sil    ; ① 写房间锁位
+    /// 0x477fac  mov rbx, [rdi+0xd8]          ; ② 取事件队列 Rc
+    /// 0x477fcb  movabs rax, 0x8000000000000045 ; ③ tag word ⇒ 判别值 0x45 = 69 LockInfo
+    /// 0x477fc6  mov byte [rsp+0x10], sil     ;    载荷 = 1 字节（同一个布尔）
+    /// 0x477fdf  call [slot 0x9bac80] -> 0x3d3530   ; add_event（只一条）
+    /// ```
+    ///
+    /// ⇒ **写位 + 广播 `LockInfo{locked}`**，返回 `()`。返回的报文列表与
+    /// [`Match::events`] 的发件箱是同一份东西（本文件 §3 的口径）。
+    pub fn set_lock(&mut self, bits: &mut ManagerBytes, lock: bool) -> Vec<Event> {
+        bits.lock = lock;
+        self.events.publish(Event::LockInfo);
+        vec![Event::LockInfo]
+    }
+
+    /// 原版 `GraphwarGameStateManager::set_name`（**`0x478010`**，`0xae` 字节）。
+    ///
+    /// ```text
+    /// 0x47801d  mov rsi, [rdi] / 0x478025 mov rdi, [rbx+8] / mov edx,1
+    /// 0x47802e  call [slot 0x9ba5a0] -> 0x528070   ; ① 先 __rust_dealloc 掉旧的 24 字节缓冲
+    /// 0x478034  mov rax,[r14+0x10] / movups …      ; ② 把入参的 24 字节 String 拷进 self+0x00
+    /// 0x47807f  movabs rax, 0x800000000000001d     ; ③ tag word ⇒ 判别值 0x1d = 29 GameNameInfo
+    /// 0x47805e  mov rsi, rbx / call [slot 0x9ba8f0] -> 0x91e260  ; ④ 载荷 = self+0x00 的克隆
+    /// 0x478093  call [slot 0x9bac80] -> 0x3d3530   ; add_event（只一条）
+    /// ```
+    ///
+    /// ⇒ **换名字 + 广播 `GameNameInfo{game_name}`**。我方这一格的真值载体是
+    /// [`Match::room`] 的 `room_name`（线上视图，`docs/33` 的 `NewConnection` 串里用的就是它）。
+    pub fn set_name(&mut self, name: &str) -> Vec<Event> {
+        self.room.room_name = name.to_string();
+        self.events.publish(Event::GameNameInfo);
+        vec![Event::GameNameInfo]
+    }
+
+    /// 原版 `GraphwarGameStateManager::request_axis_mode_change`（**`0x4764b0`**，`0x140` 字节）。
+    ///
+    /// ```text
+    /// 0x4764b7  cmpb $0x1, [rdi+0x120]        ; ① 只在状态 = 1（GameState::Setup）里做
+    /// 0x4764c4  add rdi, 0xe0                 ; ② self+0xe0 = 模块容器
+    /// 0x4764cb  call 0x46e140                 ;    get_module_wk::<GraphwarModeManager>()（§22.3 的 wk 列）
+    /// 0x4764d0  test rax,rax / je panic       ;    None ⇒ unwrap panic
+    /// 0x4764f8  … 0x2010003 >> 8·[rbx+0x31]   ; ③ 换档：旧值 − 1 mod 4
+    /// 0x476539  add rax, 0x2e (rax=0x7fff…)   ; ④ tag word ⇒ 0x800000000000002d ⇒ 45 AxisModeInfo
+    /// 0x476547  call [slot 0x9bac80]          ;    add_event（载荷 1 字节 = 新档）
+    /// ```
+    ///
+    /// ⇒ 轴档存在 **`GraphwarModeManager` 的数据 `+0x19`**（对象 `+0x31`）里，
+    /// 与 `docs/02` §22.3 记的 `+0x18` 那一字（`word 0x0301` = `time_mode`/`axis_mode` 两个字节）**对得上**。
+    pub fn request_axis_mode_change(
+        &mut self,
+        state: GameState,
+        modes: &mut GraphwarModeManager,
+    ) -> Vec<Event> {
+        if state != GameState::Setup {
+            return Vec::new();
+        }
+        modes.axis_mode = AXIS_MODE_CHANGE[modes.axis_mode as usize];
+        self.events.publish(Event::AxisModeInfo);
+        vec![Event::AxisModeInfo]
+    }
+
+    /// 原版 `GraphwarGameStateManager::request_time_mode_change`（**`0x4765f0`**，`0x140` 字节）。
+    ///
+    /// ```text
+    /// 0x4765f7  cmpb $0x1, [rdi+0x120]        ; ① 只在 Setup 里做
+    /// 0x47660b  call 0x46e140                 ; ② get_module_wk::<GraphwarModeManager>()
+    /// 0x476638  … 0x504030201 >> 8·[rbx+0x30] ; ③ 换档：旧值 + 1 mod 6
+    /// 0x47667f  add rax, 0x31 (rax=0x7fff…)   ; ④ 0x8000000000000030 ⇒ 48 TimeModeInfo
+    /// 0x47668d  call [slot 0x9bac80]          ;    add_event（载荷 1 字节）
+    /// ```
+    ///
+    /// ⇒ 时间档在 `GraphwarModeManager` 的数据 **`+0x18`**（对象 `+0x30`）。
+    pub fn request_time_mode_change(
+        &mut self,
+        state: GameState,
+        modes: &mut GraphwarModeManager,
+    ) -> Vec<Event> {
+        if state != GameState::Setup {
+            return Vec::new();
+        }
+        modes.time_mode = TIME_MODE_CHANGE[modes.time_mode as usize];
+        self.events.publish(Event::TimeModeInfo);
+        vec![Event::TimeModeInfo]
+    }
+
+    /// 原版 `GraphwarGameStateManager::request_function_mode_change`（**`0x477410`**，`0x130` 字节）。
+    ///
+    /// ```text
+    /// 0x477417  cmpb $0x1, [rdi+0x120]        ; ① 只在 Setup 里做
+    /// 0x47742b  call 0x46e140                 ; ② get_module_wk::<GraphwarModeManager>()
+    /// 0x477461  movzx ecx,byte [rbx+0x32]     ; ③ 函数档 = 数据 +0x1a
+    /// 0x477465  xor cl, 1                     ;   ★ **异或 1**（2 态互翻，不是查表）
+    /// 0x477470  mov [rbx+0x32], cl
+    /// 0x47748e  add rax, 0x2f (rax=0x7fff…)   ; ④ 0x800000000000002e ⇒ 46 FunctionModeInfo
+    /// 0x47749c  call [slot 0x9bac80]          ;    add_event（载荷 1 字节）
+    /// ```
+    ///
+    /// ⇒ `NormalFunction ⇄ DiffEqFunction`。注意它比另两条多一道
+    /// `0x477458 test rcx,rcx / jne panic`：先把借用标记当"必须空闲"检查（`try_borrow`）。
+    pub fn request_function_mode_change(
+        &mut self,
+        state: GameState,
+        modes: &mut GraphwarModeManager,
+    ) -> Vec<Event> {
+        if state != GameState::Setup {
+            return Vec::new();
+        }
+        modes.function_mode = match modes.function_mode {
+            FunctionMode::NormalFunction => FunctionMode::DiffEqFunction,
+            FunctionMode::DiffEqFunction => FunctionMode::NormalFunction,
+        };
+        self.events.publish(Event::FunctionModeInfo);
+        vec![Event::FunctionModeInfo]
+    }
+
+    /// 原版 `GraphwarGameStateManager::handle_chat_message`（**`0x473d00`**，`0x150` 字节）——
+    /// **聊天框里的 `-skip` 是一条"全员同意就开局"的指令**（本轮新解出来的行为）。
+    ///
+    /// 逐条指令（`0x473d00`–`0x473e22`）：
+    ///
+    /// ```text
+    /// 0x473d12  cmp qword [rsi], 0x8000000000000047   ; ① 判别值 0x47 = 71 ChatMessage
+    /// 0x473d1b  cmp qword [rsi+0x18], 5 / jne ret     ; ② 文本长度必须 = 5
+    /// 0x473d2f  xor ecx,[rax] vs 0x696b732d           ; ③ 前 4 字节 = "-ski"
+    /// 0x473d35  movzx eax,[rax+4] xor 0x70            ;    第 5 字节 = 'p'  ⇒ 文本 == "-skip"
+    /// 0x473d40  cmpb $0x0, [rdi+0x11c] / je ret       ; ④ 本局"已武装"位（语义未定，见下）
+    /// 0x473d4d  … 线性找 [rdi+0x80][0..0x88] 里有没有 this_id（步长 4）
+    /// 0x473da9  mov [rax+rbx*4], ebp / mov [rdi+0x88],rbx+1  ; ⑤ 没有就投票（push 自己的 id）
+    /// 0x473dbf  … 遍历 [rdi+0x20][0..0x28]（玩家表），每个都必须已在上面那张表里
+    /// 0x473df8  cmpb $0x2, [rdi+0x120] / jne ret      ; ⑥ 状态必须 = 2（GameState::WaitingForFunctions）
+    /// 0x473e01  cmp qword [rdi+0x10], 5 / jb 0x473e1e  ; ⑦ 本局名字长度 < 5 ⇒ 直接开局
+    /// 0x473e0c  xor ecx,[rax] vs 0x6576654c           ;    否则比前 5 字节 "Level"
+    /// 0x473e17  xor eax,0x6c  (= 'l') / je ret        ;    以 "Level" 开头 ⇒ 不在这里开局
+    /// 0x473e1e  … 0x473e22 jmp <setup_and_start_game> ; ⑧ 尾调用（0x473e22 是那条 jmp 自己）
+    /// ```
+    ///
+    /// 语义复述（**观测**）：**只有不在战役关卡里（局名不以 `Level` 开头）且所有玩家都发过
+    /// `-skip` 时才开局**；战役关卡靠 `setup_and_start_game` 走自己那条路。
+    ///
+    /// ⚠️ **两处未定，写在这里不许当结论**：
+    /// ① 数据 `+0x11c` 那一位的语义（读点 6 处、写点身份未定，见 §140.6）；
+    /// ② `setup_and_start_game` 本体尚未落码（见 §140.5 遗留 2）⇒ 本函数只返回判决，
+    ///    不真的开局（§140.5 遗留 2）。
+    pub fn handle_chat_message(
+        &mut self,
+        bits: &mut ManagerBytes,
+        state: GameState,
+        armed: bool,
+        entity_id: u32,
+        message: &str,
+    ) -> SkipVote {
+        self.events.deliver(Event::ChatMessage);
+        // ②③ 只有 5 个字节且正好是 "-skip" 才算指令（0x473d1b / 0x473d2f / 0x473d35）。
+        if message.len() != 5 || message != "-skip" {
+            return SkipVote::Ignored;
+        }
+        // ④ 本局"已武装"位（0x473d40）。
+        if !armed {
+            return SkipVote::Ignored;
+        }
+        // ⑤ 投票（幂等：同一个 id 只记一次，0x473d70 的线性查表）。
+        if !bits.skip_votes.contains(&entity_id) {
+            bits.skip_votes.push(entity_id);
+        }
+        // ⑥ 玩家表里每一个都投过才继续（0x473dbf–0x473df6；空表 ⇒ 这个循环不执行）。
+        if !bits.players.is_empty() && !bits.players.iter().all(|p| bits.skip_votes.contains(p)) {
+            return SkipVote::Recorded;
+        }
+        // ⑦ 状态必须是 WaitingForFunctions（0x473df8）。
+        if state != GameState::WaitingForFunctions {
+            return SkipVote::Recorded;
+        }
+        // ⑧ 局名以 "Level" 开头 ⇒ 战役关卡，不从这里开局（0x473e0c–0x473e17）。
+        if self.room.room_name.len() >= 5 && self.room.room_name.starts_with("Level") {
+            return SkipVote::Recorded;
+        }
+        SkipVote::AllVoted
     }
 }
 
@@ -1191,5 +1482,234 @@ impl LevelRules {
             }
         });
         Verdict { over: true, human_won, winner_team, reason }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. `docs/06` §140 落码函数的**单测**（期望值全部来自反汇编，不是来自我方输出）
+//
+// 每条测试的注释都写了"期望值从哪条指令来"。凡是判据只有一半证据的，
+// 测试只钉**有证据的那一半**，另一半在函数文档里标 `缺：…`。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod gap_f3_tests {
+    use super::*;
+    use crate::server::RoomState;
+
+    fn room(name: &str) -> RoomState {
+        RoomState {
+            room_name: name.into(),
+            game_state: "Setup".into(),
+            axis_mode: "NoAxis".into(),
+            function_mode: "NormalFunction".into(),
+            turn_mode: "SequentialTurns".into(),
+            time_mode: "Timer30s".into(),
+        }
+    }
+
+    fn match_with(name: &str) -> Match {
+        Match::new(room(name), vec![], vec![], (0, 0))
+    }
+
+    /// `set_lock`（`0x477fa0`）：写锁位 + **只发一条** `LockInfo`（tag 69）。
+    ///
+    /// 期望值来源：`0x477fcb movabs rax,0x8000000000000045` ⇒ 判别值 `0x45 = 69`；
+    /// 体内只有一处 `add_event`（`0x477fdf`）⇒ 报文条数 1。
+    #[test]
+    fn set_lock_writes_the_bit_and_emits_exactly_one_lock_info() {
+        let mut m = match_with("gw2");
+        let mut bits = ManagerBytes::default();
+        assert!(!bits.lock);
+        let out = m.set_lock(&mut bits, true);
+        assert_eq!(out, vec![Event::LockInfo]);
+        assert!(bits.lock);
+        assert_eq!(m.take_outbox(), vec![Event::LockInfo]);
+        // 再置一次同一值：原版也照样写位 + 发信（没有"值没变就不发"的分支）
+        let out = m.set_lock(&mut bits, true);
+        assert_eq!(out, vec![Event::LockInfo]);
+        assert_eq!(m.take_outbox(), vec![Event::LockInfo]);
+        // 解锁
+        let out = m.set_lock(&mut bits, false);
+        assert_eq!(out, vec![Event::LockInfo]);
+        assert!(!bits.lock);
+    }
+
+    /// `set_name`（`0x478010`）：换名字 + 发一条 `GameNameInfo`（tag 29）。
+    ///
+    /// 期望值来源：`0x47807f movabs rax,0x800000000000001d` ⇒ 判别值 `0x1d = 29`。
+    #[test]
+    fn set_name_replaces_the_name_and_emits_one_game_name_info() {
+        let mut m = match_with("old");
+        let out = m.set_name("Level 3");
+        assert_eq!(out, vec![Event::GameNameInfo]);
+        assert_eq!(m.room.room_name, "Level 3");
+        assert_eq!(m.take_outbox(), vec![Event::GameNameInfo]);
+    }
+
+    /// `request_axis_mode_change`（`0x4764b0`）：换档表 `[3,0,1,2]`（旧值 − 1 mod 4），
+    /// 且**只在 `GameState::Setup`（判别值 1）里生效**。
+    ///
+    /// 期望值来源：`0x4764ff mov edx,0x2010003` + `0x476504 shr edx,cl`（cl = 8·旧值）
+    /// ⇒ `(0x0201_0003 >> 8k) & 0xff` 依次是 `3,0,1,2`；闸门 `0x4764b7 cmpb $0x1,[rdi+0x120]`
+    /// 而 `[+0x120]` 的判别值 = `turnstate::GameState::index()`（`Connecting=0, Setup=1, …`）。
+    #[test]
+    fn request_axis_mode_change_is_the_decrement_table_and_is_gated_on_setup() {
+        let mut m = match_with("gw2");
+        let mut modes = GraphwarModeManager::default(); // axis = NoAxis(0)
+        // 0 → 3（EveryUnit）
+        assert_eq!(
+            m.request_axis_mode_change(GameState::Setup, &mut modes),
+            vec![Event::AxisModeInfo]
+        );
+        assert_eq!(modes.axis_mode, AxisMode::EveryUnit);
+        // 3 → 2（EveryFive）
+        m.request_axis_mode_change(GameState::Setup, &mut modes);
+        assert_eq!(modes.axis_mode, AxisMode::EveryFive);
+        // 2 → 1（OnlyMain）
+        m.request_axis_mode_change(GameState::Setup, &mut modes);
+        assert_eq!(modes.axis_mode, AxisMode::OnlyMain);
+        // 1 → 0（NoAxis）—— 一圈回到起点
+        m.request_axis_mode_change(GameState::Setup, &mut modes);
+        assert_eq!(modes.axis_mode, AxisMode::NoAxis);
+        // 闸门：非 Setup 一个字节都不改、一条都不发
+        let before = modes.axis_mode;
+        let n = m.outbox_len();
+        for st in [GameState::WaitingForFunctions, GameState::EndingGame, GameState::Connecting] {
+            assert!(m.request_axis_mode_change(st, &mut modes).is_empty());
+        }
+        assert_eq!(modes.axis_mode, before);
+        assert_eq!(m.outbox_len(), n);
+    }
+
+    /// `request_time_mode_change`（`0x4765f0`）：换档表 `[1,2,3,4,5]`（+1 mod 6），闸门同上。
+    ///
+    /// 期望值来源：`0x47663f movabs rdx,0x504030201` + `0x476649 shr rdx,cl`
+    /// ⇒ `(0x0504_0302_01 >> 8k) & 0xff` = `1,2,3,4,5`，k=5 时那一位读出来是 0。
+    #[test]
+    fn request_time_mode_change_is_the_increment_table_and_wraps_to_the_first() {
+        let mut m = match_with("gw2");
+        let mut modes = GraphwarModeManager::default(); // Timer30s(0)
+        let expect = [
+            TimeMode::Timer1m,
+            TimeMode::Timer2m,
+            TimeMode::Timer3m,
+            TimeMode::Timer5m,
+            TimeMode::TimerInf,
+            TimeMode::Timer30s, // 5 → 0（表末尾读出来的 0 字节）
+        ];
+        for (i, want) in expect.iter().enumerate() {
+            assert_eq!(
+                m.request_time_mode_change(GameState::Setup, &mut modes),
+                vec![Event::TimeModeInfo],
+                "第 {i} 次换档"
+            );
+            assert_eq!(modes.time_mode, *want, "第 {i} 次换档");
+        }
+        let n = m.outbox_len();
+        assert!(m.request_time_mode_change(GameState::WaitingForFunctions, &mut modes).is_empty());
+        assert_eq!(m.outbox_len(), n);
+    }
+
+    /// `request_function_mode_change`（`0x477410`）：**异或 1** 的 2 态互翻（不是查表）。
+    ///
+    /// 期望值来源：`0x477465 xor cl,1`（+ `0x477461 movzx ecx,byte [rbx+0x32]`），
+    /// 判别值 46 来自 `0x47748e add rax,0x2f`（rax = `0x7fff…ff`）。
+    #[test]
+    fn request_function_mode_change_toggles_the_two_state_byte() {
+        let mut m = match_with("gw2");
+        let mut modes = GraphwarModeManager::default(); // NormalFunction(0)
+        m.request_function_mode_change(GameState::Setup, &mut modes);
+        assert_eq!(modes.function_mode, FunctionMode::DiffEqFunction);
+        m.request_function_mode_change(GameState::Setup, &mut modes);
+        assert_eq!(modes.function_mode, FunctionMode::NormalFunction);
+        assert_eq!(m.take_outbox(), vec![Event::FunctionModeInfo, Event::FunctionModeInfo]);
+        // 闸门
+        let n = m.outbox_len();
+        assert!(m.request_function_mode_change(GameState::EndingGame, &mut modes).is_empty());
+        assert_eq!(m.outbox_len(), n);
+    }
+
+    /// `handle_chat_message`（`0x473d00`）：`-skip` 全员投票 ⇒ 尾跳 `setup_and_start_game`。
+    ///
+    /// 期望值来源（逐条指令见函数文档）：
+    /// * `0x473d1b cmp qword [rsi+0x18],5` ⇒ 长度必须 **5**；
+    /// * `0x473d2f/…35` 比对 `"-ski"` + `'p'` ⇒ 文本必须 **`-skip`**；
+    /// * `0x473df8 cmpb $0x2,[rdi+0x120]` ⇒ 状态必须 **`WaitingForFunctions`**；
+    /// * `0x473e0c xor ecx,0x6576654c`（`"Leve"`）+ `xor eax,0x6c`（`'l'`）⇒ 局名以
+    ///   **`Level`** 开头就不开局。
+    ///
+    /// 正/反面对照都在这一条里：每条闸门各给一个"过"和一个"不过"。
+    #[test]
+    fn chat_skip_starts_the_game_only_when_every_player_voted() {
+        let mut m = match_with("gw2");
+        let mut bits = ManagerBytes { players: vec![10, 11], ..Default::default() };
+        let ready = GameState::WaitingForFunctions;
+
+        // ① 文本不是 "-skip"：长度对但不是这 5 个字节 / 字节对但长度不对，都不算
+        assert_eq!(m.handle_chat_message(&mut bits, ready, true, 10, "hello"), SkipVote::Ignored);
+        assert_eq!(m.handle_chat_message(&mut bits, ready, true, 10, "-ski"), SkipVote::Ignored);
+        assert_eq!(m.handle_chat_message(&mut bits, ready, true, 10, "-skip!"), SkipVote::Ignored);
+        assert!(bits.skip_votes.is_empty(), "闸门没过 ⇒ 一票都不记");
+
+        // ② armed 位（+0x11c）为 0 ⇒ 不算
+        assert_eq!(m.handle_chat_message(&mut bits, ready, false, 10, "-skip"), SkipVote::Ignored);
+        assert!(bits.skip_votes.is_empty());
+
+        // ③ 玩家 10 先投：只记一票，玩家 11 还没投 ⇒ Recorded
+        assert_eq!(m.handle_chat_message(&mut bits, ready, true, 10, "-skip"), SkipVote::Recorded);
+        assert_eq!(bits.skip_votes, vec![10]);
+        // 幂等：同一个人再发一次不重复记（0x473d70 的线性查表）
+        assert_eq!(m.handle_chat_message(&mut bits, ready, true, 10, "-skip"), SkipVote::Recorded);
+        assert_eq!(bits.skip_votes, vec![10]);
+
+        // ④ 玩家 11 也投 ⇒ 全票
+        assert_eq!(m.handle_chat_message(&mut bits, ready, true, 11, "-skip"), SkipVote::AllVoted);
+        assert_eq!(bits.skip_votes, vec![10, 11]);
+
+        // ⑤ 全票但状态不是 WaitingForFunctions ⇒ 不开局
+        for st in [GameState::Setup, GameState::CalculatingResults, GameState::EndingGame] {
+            assert_eq!(
+                m.handle_chat_message(&mut bits, st, true, 10, "-skip"),
+                SkipVote::Recorded,
+                "{st:?}"
+            );
+        }
+
+        // ⑥ 全票 + 状态对，但局名以 "Level" 开头 ⇒ 战役关卡，不开局
+        let mut lvl = match_with("Level 7");
+        let mut b2 = ManagerBytes { players: vec![10], ..Default::default() };
+        assert_eq!(
+            lvl.handle_chat_message(&mut b2, ready, true, 10, "-skip"),
+            SkipVote::Recorded
+        );
+        // ⑦ 局名短于 5（`0x473e01 jb`）⇒ 直接开局，不比对 "Level"
+        let mut short = match_with("gw2");
+        let mut b3 = ManagerBytes { players: vec![10], ..Default::default() };
+        assert_eq!(
+            short.handle_chat_message(&mut b3, ready, true, 10, "-skip"),
+            SkipVote::AllVoted
+        );
+        // 反向对照：把同一个短名字改成 "Level 7" 之后判决翻转
+        short.set_name("Level 7");
+        let mut b4 = ManagerBytes { players: vec![10], ..Default::default() };
+        assert_eq!(
+            short.handle_chat_message(&mut b4, ready, true, 10, "-skip"),
+            SkipVote::Recorded
+        );
+    }
+
+    /// 换档表本身钉死（`0x02010003` / `0x0504030201` 两个立即数的**逐字节展开**）。
+    ///
+    /// 这条是 §139 表里"立即数 ⇒ 表"的独立复算：即使函数的调用形态变了，
+    /// 表错了这条也会红。
+    #[test]
+    fn the_two_change_tables_are_the_little_endian_bytes_of_the_two_immediates() {
+        // 0x0201_0003 的 LE 字节 = [0x03, 0x00, 0x01, 0x02]
+        let axis_bytes: Vec<u8> = AXIS_MODE_CHANGE.iter().map(|m| *m as u8).collect();
+        assert_eq!(axis_bytes, 0x0201_0003u32.to_le_bytes().to_vec());
+        // 0x05_0403_0201 的 LE 字节 = [0x01, 0x02, 0x03, 0x04, 0x05, 0x00]
+        // （立即数只有 5 个非 0 字节 ⇒ 第 6 次 `shr` 读到的是 0 = Timer30s）
+        let time_bytes: Vec<u8> = TIME_MODE_CHANGE.iter().map(|m| *m as u8).collect();
+        assert_eq!(time_bytes, 0x0504_0302_01u64.to_le_bytes()[..6].to_vec());
     }
 }
