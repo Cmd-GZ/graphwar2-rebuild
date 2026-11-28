@@ -338,3 +338,305 @@ impl HostChannel {
 // ---------------------------------------------------------------------------
 // 4. 自检
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 5. 回放会话：`start_client_to_replay` / `resubscribe_to_events` /
+//    `subscribe_to_event_with_id`（T95 落码）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 这三条是**函数边界已定、语义分层**的落码：
+//   * 名字：`start_client_to_replay` / `resubscribe_to_events` 来自 `fixtures/name_to_addr_v2.tsv`
+//     的 v2 三向唯一锚（android+win+win_old 同名），**是硬的**；
+//     `subscribe_to_event_with_id` 在 v2 是"未知"（arm64/win 侧有名字但**没有 Location 锚**），
+//     x86 侧是 `fixtures/hybrid_names.tsv` 的高置信同源预测（`0x515320`，score 0.7115 / margin 0.2116）
+//     ⇒ 档位只能到 **推断**，本文件里明确标注。
+//   * 这三条都**直接操作 gdext 对象图**（`GraphwarGameClient` / `GraphwarEventHandler` / 模块容器），
+//     本仓库 headless 侧没有那套对象图 ⇒ 落码到"可测的装配顺序 + 全部立即数/偏移"，
+//     并把**缺什么**写在每条下面（AGENTS.md §0.3：不许把推断写成结论）。
+//
+// ## 三个 x86 vaddr 与 FDE
+//
+// | 函数 | x86 vaddr / FDE | arm64 vaddr / size | 名字来源 |
+// |---|---|---|---|
+// | `resubscribe_to_events` | **`0x514d80`** / `0x112` | `0x407114` / `0x10c` | v2 唯一锚（硬） |
+// | `start_client_to_replay` | **`0x514f20`** / `0x213` | `0x4072b0` / `0x1ac` | v2 唯一锚（硬） |
+// | `subscribe_to_event_with_id` | **`0x515320`** / `0xc9` | `0x407580` / `0x108` | hyb 预测（**推断**） |
+//
+// ## `resubscribe_to_events`（x86 `0x514d80`）：逐条重订阅
+//
+// ```text
+// 0x514d8b  mov    rdx, [rdi+0x1d8]      ; 订阅登记表 = Rc<RefCell<HashMap<…>>>
+// 0x514d92  mov    rax, [rdx+0x10]       ; RefCell 借用标记（0x7fff… 上限判 panic）
+// 0x514dac  inc    rax                  ; borrow()
+// 0x514db3  mov    r15, [rdx+0x18]       ; hashbrown 表的数据区
+// 0x514dbb  mov    r12, [rdx+0x30]       ; 元素条数
+// 0x514dc8  pmovmskb eax, xmm0          ; ← 控制字节扫描（hashbrown 迭代）
+// 0x514e18  tzcnt  ecx, eax             ; 取下一个有效桶
+// 0x514e2e  mov    rsi, [rbx+0x1e0]      ; Option<GraphwarGameClient>（+0x1e0，内联）
+// 0x514e38  cmovne rsi, rbp             ; non-null ⇒ &mut self.client（rbp = rbx+0x1e0）
+// 0x514e43  mov    rdx, [r15+r8-0x20]    ; 登记项里的 (ptr, len)
+// 0x514e48  mov    rcx, [r15+r8-0x18]
+// 0x514e4d  mov    r8d, [r15+r8-0x30]    ; 键 = 事件 id（u32）
+// 0x514e52  call   0x515320              ; = subscribe_to_event_with_id
+// ```
+// arm64 同一段用 `cmge v0.8b` + `and #0x8080…` + `rbit/clz` 扫控制字节
+// （`0x407164`..`0x4071a4`），语义相同 ⇒ **迭代的是 hashbrown 表，不是 Vec**。
+//
+// ⚠️ **值的确切类型未定**（只读到 (ptr,len) 一对）。我方建模为 `u32 → String`（事件名），
+// 因为 `subscribe_to_event_with_id` 的实参形状是 `(name_ptr, name_len, id)`。
+
+/// 回放客户端槽（原版 `GraphwarBackend +0x1e0` 的 `Option<GraphwarGameClient>`，**内联**，不是堆对象）。
+///
+/// 我方只留"已装 / 没装"和"注册进来的按 id 订阅"两件事 —— 真正的 gdext 对象图不在本 crate。
+#[derive(Debug, Default, Clone)]
+pub struct ReplayClientSlot {
+    /// `GraphwarEventHandler` 在内联客户端的 **`+0x08`**（arm64 `0x4075e0 add x0,x23,#8`、
+    /// `inject_events` 里的 `0x3d8f14 add x0,x21,#8`）—— 这里只记"已经注册过的按 id 订阅"。
+    pub registered: Vec<(u32, String)>,
+}
+
+/// `GraphwarBackend` 里与回放会话有关的那部分状态。
+///
+/// 字段偏移全部有地址（逐条见各字段注释）；**没有**证据的字段一律不放。
+#[derive(Debug, Default, Clone)]
+pub struct GraphwarBackend {
+    /// `+0x1d0`：交给 `GraphwarGameClient::new` 的共享句柄强引用计数
+    /// （`start_client_to_replay` 的 `0x514f4f inc qword [rdi+0x1d0]`）。
+    pub shared_refs: usize,
+    /// `+0x00..0x60`：回放播放器槽（`GraphwarReplayPlayer` 本体就是 0x60 字节，
+    /// 见 `graphwar_replay_player::GraphwarReplayPlayer`；`0x3d9b00` 起 `new` 写它）。
+    pub replay: Option<crate::graphwar_replay_player::GraphwarReplayPlayer>,
+    /// `+0x00` 那个 `u32` 判别字与播放器首字段共址：**`== 2` 表示"槽里不是活的播放器"**
+    /// （`0x514fe8 cmp dword [rbx],2` 决定要不要 `drop_in_place<GraphwarReplayPlayer>`；
+    ///  `0x515041` 是同一判据的第二次读）。**2 的来源与语义：未知**。
+    pub replay_slot_tag: u32,
+    /// `+0x1d8`：按 id 的订阅登记表（原版 `Rc<RefCell<HashMap<u32, …>>>`；我方用 BTreeMap
+    /// 只为了确定性，迭代顺序在原版里是哈希序 —— 这一差异不影响语义）。
+    pub subscriptions: std::collections::BTreeMap<u32, String>,
+    /// `+0x1e0`：`Option<GraphwarGameClient>`（内联）。
+    pub client: Option<ReplayClientSlot>,
+    /// `start_client_to_replay` 造出来的 `SocketAddr`（`([::1], 端口)`；见 [`REPLAY_CLIENT_ADDR`]）。
+    pub client_addr: Option<([u8; 16], u16)>,
+}
+
+/// `start_client_to_replay` 造的那个 `SocketAddr`：**`[::1]:0`**。
+///
+/// 逐指令（x86）：
+/// ```text
+/// 0x514f2c movups xmm0,[0x19d440]     ; 16 字节 = 00…01（::1）
+/// 0x514f33 movups [rsp+0x54],xmm0
+/// 0x514f38 mov    qword [rsp+0x64],0  ; 把 port/flowinfo 一起清 0 ⇒ 端口 = 0
+/// 0x514f41 mov    word [rsp+0x6c],0   ; scope_id = 0
+/// 0x514f48 mov    word [rsp+0x50],1   ; SocketAddr 枚举判别 1 = V6
+/// ```
+/// ⇒ 回放会话**不建 TCP**（与 `ClientTarget::Replay::opens_socket() == false` 一致），
+/// 地址只是个占位；端口 0 不是我方猜的，是 `qword 0` 覆盖出来的。
+pub const REPLAY_CLIENT_ADDR: ([u8; 16], u16) = ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 0);
+
+/// `start_client_to_replay` 的装配步骤（顺序 = 反汇编里的调用点顺序，**不是**我方排的）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayStartStep {
+    /// `GraphwarGameClient::new`（x86 `0x517690` / arm64 `0x409c70`，经槽 `0x9bc458` 间接调用）：
+    /// 实参 = `self+0x1d0` 的共享句柄（先 `inc`）+ `[::1]:0` 的 `SocketAddr`。
+    NewClient,
+    /// `GraphwarReplayPlayer::new`（x86 `0x3d6d70` / arm64 `0x3d9878`）。
+    NewReplayPlayer,
+    /// 旧槽若是活的播放器（`tag != 2`）先 `drop_in_place<GraphwarReplayPlayer>`（`0x514fed`）。
+    DropOldPlayer,
+    /// 装新客户端：先 `drop_in_place<GraphwarGameClient>`（`0x514fb3`），再整块搬 0x50 字节进去。
+    InstallClient,
+    /// 装新播放器：整块搬 0x60 字节（`0x514ff5`..`0x515036`，5 个 `movups`）。
+    InstallPlayer,
+    /// `resubscribe_to_events`（`0x51503c call 0x514d80`）。
+    Resubscribe,
+    /// `GraphwarReplayPlayer::go_to_next_checkpoint`（`0x515052 call 0x3d68b0`，实参 = self 与 client 槽）。
+    GoToNextCheckpoint,
+}
+
+impl GraphwarBackend {
+    /// 空后端。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `resubscribe_to_events`（x86 **`0x514d80`** / FDE `0x112`；arm64 `0x407114`）。
+    ///
+    /// 把 `+0x1d8` 那张登记表**逐条**再走一次 [`Self::subscribe_to_event_with_id`]，
+    /// 返回重订阅条数。客户端槽为空（`+0x1e0 == None`）时**每次调用都走"客户端为 None"的早退分支**
+    /// （`0x514e2e mov rsi,[rbx+0x1e0]` + `0x514e38 cmovne`：为 0 就传 null）。
+    pub fn resubscribe_to_events(&mut self) -> usize {
+        // 原版先 borrow() 整张表再逐条调；我方按 BTreeMap 的键序（原版是哈希序）。
+        let entries: Vec<(u32, String)> = self
+            .subscriptions
+            .iter()
+            .map(|(&id, name)| (id, name.clone()))
+            .collect();
+        let mut n = 0;
+        for (id, name) in entries {
+            // 0x514e52 call 0x515320：实参 (self, Option<&mut client>, name, id)
+            if self.subscribe_to_event_with_id(name.as_str(), id) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// `subscribe_to_event_with_id`（x86 **`0x515320`** / FDE `0xc9`；arm64 `0x407580`）。
+    ///
+    /// 逐指令（x86）：
+    /// ```text
+    /// 0x515334 test rsi,rsi / je 0x515399     ; 客户端为 None ⇒ 释放 Rc 后返回（什么都不注册）
+    /// 0x515355 mov edi,0x10 / mov esi,8       ; 分配 16 字节闭包捕获体
+    /// 0x51536a mov [rax],rbx                  ;   捕获[0] = self（登记表 Rc 指针）
+    /// 0x51536d mov [rax+8],ebp                ;   捕获[8] = 事件 id（u32）
+    /// 0x515370 add r12,8                      ; GraphwarEventHandler 在内联客户端 +0x08
+    /// 0x515374 lea r8,[0x961fa8]              ; dyn FnMut vtable（见下）
+    /// 0x515393 jmp [0x9bac88] -> 0x3d38f0      ; tail-call GraphwarEventHandler::subscribe_to_event
+    /// ```
+    ///
+    /// **闭包本体（本轮新证据，解掉 T82 的 2 条 `unknown`）**：`0x961fa8` 这张 vtable 是
+    /// `dyn FnMut(&GraphwarEvent)` 的布局 —— `+0x00` drop_in_place = `0x520ce0`、
+    /// `+0x08` size = `0x10`（= 上面的 16 字节捕获体）、`+0x10` align = `8`、
+    /// **`+0x18` = call_mut = `0x520100`**、**`+0x20` = call_once = `0x5153f0`**。
+    /// ⇒ `fixtures/function_coverage.tsv` 里两条 `F3 parent-missing`（`0x5153f0` / `0x520100`）
+    /// 是**同一份源码闭包的 `call_once` / `call_mut` 两个编译器 shim**，不是两个源码函数。
+    /// 闭包体（arm64 `0x407688` 有真名）：`self.<表>.borrow_mut().get_mut(&id)` 命中就
+    /// `handler(event)`（arm64 `0x407760 ldp x0,x8,[x15,#-0x10]` + `0x407764 ldr x8,[x8,#0x20]`
+    /// + `0x40776c blr x8`：**经 vtable +0x20 = call_mut 再派发一层**）。
+    ///
+    /// ⚠️ 档位：**推断**（函数名只有 hyb 预测；`+0x1d8` 容器值类型未定）。注册动作本身是**观测**。
+    pub fn subscribe_to_event_with_id(&mut self, name: &str, id: u32) -> bool {
+        // 0x515334：客户端为 None ⇒ 立刻返回（连捕获体都不分配）。
+        let Some(client) = self.client.as_mut() else {
+            return false;
+        };
+        // 0x515355..0x51536d：捕获 (登记表, id)；我方建模成"记一条 (id, name) 到客户端侧"，
+        // 因为闭包体做的事就是"按 id 查表再派发"。
+        client.registered.push((id, name.to_string()));
+        // 0x515393：tail-call GraphwarEventHandler::subscribe_to_event（0x3d38f0）—— 那一条
+        // 已在 `src/graphwar_event_handler.rs` 落过码（本模块不重复实现）。
+        true
+    }
+
+    /// `start_client_to_replay`（x86 **`0x514f20`** / FDE `0x213`；arm64 `0x4072b0`）。
+    ///
+    /// 逐指令的 7 步见 [`ReplayStartStep`]；两条**不显然**的判据：
+    /// * `0x514fe8 cmp dword [rbx],2; je skip` —— 旧槽 `tag == 2` 才**不**析构旧播放器；
+    /// * `0x515041` 同一条比较是**第二次**读，`== 2` 走 panic 分支（`0x515066` 用
+    ///   `src/graphwar_backend.rs` 的 Location 报错，`0x1b02f9`）⇒ 装完播放器后判别字**不允许**是 2。
+    ///
+    /// ⚠️ 缺什么（写清，不猜）：这条函数**没有任何局面/网络副作用**能在 headless 里复现 ——
+    /// 它建的是 gdext 客户端对象。我方落的是"装配顺序 + 地址常量"，返回步骤列表供测试钉顺序；
+    /// **不**声称行为已逐位对上。
+    pub fn start_client_to_replay(
+        &mut self,
+        replay: crate::graphwar_replay_player::GraphwarReplayPlayer,
+    ) -> Vec<ReplayStartStep> {
+        let mut steps = Vec::with_capacity(7);
+
+        // ① 0x514f4f inc qword [rdi+0x1d0] + 0x514f6f call 0x517690（GraphwarGameClient::new）
+        self.shared_refs += 1;
+        self.client_addr = Some(REPLAY_CLIENT_ADDR);
+        steps.push(ReplayStartStep::NewClient);
+
+        // ② 0x514f9a call 0x3d6d70（GraphwarReplayPlayer::new）
+        steps.push(ReplayStartStep::NewReplayPlayer);
+
+        // ③ 0x514fe8 cmp dword [rbx],2：旧槽不是活的播放器(tag==2)才 drop 旧的
+        if self.replay_slot_tag != 2 && self.replay.is_some() {
+            steps.push(ReplayStartStep::DropOldPlayer);
+        }
+
+        // ④ 0x514fa6 cmp qword [rbx+0x1e0],0 / 0x514fb3 call drop_in_place<GraphwarGameClient>
+        //    然后把新客户端整块搬进 +0x1e0（0x514fb8..0x514fe4）。
+        self.client = Some(ReplayClientSlot::default());
+        steps.push(ReplayStartStep::InstallClient);
+
+        // ⑤ 0x514ff5..0x515036：把新播放器整块搬进 +0x00..0x60（0x60 字节）。
+        self.replay = Some(replay);
+        self.replay_slot_tag = 0;
+        steps.push(ReplayStartStep::InstallPlayer);
+
+        // ⑥ 0x51503c call 0x514d80
+        self.resubscribe_to_events();
+        steps.push(ReplayStartStep::Resubscribe);
+
+        // ⑦ 0x515052 call 0x3d68b0（实参：self = 播放器槽地址、rsi = &self.client）
+        //    前置：0x515041 tag != 2、0x515046 client 非空（否则 panic）。
+        if let Some(client) = self.client.as_mut() {
+            if let Some(player) = self.replay.as_mut() {
+                let _ = client; // 原版把客户端也传进去；trait 侧的注入目标不在本模块
+                player.go_to_next_checkpoint(&mut crate::graphwar_replay_player::NoInjectTarget);
+            }
+        }
+        steps.push(ReplayStartStep::GoToNextCheckpoint);
+        steps
+    }
+}
+
+#[cfg(test)]
+mod replay_session_tests {
+    use super::*;
+
+    #[test]
+    fn resubscribe_walks_every_registered_id() {
+        let mut b = GraphwarBackend::new();
+        b.subscriptions.insert(30, "game_state_info_event".into());
+        b.subscriptions.insert(44, "effect_info_event".into());
+        // 没有客户端 ⇒ 每次都走"客户端为 None"的早退分支（0x515334 je）
+        assert_eq!(b.resubscribe_to_events(), 0);
+        b.client = Some(ReplayClientSlot::default());
+        assert_eq!(b.resubscribe_to_events(), 2);
+        assert_eq!(b.client.as_ref().unwrap().registered.len(), 2);
+        assert_eq!(b.resubscribe_to_events(), 2, "第二次再走一遍（重订阅 = 再来一次）");
+        assert_eq!(b.client.as_ref().unwrap().registered.len(), 4, "两轮各注册 2 条");
+    }
+
+    #[test]
+    fn subscribe_with_id_needs_a_client() {
+        let mut b = GraphwarBackend::new();
+        assert!(!b.subscribe_to_event_with_id("tick_event", 0));
+        b.client = Some(ReplayClientSlot::default());
+        assert!(b.subscribe_to_event_with_id("tick_event", 0));
+        assert_eq!(
+            b.client.as_ref().unwrap().registered,
+            vec![(0u32, "tick_event".to_string())],
+            "捕获体 = (登记表, id)，注册到内联客户端的 +0x08"
+        );
+    }
+
+    #[test]
+    fn start_client_to_replay_installs_in_binary_order() {
+        let mut b = GraphwarBackend::new();
+        let steps = b.start_client_to_replay(
+            crate::graphwar_replay_player::GraphwarReplayPlayer::new(),
+        );
+        assert_eq!(
+            steps,
+            vec![
+                ReplayStartStep::NewClient,
+                ReplayStartStep::NewReplayPlayer,
+                ReplayStartStep::InstallClient,
+                ReplayStartStep::InstallPlayer,
+                ReplayStartStep::Resubscribe,
+                ReplayStartStep::GoToNextCheckpoint,
+            ],
+            "第一次进来旧槽 tag != 2 但 replay 为空 ⇒ 没有 DropOldPlayer"
+        );
+        assert_eq!(b.client_addr, Some(REPLAY_CLIENT_ADDR));
+        assert_eq!(REPLAY_CLIENT_ADDR.0[15], 1, "IPv6 环回 ::1（0x19d440 的 16 字节）");
+        assert_eq!(REPLAY_CLIENT_ADDR.1, 0, "端口 0（0x514f38 的 qword 0 覆盖出来）");
+        assert_eq!(b.shared_refs, 1, "0x514f4f inc qword [rdi+0x1d0]");
+    }
+
+    #[test]
+    fn start_client_to_replay_drops_old_live_player() {
+        let mut b = GraphwarBackend::new();
+        b.replay = Some(crate::graphwar_replay_player::GraphwarReplayPlayer::new());
+        b.replay_slot_tag = 0; // 0 != 2 ⇒ 旧槽是活的播放器，要先 drop
+        let steps = b.start_client_to_replay(
+            crate::graphwar_replay_player::GraphwarReplayPlayer::new(),
+        );
+        assert!(steps.contains(&ReplayStartStep::DropOldPlayer), "0x514fe8 判据");
+    }
+}
