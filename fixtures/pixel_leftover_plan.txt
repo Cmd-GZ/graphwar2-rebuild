@@ -1,0 +1,113 @@
+# fixtures/pixel_leftover_plan.txt —— 两处**确定遗留**的预注册（T100，2026-11-28）
+#
+# 这份文件**先于**本轮任何一行读数、任何一行代码改动写定并单独 commit。
+# 它只管两件事的**判据与期望读数**；渲染门槛仍是 `fixtures/frame_diff_thresholds.txt`
+# （sha256 9cc9fcda…）、停帧口径仍是 `fixtures/frame_capture_freeze_plan.txt`
+# （sha256 aa23b64d…）—— **两个文件本轮一个数都不改**，排除区也不改。
+#
+# 两处遗留的来源（都不是我发现的）：
+#   ① `docs/06` §137.6 第 1 条（T88 自己登记）：「淡出尾巴我没照原版做完」；
+#   ② `docs/06` §135.5 第 2 条 / §135.6 第 2 条（T84 登记）：「原版断线时会弹
+#      "You have been disconnected." + `Ok`，我方在同一时刻没弹（跨侧差异 22 925 px）」。
+
+## 0. 一个先说清的边界
+
+这两处都是**行为**上的遗留，不是渲染常数。判据只能是"两侧同一时刻画的东西是否一致"，
+所以两份读数分开报、各自有各自的基线，**不许拿一处的改善去抵另一处的退化**。
+
+## 1. ① 弹道淡出尾巴
+
+### 1.1 真值（已有，本轮只复核不改口径）
+
+| 项 | 真值 | 档位 | 出处 |
+|---|---|---|---|
+| 活跃窗口 | 揭示 `len/30` tick + 淡出 **60** tick | **逐位** | `0x3be60b add $0x708,%edi`（1800 = 60×30）＋ `0x455b2e divsd [−60.0]` |
+| 在场谓词 | `tick > active_tick` ∧ `30·d < len + 1800` | **逐位** | `0x3be5e6`–`0x3be611` |
+| 淡出 alpha | `d ≤ len/30` ⇒ `1.0`；否则 `max(0, 1 − (d − len/30)/60)` | **逐位** | `0x455a40` 全函数（§137.3.1 已翻） |
+| 出窗口动作 | 只 `FunctionDrawer::remove_function`（删 `Line2D`），**不删**管理器那一格 | **观测** | `0x4b6418` → `0x498b70` |
+
+⇒ 原版**没有"弹道到点就清"这个动作**：到点之后线还会按 alpha 线性淡出 60 tick 才退场。
+
+### 1.2 我方现状（T88 留下的）
+
+* Rust 侧**已经做完**：`src/graphwar_function_manager.rs` 的 `function_fade_on_tick` /
+  `is_active_function`，`src/graphwar_plane.rs::feed_functions` 每帧把 alpha 交给
+  `update_function_fade` 并在出窗口时 `remove_function`（§137.3.1 的算式全部落码）。
+* **缺口在客户端**：`client/src/screens/play_screen.gd::_on_shot_arrived()` 一到"落地"
+  就 `_clear_curve()`（= `clear_function_points()` + 对每个 drawer `remove_function()`）
+  ⇒ 淡出段**整段**被砍掉。
+
+### 1.3 判据（预注册；跑完不许为了对上而改）
+
+采集：`tools/frame_capture.py --flow match`，**两侧串行 + 私有 netns**；
+密集采样的拷贝（**不改** `tools/frame_capture.py`）放 `<树>/.agent-work/dense/frame_capture.py`，
+只改三个常量：`FRAMES_PER_SCREEN 3→45`、`FRAME_GAP_S 1.2→0.2`、`MATCH_PLAY_WAIT 5.0→0.5`。
+⇒ 帧 #k 落在 **phase2 触发后 `0.5 + (k−1)×0.2` 秒**；服务端 `--collect` 默认 8 s ⇒
+密集窗口覆盖"揭示 → 淡出 → 服务端关连接"全过程。
+
+度量（两个，都在棋盘区 `(265,556)-(1738,900)` 内，且**扣掉士兵/名字标签 bbox**）：
+
+* `m1` = **彩色像素**：通道极差 > 60 的像素数 = T88 §137.5.2 的口径（**与登记读数可比**，
+  这是硬要求：同一把尺子才谈得上"前后"）。
+* `m2` = **非背景像素**：与纯白 `(255,255,255)` 任一通道差 > 8 的像素数 = 淡出末段更灵敏的尺子
+  （alpha 小到 m1 数不到时 m2 还数得到）。
+
+判据：
+
+| # | 判据 | 期望读数 |
+|---|---|---|
+| A1 | **揭示段帧集合一致**：`m1 > 1000` 的帧号集合，两侧对称差 ≤ 1 帧 | 改前已知一致（T88 §137.5.2 两侧都在 #02 起） |
+| A2 | **淡出段存在**：原版在峰值帧之后至少 1 帧满足 `0 < m1 < 0.25×峰值`；**同一帧我方必须也 > 0** | 改前：原版 #14 = **1 743** px、我方 = **0** ⇒ 判**红** |
+| A3 | **淡出持续时间**：`m2` 从峰值起单调（允许单帧抖动）降到 0 的帧数，两侧相差 ≤ 2 帧 | 60 tick @60 Hz = **1.0 s ≈ 5 帧**（0.2 s 步长） |
+| A4 | **峰值量级**：峰值帧 `m1` 的相对差 ≤ 10 % | T88 实测 #13：12 370 vs 12 250（1.0 %） |
+| A5 | **收尾都归零**：密集窗口最后 2 帧两侧 `m1` 都为 0（服务端已关连接那几帧不计入 A1–A4） | — |
+
+**判据帧（停帧口径，硬门槛）**：`match_play` `l3_diff_px` **≤ 1 740 px（0.0782 %）且 L2 = 0 块**，
+即 T88 修完之后的读数**一位不许退**；`match_ready` 仍落预注册带 `[0.070, 0.100] %`。
+A1–A4 是"淡出段一致"的机制判据，A5 + 停帧读数是"没把它做坏"的回归判据。
+
+## 2. ② 断线提示「You have been disconnected.」
+
+### 2.1 已知（T84 登记的观测）
+
+`serve_match` 收尾退出（关 TCP）之后，原版弹 `DisconnectedPopUp`（`DisconnectedLabel` 文本
+= `You have been disconnected.` + `Ok`）；我方同一时刻没弹，跨侧差异 **22 925 px**
+（`docs/06` §135.5 第 2 条）。**根因未查**（T84 原话）。
+
+### 2.2 本轮必须先回答的两问（取证，不是改法）
+
+1. **原版的触发点**：哪个事件 / 哪个状态 → 弹这个框。手段：`.rodata` 里那三条串的
+   `lea [rip+…]` 交叉引用 → 落在哪个函数 / 哪条分支；再看该分支的判据字段是谁写的。
+2. **我方为什么没弹**：`GwNetSession.closed` → `GwNet.disconnected` → `App._on_net_disconnected`
+   这条链在哪一环断（或根本没断、只是时序差）。手段：同一次采集的 `game.log` 里
+   `[gw2/net] disconnected:` 这条诊断行 + 两侧帧。
+
+### 2.3 判据（预注册）
+
+| # | 判据 | 期望读数 |
+|---|---|---|
+| B1 | **触发点指得到**：原版那条分支的判据字段 + 写入点至少一条**观测/逐位**级证据；指不到就写"缺什么" | 新增，无旧读数 |
+| B2 | **两侧行为一致**：密集采样里"服务端关连接那一帧之后"的帧，两侧**都有**断线弹窗；跨侧 `l3` 差异从 **22 925 px** 降到 **≤ 2 000 px** | 22 925 px → ≤ 2 000 px |
+| B3 | **不误伤**：正常收场（`EndingGame`）之后**不**弹断线框（既有行为，`docs/06` §77 两侧各验一次） | 保持 0 次 |
+
+**B2 的 2 000 px 上限怎么来的**（不许跑完再改）：`disconnected` 这一屏本身在
+`docs/06` §120 的静态采集里是 **58 px 面板区**（`disconnected` 面板四角 38 px + 返回键 20 px），
+整屏 33 329 px 的差异里 33 213 px 是**底图残差**（LAN 大厅那一层）。
+断线框叠在**对局屏**上时底图是我方对局屏，它的既有残差是 `match_play` 的 1 740 px
+⇒ 上限取 **1 740 + 58 ≈ 1 800 px**，留 ~200 px 给"弹窗叠上去之后棋盘重启/重绘"的相位差
+⇒ **2 000 px**。
+
+## 3. 门槛（预注册；一位不许退）
+
+`cargo test --offline` **1 620 / 0 / 1 ignored**；`--features gdext-bindings` **1 769 / 0 / 1**；
+`selftest` **757 / 0 / 1 skipped**（`missing=0 silent=0`）；headless 14 脚本 **1 979 / 0**；
+三轴 `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**；
+`coverage_matrix.py --check` **OK**；`check_doc_refs.py` **rc=0**。
+
+## 4. 采集三条硬要求（写在这里，跑的时候照抄）
+
+1. `--flow replay` 必须 `--seed-replays`（本轮不拍 replay，但同一套 wrapper 会用到）；
+2. 每棵树**自己的** `.cargo-target`；改完 `cargo build --features gdext-bindings` →
+   `cp .so client/` → `godot --headless --path client --import`，并核对 `.so` 的 md5 **变了**；
+3. 两侧**串行**、**私有 netns**（`bwrap --unshare-user --unshare-net` + 四个 MESA 变量 +
+   `--setenv DISPLAY 127.0.0.1:<n>`）。
