@@ -380,11 +380,11 @@ impl Match {
 // ---------------------------------------------------------------------------
 // 7. **本轮（T94）落码的 6 条 F3 缺口函数**
 //
-// 判据 = [`fixtures/gap_gamestate_plan.txt`](../../fixtures/gap_gamestate_plan.txt)（预注册）+ `docs/06` §139。
+// 判据 = [`fixtures/gap_gamestate_plan.txt`](../../fixtures/gap_gamestate_plan.txt)（预注册）+ `docs/06` §140。
 // 每条都写了 **vaddr**（P2 地址指认）与**真名**（P1 名字指认），函数体逐条按反汇编写，
 // 单测的期望值**全部来自反汇编立即数/跳转表/分支**，没有一条来自我方输出。
 //
-// 这 6 条的共同形状（`观测`+`逐位`，见 §139.4）：**闸门（读 `[self+0x120]` 状态字节）→
+// 这 6 条的共同形状（`观测`+`逐位`，见 §140.4）：**闸门（读 `[self+0x120]` 状态字节）→
 // 改动某一格 → 经 `[self+0xd8]` 的事件队列 `add_event` 发一条 Info 报文**。
 // 原版这三条 `request_*_mode_change` 走的还是 `get_module_wk::<GraphwarModeManager>()`
 // （x86 弱句柄单态 **`0x46e140`**，`docs/02` §22.3 的 `wk` 列）——
@@ -398,7 +398,7 @@ impl Match {
 /// 而下面这几格装的不是实体状态、`Match` 里也没有对应字段 ⇒ 单独成一个纯数据块，
 /// **由调用方持有并传入**（既不往 `Match` 里塞壳字段，也不把原版的位丢掉）。
 ///
-/// 每个字段的偏移都由**写点 + 读点**两侧独立钉住（`docs/06` §139.6）：
+/// 每个字段的偏移都由**写点 + 读点**两侧独立钉住（`docs/06` §140.6）：
 /// `data` = 对象指针 + `0x18`（`Gd` 的 `{rc 0x0, ? 0x8, borrow 0x10}` 之后就是实例数据）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagerBytes {
@@ -421,7 +421,7 @@ pub struct ManagerBytes {
     /// * 读点 `check_save_level` (`0x3afd95` `movzbl 0x137(%rax)` → `test bpl,bpl; jne ret`)：
     ///   **非 0 就不写战役存档** ⇒ 战役里只有 Team1（本地玩家）赢的那一局才写进度。
     ///
-    /// 证据档：**观测**（三处写点 + 两处读点）。`0x46be70` 的 TypeId 见 §139.6。
+    /// 证据档：**观测**（三处写点 + 两处读点）。`0x46be70` 的 TypeId 见 §140.6。
     pub winner: u8,
     /// 数据 **`+0x80`**（data ptr）/ **`+0x88`**（len）的一条 `Vec<u32>`：**敲过 `-skip` 的 entity id**。
     ///
@@ -466,9 +466,10 @@ pub const TIME_MODE_CHANGE: [TimeMode; 6] = [
 
 /// `handle_chat_message`（`0x473d00`）的判决。
 ///
-/// 原版这个处理器**没有返回值**：满足全部条件时它是一条 `jmp 0x474490`
+/// 原版这个处理器**没有返回值**：满足全部条件时它是一条 `jmp` 到尾调用
+/// `setup_and_start_game`（该函数的 vaddr 见 `docs/06` §140.4 表；**本体本轮没有落码**）
 /// （= 尾调用 `setup_and_start_game`，`0x473e22`）。我方把"要不要走那一步"显式化，
-/// 因为 `setup_and_start_game` 本体尚未落码（§139.5 遗留 2）。
+/// 因为 `setup_and_start_game` 本体尚未落码（§140.5 遗留 2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipVote {
     /// 不是 `-skip` / 闸门没过 —— 原版在这里 `ret`（`0x473e27` 那一组出口）。
@@ -618,16 +619,16 @@ impl Match {
     /// 0x473e01  cmp qword [rdi+0x10], 5 / jb 0x473e1e  ; ⑦ 本局名字长度 < 5 ⇒ 直接开局
     /// 0x473e0c  xor ecx,[rax] vs 0x6576654c           ;    否则比前 5 字节 "Level"
     /// 0x473e17  xor eax,0x6c  (= 'l') / je ret        ;    以 "Level" 开头 ⇒ 不在这里开局
-    /// 0x473e1e  … 0x473e22 jmp 0x474490               ; ⑧ 尾调用 setup_and_start_game
+    /// 0x473e1e  … 0x473e22 jmp <setup_and_start_game> ; ⑧ 尾调用（0x473e22 是那条 jmp 自己）
     /// ```
     ///
     /// 语义复述（**观测**）：**只有不在战役关卡里（局名不以 `Level` 开头）且所有玩家都发过
-    /// `-skip` 时才开局**；战役关卡靠 `setup_and_start_game`（`0x474490`）走自己那条路。
+    /// `-skip` 时才开局**；战役关卡靠 `setup_and_start_game` 走自己那条路。
     ///
     /// ⚠️ **两处未定，写在这里不许当结论**：
-    /// ① 数据 `+0x11c` 那一位的语义（读点 6 处、写点身份未定，见 §139.6）；
-    /// ② `setup_and_start_game`（`0x474490`）本体尚未落码 ⇒ 本函数只返回判决，
-    ///    不真的开局（§139.5 遗留 2）。
+    /// ① 数据 `+0x11c` 那一位的语义（读点 6 处、写点身份未定，见 §140.6）；
+    /// ② `setup_and_start_game` 本体尚未落码（见 §140.5 遗留 2）⇒ 本函数只返回判决，
+    ///    不真的开局（§140.5 遗留 2）。
     pub fn handle_chat_message(
         &mut self,
         bits: &mut ManagerBytes,
@@ -1485,7 +1486,7 @@ impl LevelRules {
 }
 
 // ---------------------------------------------------------------------------
-// 8. `docs/06` §139 落码函数的**单测**（期望值全部来自反汇编，不是来自我方输出）
+// 8. `docs/06` §140 落码函数的**单测**（期望值全部来自反汇编，不是来自我方输出）
 //
 // 每条测试的注释都写了"期望值从哪条指令来"。凡是判据只有一半证据的，
 // 测试只钉**有证据的那一半**，另一半在函数文档里标 `缺：…`。

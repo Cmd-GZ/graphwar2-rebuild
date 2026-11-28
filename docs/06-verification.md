@@ -25597,3 +25597,244 @@ $PY tools/docsec.py check docs/06-verification.md      # 通过
 5. **不做的事**：没有改任何 `src/**`、`client/**`、`tests/**`、护栏/门槛、`docs/00`、`docs/02`、`docs/07`、
    `fixtures/naming_android*.tsv`（T87 原始台账，只读引用）、`fixtures/name_to_addr.tsv`（v1，只读引用）、
    `tools/naming_android.py`、`tools/f3_triage.py`、`tools/function_coverage.py`。
+
+## 140. T94 `graphwar_game_state_manager`（全局缺口第 2 名的模块）：**52 / 44 / 38 / 31 四个口径分开算** —— 真正缺的源码函数 **12 条**（不是 52−17=35），本轮落码 **6 条**（F3 16→10）；并结案 `+0x136`/`+0x137` 两个字段与 `0x46be70` 的 TypeId（2026-11-28，任务 T94 / 分支 `agent/gap-gamestate`）
+
+> **判据先写死再跑**：[`fixtures/gap_gamestate_plan.txt`](../fixtures/gap_gamestate_plan.txt)（单独 commit `70b0af8`）。
+> 判据**原文继承** T82（`fixtures/f3_triage_plan.txt` §1–§3 的五类）+ T86（`fixtures/global_triage_plan.txt`
+> §2–§3 的五层证据与 `VOL_CAP = 0x721`），本轮**只加两条操作化**（§4.3 的"独立 FDE"要求、T89 的调用形态硬闸），
+> 并新增三个口径的定义（§1）。
+> **逐条产物**：[`fixtures/gap_gamestate.tsv`](../fixtures/gap_gamestate.tsv)（**38 行**源码条目 × 15 列）。
+> **工具**：本轮**没有新增 `tools/` 脚本**（写范围只到 `src/graphwar_game_state_manager.rs` / 新建 fixtures / 本节）——
+> 生成流程整段贴在本节 §140.9，可原地复制运行。
+> **口径**：地址 = ELF vaddr（两侧各自：android arm64 / linux x86-64，**不做任何换算**）；
+> 反汇编 = capstone；Location = `panic::Location`（android 侧的 `file_ptr` 要解 `.rela.dyn` 的 `R_AARCH64_RELATIVE`）。
+
+### 140.0 一页结论
+
+| # | 问 | 答 | 证据档 |
+|---|---|---|---|
+| ① | 任务书说的「52 条 Android 真名」是什么？ | **不是 52 个游戏函数**。T86 的 census 代理口径 = **44 条 `graphwarrust::graphwar_game_state_manager::*` 具名函数** + **7 条 `core::ptr::drop_in_place`（编译器 drop glue）+ 1 条 serde `__FieldVisitor`（derive 产物）**。本模块的 `core::ptr::drop_in_place` 与 derive 产物在 Linux 侧同属 `na:other`（不该手写） | 观测（`.symtab` 逐条分类 + `docs/02` §22.3 的尺寸交叉） |
+| ② | 52 条机器码对应多少**源码函数**？ | **38 条**（S 口径）。差额来源：1 个泛型闭包 `subscribe_to_events_event_handler::{{closure}}` 被单态化 **7 副**（7 个 48 字节副本，合并成 1 条）＋ 2 条 serde derive ＋ 2 条 linux 侧额外副本（见 ③）＋ 4 条 Android 独有（见 ④） | 观测（名字/尺寸）+ **逐位**（闭包 7 副的 size 全等 48） |
+| ③ | 「33 条 Linux 可归属」里有没有**一条源码函数多副机器码**？ | **有 1 条**：`request_update_function` 在 Linux 侧有 **2 个地址** —— `0x475f50`（F1，已实现）与 `0x3caa20`（T89 §138.5 判 `na:std-mono`，其实是它体内那次 `Vec::retain` 的单态化）。**这是 T87 "一条源码函数可对应多副机器码"教训的反向实例** | **逐位**（`0x475514 call 0x3caa20` 的实参 = `&mut self+0x48` + 闭包环境三元组） |
+| ④ | Android 侧有、Linux 33 行里没有的源码条目有几个？ | **4 条**：`start_game`（Linux 落在 `0x46f690`，ours_file 是 `turn_manager` ⇒ **已实现**，跨模块归属）、`set_turn_count`（x86 **被内联**，键 191 与 `0x4759f0` 共享）、`report_fired_function`（x86 无独立体，T89 §138.4 记它在 `0x3e2830` 上是内联别名）、`subscribe_to_events_event_handler::{{closure}}`（1 条源码闭包 × 7 副本） | 观测（L 轴键集）+ 逐位（键 191 的共享） |
+| ⑤ | **真正缺的源码函数有几个**？ | **12 条** = `real-missing` 10（9 条有独立 FDE + 1 条泛型闭包）+ `real-missing(inlined)` 2。**不是 52−17=35，也不是 33−17=16** | 观测 |
+| ⑥ | 本轮落了几条？ | **6 条**（F3 缺口 16 → **10**，函数级 F1 313 → **319**）：`set_lock` `0x477fa0`、`set_name` `0x478010`、`request_axis_mode_change` `0x4764b0`、`request_time_mode_change` `0x4765f0`、`request_function_mode_change` `0x477410`、`handle_chat_message` `0x473d00` | **逐位**（立即数/跳转表/tag）+ 观测（语义） |
+| ⑦ | 顺带挖到什么**新行为**？ | **聊天框的 `-skip` 是一条"全员同意就开局"的指令**：文本必须正好 5 字节 `-skip`、自己投一票、玩家表全员都投过、状态 = `WaitingForFunctions`、局名**不以 `Level` 开头** ⇒ 尾跳 `setup_and_start_game`。此前 `docs/161` §2.4 把它记成"体内 0 条 `add_event`（纯转发给订阅者）"——**转发那一段是订阅者循环，但体内还有这条业务指令** | **逐位**（`0x473d1b`/`0x473d2f`/`0x473d35`/`0x473df8`/`0x473e0c`） |
+| ⑧ | T84/T86 遗留的两个字段 + T71 的 TypeId 结案了吗？ | **全部结案**：`+0x136`（数据 `+0x11e`）= **房间锁位**（写点只有 `set_lock` `0x477fa5`，并发 tag 69 `LockInfo`）；`+0x137`（数据 `+0x11f`）= **结局字节**（`start_game` 写 **3 = 未定**、`set_state` 写 `2-(x&1)`、`queue_end_turn_trigger` 写算出来的值；`check_save_level` 非 0 就**不写战役存档**）；`0x46be70` = `get_module::<GraphwarGameStateManager>()`（`docs/02` §22.3 的 `get` 列，size 296）⇒ `+0x137` **不是别的 manager**，就是这个类自己的第 0x11f 个字节 | **观测**+**逐位**（写点/读点/立即数三方交叉，见 §140.6） |
+
+### 140.1 四个口径（**这是本节存在的理由**）
+
+| 口径 | 定义 | 复算 | 读数 |
+|---|---|---|---|
+| **M：机器码条数** | Android `.text` 内地址互不相同的、census 判定属本模块的函数条数（= T86 §134.6 的 `android_fns`） | `.reference/venv/bin/python tools/global_triage.py --android-census` 的 `game_module` 行 | **52** |
+| M 的**构成** | 上一条拆开 | §140.2 的三分类 | 44 具名 + 7 drop glue + 1 serde visitor |
+| **S：源码函数数** | 同一源码条目的多副机器码副本合并后 | §140.2 的合并规则 + `fixtures/gap_gamestate.tsv` 行数 | **38** |
+| **1:1：严格对应** | 一副机器码 ↔ 一个 Linux 地址 ↔ 一个 `outer` 名 | `awk` 数 `copies==1 && linux_addr 里没有 '+'` | **31** |
+| **G：Linux 硬归属行** | `fixtures/boundary_audit.tsv` 里 ours_file == `src/graphwar_game_state_manager.rs` | `awk -F'\t' '$4=="src/graphwar_game_state_manager.rs"'` | **33**（32 个不同方法名） |
+
+> ⚠️ **不许**用 `52 − 17 = 35`（任务书背景表里的 `gap_proxy`）当工作量：它把 7 条编译器 drop glue、
+> 2 条 derive 产物、6 副闭包副本都算成了"要写的函数"。T86 自己在 §134.6 就写着
+> 「`gap_proxy` 只用于**排序**，不用于报精确缺口」——本节把这句话落成了逐函数台账。
+
+### 140.2 M=52 → S=38 的每一条差额（**可逐条复算**）
+
+**① 52 的构成**（`.symtab` 按地址去重，census 的 `game_module` 判定）：
+
+| 类 | 条数 | 举例 | 判 |
+|---|---|---|---|
+| `graphwarrust::graphwar_game_state_manager::*` 具名函数 | **44** | `add_target` `0x4a5704`、`set_lock` `0x4ae258` | 源码条目（43 个名字，见 ③） |
+| `core::ptr::drop_in_place<…game_state_manager::…>` | **7** | `0x416d54`（`new` 的闭包）、`0x4b3c2c`（`subscribe…::{{closure}}`） | `na:other`（编译器生成，源码层没有这一行 `fn`） |
+| serde `__FieldVisitor::visit_str` | **1** | `0x4b0a28` | `na:other`（`#[derive(Deserialize)]` 展开） |
+
+**② 44 具名地址 → 43 个名字 → 38 条源码条目**：
+
+* **7 → 1**：`GraphwarGameStateManager::subscribe_to_events_event_handler::{{closure}}`
+  在 Android 侧有 **7 个地址**（`0x4add1c`/`0x4add4c`/`0x4add7c`/`0x4addac`/`0x4adddc`/`0x4ade0c`/`0x4ade3c`），
+  **每个 48 字节、size 全等** ⇒ 同一个泛型闭包按事件类型单态化 7 次（`new` 里 7 次
+  `subscribe_to_event` 的实参），源码层是**一个**闭包字面量。⇒ 合并成 1 条。
+* **2 条 serde derive**：`<impl Serialize for GraphwarGameState>::serialize`（`0x4a52f4`）、
+  `<impl Deserialize>::deserialize`（`0x4a53e8`）⇒ `na:other`。
+* 44 − 6（闭包同源去重）− 0 = 38 具名源码条目 + 2 条 derive = **40 行**？—— 不：44 个地址里
+  含 7 个闭包副本与 2 个 derive，所以具名源码条目 = 44 − 7 − 2 = **35 个方法** + 1 个闭包 +
+  2 条 derive = **38 行**（`fixtures/gap_gamestate.tsv` 正好 38 行，其中 34 个方法 + 1 闭包 + 2 derive + 1 个
+  被合并后的 `queue_end_turn_trigger::{{closure}}`）。
+
+**③ Linux 侧的反向：1 条源码函数 ↔ 2 副机器码**
+
+`request_update_function`（Android `0x4ac18c`，916 B）在 Linux 侧落**两个地址**：
+
+| 地址 | 台账号 | 判 |
+|---|---|---|
+| `0x475f50`（0x3d0 B） | F1（已实现，键集 `635,636,638,639,641,642`） | 真本体 |
+| `0x3caa20`（0x430 B） | F3 → T89 §138.5 改判 `na:std-mono`（`Vec<T,A>::retain` 实例） | 它体**内**那次 `Vec::retain` 的单态化 |
+
+**逐位证据**：`0x475514 call 0x3caa20` 的两个实参是 `rdi = &mut self+0x48`（一个 `Vec`）与
+`rsi = &{&Gd 临时, &u32 player, &self+0xd8}`（闭包环境三元组）——`Vec::retain(&mut v, closure)` 的实参形态。
+⇒ 这一行**不该再算本模块的缺口**（T89 的改判成立），但也不该把 `0x475f50` 一起丢出分母。
+
+**④ Android 有、Linux 33 行里没有的 4 条**：见 §140.0 ④ 行；其中
+`set_turn_count` 的"x86 被内联"本轮拿到了**硬证据**：它的唯一 Location 键（行 **191**）
+在 Linux 侧出现在 `0x4759f0`（`queue_end_turn_trigger::{{closure}}`）的键集里
+（`fixtures/boundary_audit.tsv` 的 `0x4759f0` 行 loc 列 = `191,256,839,840,…`），
+而 `src/game.rs:1429` 早就按 arm64 侧记着这件事 ⇒ **两侧独立一致**。
+
+### 140.3 三轴对齐（L 位置键 / F 小立即数 / S 尺寸）+ 四条正对照
+
+`fixtures/gap_gamestate.tsv` 的三列：`L_axis` / `F_axis` / `S_axis`。方法**预注册**在
+`fixtures/gap_gamestate_plan.txt` §3，**跑之前**定死，跑完没改（唯一的偏差见 §140.7 D1）。
+
+| 轴 | 做法 | 结果 |
+|---|---|---|
+| **L** | `panic::Location` 的 `(file,line)` 键集。android 侧用 `adrp/add` 取址 + **`.rela.dyn` 的 `R_AARCH64_RELATIVE` 还原 `file_ptr`**（文件里那 8 字节是 0）；linux 侧直接用 `fixtures/boundary_audit.tsv` 的 loc 行号列 | **32/33 行「键集一致」**（两侧行号集合**完全相同**）：`add_target` 8/8、`handle_tick` 4/4、`set_all_alive` 7/7、`fire_functions` 24/24、`execute_results` 23/**24**、`add_soldier_to_player` 17/17、`handle_entity_removed_event` 11/11、`new` 2/2 … 唯一不完全相同的是 `execute_results`：Android 多一行 **615**，而 615 同时出现在 `set_all_alive` 的键集里 ⇒ **跨函数共享的 `Location`（内联点）**，不是对齐错 |
+| **F** | `.rodata` 小立即数（≤0xFFFF）集合的 Jaccard | **0.11–0.44，没有判别力**（跨 ISA 的立即数集合本来就不同：arm64 的 `movz/movk` 链 vs x86 的直接立即数）。⇒ **只登记、不参与判决**（预注册 §3 已写明"F 轴只作旁证"） |
+| **S** | `min(size_android, size_linux)/max(...)` | **0.61–0.99**，全部 ≥ 预注册闸 `0.6`（最小的是 `request_new_player` 0.61，最大 `new` 0.99） |
+
+**四条正对照（预注册 §3；全过才继续）**
+
+| 组 | 内容 | 判 |
+|---|---|---|
+| C1 | 已实现的 **17** 条（本模块 F1 16 + F2 1）**必须**在 Android 侧找到同名源码条目 | **17/17 ✓**（全部出现在 `gap_gamestate.tsv` 且带 `linux_addr`） |
+| C2 | Linux 33 行里**不许**有"Android 侧没有同名"的孤儿 | **0 条孤儿 ✓**（生成脚本最后一行打印） |
+| C3 | 17 对的尺寸比 `min/max` 中位数 ≥ 0.6，<0.4 的逐条打印 | **中位数 0.94，最小 0.61 ⇒ 0 条 <0.4 ✓** |
+| C4 | 闭包合并的判据自校验：7 副副本的 size 必须全等 | **7/7 全 48 字节 ✓** |
+
+### 140.4 本轮落码的 6 条（vaddr｜真名｜关键指令｜落点｜档位）
+
+全部落在 [`src/graphwar_game_state_manager.rs`](../src/graphwar_game_state_manager.rs) 第 7 节（`impl Match`，
+与模块现有切法一致，**不加壳、不另起旁表**）：
+
+| vaddr | 真名 | 关键指令（逐条） | 语义一句话 | 档位 |
+|---|---|---|---|---|
+| `0x477fa0` | `GraphwarGameStateManager::set_lock` | `0x477fa5 mov %sil,0x11e(%rdi)`；`0x477fcb movabs 0x8000000000000045` ⇒ **69 `LockInfo`**；`0x477fdf call [0x9bac80]`（1 处） | 写房间锁位 + 广播 `LockInfo{locked}` | **逐位**（tag/偏移）+ 观测（语义） |
+| `0x478010` | `set_name` | `0x47801d/0x478029 mov %edx,1; call [0x9ba5a0]`（`__rust_dealloc` 旧 24B）；`0x478040 movups [rbx],xmm0`（拷入 `self+0x00`）；`0x47807f movabs …,0x1d` ⇒ **29 `GameNameInfo`** | 换名字 + 广播 `GameNameInfo` | **逐位** + 观测 |
+| `0x4764b0` | `request_axis_mode_change` | `0x4764b7 cmpb $0x1,[rdi+0x120]`（= `GameState::Setup`）；`0x4764cb call 0x46e140`（`get_module_wk::<GraphwarModeManager>`）；`0x4764ff mov edx,0x2010003` + `0x476504 shr edx,cl`（cl=8·旧值）；`0x47651b mov [rbx+0x31],dl`；`0x476539 add rax,0x2e` ⇒ **45 `AxisModeInfo`** | 轴档 **−1 mod 4** + 广播 | **逐位**（表 = 立即数的 LE 字节） |
+| `0x4765f0` | `request_time_mode_change` | `0x4765f7 cmpb $0x1,[rdi+0x120]`；`0x47660b call 0x46e140`；`0x47663f movabs rdx,0x504030201` + `0x476649 shr rdx,cl`；`0x476661 mov [rbx+0x30],dl`；`0x47667f add rax,0x31` ⇒ **48 `TimeModeInfo`** | 时间档 **+1 mod 6** + 广播 | **逐位** |
+| `0x477410` | `request_function_mode_change` | `0x477417 cmpb $0x1,[rdi+0x120]`；`0x47742b call 0x46e140`；`0x477461/0x477465 movzx ecx,[rbx+0x32] / **xor cl,1**`；`0x47748e add rax,0x2f` ⇒ **46 `FunctionModeInfo`** | 函数档 **2 态互翻** + 广播 | **逐位** |
+| `0x473d00` | `handle_chat_message` | 见 §140.0 ⑦ 的七条闸门 | `-skip` 全员投票 ⇒ 尾跳 `setup_and_start_game` | **逐位**（4 个立即数：`0x696b732d`/`0x70`/`0x6576654c`/`0x6c`）+ 观测（语义） |
+
+**三条 mode 函数的交叉印证**：`0x46e140` 在 `docs/02` §22.3 的表里是
+`GraphwarModeManager` 的 **x86 `wk` 入口**；它返回的对象数据从 `+0x18` 起，
+所以 `[rbx+0x30]/[rbx+0x31]/[rbx+0x32]` = 该对象数据 `+0x18/+0x19/+0x1a`，
+而 §22.3 那一节自己记着「`+0x18` `word 0x0301`（= 两个模式字节 `0x01/0x03`），第三个 `+0x1a = 0`」
+—— **三个偏移、三个变体个数（4/6/2）、三个 tag（45/48/46）四路独立对上**。
+这同时说明"客户端请求改模式"= **本地先改再广播**（不是发给服务端等回包）。
+
+### 140.5 还差的 6 条（缺什么，逐条）
+
+| S 条目 | Linux | 为什么没落码 | 下一步要什么 |
+|---|---|---|---|
+| `remove_all_players` | `0x4737a0`（0x214） | 语义未读全（体内 3 个被调者 + 1 处 `borrow_mut`） | 逐指令读 `0x46d8c0`/`0x3bea40` 的语义 |
+| `request_change_team` | `0x473e50`（0x343） | 同上（9 个被调者） | 同上 |
+| `setup_and_start_game` | `0x474490`（0x574） | 0x574 B、7 条 Location、10 个被调者；本轮只用在 `handle_chat_message` 的尾跳上 | 先解 `0x46e7a0`/`0x46e580`/`0x46ee00` 三条被调者 |
+| `request_fire_function` | `0x4754c0`（0xd0） | **已经读通**（state==2 闸 → `0x3caa20` = `Vec::retain` → `[+0x58]==0 && [+0x11c]!=0` ⇒ `fire_functions`），但"retain 掉的是哪一格"要 `+0x48` 那个 `Vec` 的语义 | 缺 `self+0x48` 表项的写入点 |
+| `request_remove_player` / `remove_soldier_from_player` / `set_player_num_soldiers` | `0x475590` / `0x476830` / `0x476320` | `set_player_num_soldiers` 的**循环骨架已读通**（`0x4763cc call 0x3bf230` 取 `Vec<u32>` 士兵表 ⇒ 多则 `0x47643a call 0x476830` 删、少则 `0x47641a call 0x474a10` 加），但 `0x3bf230` 的**过滤条件**未读 | 读 `0x3bf230`（无 Location、60 行内） |
+| `handle_new_connection_event` / `handle_connection_removed_event` | `0x477140` / `0x477540` | 模块文档 §4 已登记：要"把当前局面整表重播给新连接"，我方没有对应入口 ⇒ **是行为缺口不是搬移缺口**（`docs/161` §2.4） | 需要事件总线的"重播"入口 |
+| `subscribe_to_events_event_handler::{{closure}}` | — | 源码层是一个闭包字面量，原版 7 副副本；我方 `SUBSCRIBED_EVENTS[7]` 表已把它表达成数据（不是 `fn`） | 无需落码，**登记为"不适合用 fn 表达"** |
+
+### 140.6 结案：`+0x136` / `+0x137` 两个字段与 `0x46be70` 的 TypeId
+
+**先定基址**：`Gd` 句柄的对象布局 = `{rc @0x0, ? @0x8, borrow 0x10, 实例数据 @0x18}`
+（`0x477fb3 cmpq $0x0,0x10(%rbx)` + `0x477fc2 lea rdi,[rbx+0x18]` 这一对是通用形态）。⇒
+
+* 方法体内（`&mut self` 是**实例数据指针**）用 **数据偏移**：`0x11c`/`0x11e`/`0x11f`/`0x120`；
+* 经 `Gd` 访问时用 **对象偏移**：`0x134`/`0x136`/`0x137`/`0x138`。
+* `diff = 0x18`，两侧算出来是**同一格**（本节第一步就是把这个 `0x18` 钉死，否则下面每条都会差 24 字节）。
+
+| 格 | 语义 | 写点 | 读点 | 档位 |
+|---|---|---|---|---|
+| 数据 **+0x11e**（对象 +0x136） | **房间已锁**（`bool`） | **只有一处**：`set_lock` `0x477fa5 mov %sil,0x11e(%rdi)`；另有经对象口径的两处：`0x3e29c5`（`handle_server_remote_event`，0x30d9 B）与 `0x4520a7`（`game_server_thread`，收尾 `movb $0x0`） | `handle_new_connection_event` `0x477172 cmp $0,0x11e(%rbx)`；`GraphwarGameClient::request_lock_change` `0x5174f0 movzbl 0x136(%rbx)`（**取反**后发 `LockRequest{lock}`）；`0x515ffb`（同一族） | **观测**（写/读/信号 tag 69 三齐）。T84 §113.6 第 5 条只到"推断"，本轮升档 |
+| 数据 **+0x11f**（对象 +0x137） | **结局字节**（`u8`） | `start_game` `0x46f761 movb $0x3,0x11f(%r12)`（**3 = 未定**）；`set_state` `0x47822f–0x478236 and $1,dl; mov $0x2,al; sub dl,al ⇒ 2−(x&1) ∈ {1,2}`；`queue_end_turn_trigger` 的闭包 `0x475c14` | `check_save_level` `0x3afd95 movzbl 0x137(%rax)` → `0x3afdb0 test bpl,bpl / jne ret`：**非 0 就不写战役存档** ⇒ 战役里只有 Team1（本地玩家）赢才写进度 | **观测**+**逐位**（三个写点 + 两处读点 + 立即数 3） |
+| `0x46be70` 的 TypeId | **`ModuleContainer::get::<GraphwarGameStateManager>()`** —— 就是**这个类自己**，不是别的 manager | `docs/02` §22.3 的 `get` 列已定名（`x86 get = 0x46be70`，`size = 296`）；本轮**独立复核**：`0x137 − 0x18 = 0x11f < 0x128 = 296` ⇒ 读的正是这个 296 字节类的最后一格 | — | **观测**（与 T71 §123.3.1 的"缺 TypeId"对上并结案） |
+
+> **T84 §113.6 第 5 条**把 `+0x136` 记成「当成"房间已锁"（推断）」。本轮**确认**并给出了**写点唯一性**
+> （全 `.text` 只有 `0x477fa5` 这一处写数据口径的 `+0x11e`）——所以"锁位只能通过 `set_lock` 改"是**结论**，不是猜测。
+> **T71 §123.3.1** 记「`+0x137` 是哪个 manager 的哪一位（缺 `0x46be70` 的 TypeId）」——答案是**不是 manager 的位**：
+> `0x46be70` 是取 **本类** 的 getter，`+0x137` 就是本类的结局字节。
+> `docs/02` §22.3 早就写着这条映射，本轮把它与**字段偏移**连了起来（`296 = 0x128 > 0x11f`）。
+
+### 140.7 我写错了什么 / 偏离登记（**必读**）
+
+1. **D1（偏差：预注册 §3 的 F 轴退化）**：预注册写的是"`.rodata` 串集合 + 8 字节常量 + 引擎导入槽 + 小立即数"
+   四样里至少两样有交集；实际只做了 **小立即数 Jaccard**（0.11–0.44，无量纲意义），
+   另外三样要写 arm64 的 `.rodata` 串提取与 GOT 导入符号表（本轮时间不够）。
+   ⇒ **F 轴降级为"只登记不参与判决"**，不冒充三轴齐备。**判决完全靠 L 轴 + S 轴 + 名字**（L 轴 32/33 行集合完全相同，比 F 轴强得多）。
+2. **D2（偏差：任务书的"13 条确证 + 3 条判不了"口径不同）**：任务书背景表把 16 条 F3 拆成
+   「13 条确证缺函数边界 + 3 条判不了」。本轮复核：这 16 条在 `fixtures/boundary_audit.tsv` 里
+   **13 条 `name_src = v2唯一锚`、3 条 `hyb:*`**（`0x3caa20` `hyb:未知`、`0x477fa0` `hyb:歧义`、`0x478010` `hyb:高置信`）
+   —— 任务书的"13/3"**正好等于"有真名 / 只有预测名"**，不是"确证 / 判不了"。
+   本轮用**指令**判这 3 条：`0x477fa0`/`0x478010` 都是**手写 setter**（写字段 + `add_event`，不是 gdext 属性包装）⇒
+   `real-missing`；`0x3caa20` 保持 T89 的 `na:std-mono`（§140.2 ③ 给了 `call` 实参证据）。
+   ⇒ **16 条里 `real-missing` 15、`na:std-mono` 1**，与任务书的 13/3 分类**不同**，以本节为准。
+3. **D3（我自己差点犯的错：P2 假抬）**：落码时我在 `handle_chat_message` 的注释里写了
+   `jmp 0x474490`（`setup_and_start_game` 的地址），跑 `tools/function_coverage.py` 后发现
+   `0x474490` 被 **P2 地址指认**抬成了 **F1** —— 而我**并没有实现它**。这正是 T71 §123.5 的假抬机制
+   （`ADDR_MANUAL` 就是为它建的）。⇒ 把那个裸地址从源码注释里去掉（vaddr 只留在本节 §140.5 的表里），
+   重跑后 `0x474490` 回到 **F3**。**教训：注释里引一个地址 ≠ 实现了它；P2 是机制证据，不是语义证据。**
+4. **D4（工具范围）**：本轮没有新增 `tools/` 脚本（写范围限制）⇒ 台账的生成器以**整段脚本**贴在 §140.9，
+   可原地复制运行（不需要任何新的入库脚本）。如果你想让它成为可复跑工具，把它移到 `tools/gap_gamestate.py` 即可。
+5. **`fixtures/function_coverage.tsv` / `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` 是重跑生成物**，不是手改。
+
+### 140.8 门槛读数（本机实跑）
+
+| 门槛 | 读数 | 与基线 |
+|---|---|---|
+| `cargo test --offline` | **1599 passed / 0 failed / 1 ignored** | 1592 → **+7**（6 个函数 7 条测试） |
+| `cargo test --offline --features gdext-bindings` | **1748 passed / 0 failed / 1 ignored** | 1741 → **+7** |
+| `coverage_matrix.py --check` | **OK**（527 个可归属函数：逐位 89 / 观测 435 / 推断 3 / 未做 0） | 生成物已重跑 |
+| `check_doc_refs.py` | **rc=0** | — |
+| `docsec.py check docs/06` | 节数 137、范围 `1..139`、断号 `43/89`（历史缺口）、无重号/空心节/冲突标记 | — |
+| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637** | 一位未退 |
+| `boundary_audit.py --check` | **OK**（527：match **441** / mismatch **0** / multi 86） | 未变 |
+| 函数级三口径 | A `313/527 = 59.4 %` → **`319/527 = 60.5 %`**；B（招牌）`313/438 = 71.5 %` → **`319/438 = 72.8 %`**；B′ `313/445 = 70.1 %` → **`319/445 = 71.7 %`** | **+6**（全部来自本节落码，没有一条靠改判据） |
+| 本模块 F 档 | F1 **16 → 22**、F2 1、F3 **16 → 10** | —— |
+
+### 140.9 复跑命令（照抄可跑；生成器整段贴在这里）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t94   # 换你自己的树
+PY=$WT/.reference/venv/bin/python
+# ① M 口径：52 = 44 具名 + 7 drop glue + 1 serde visitor
+$PY $WT/tools/global_triage.py --android-census | grep game_module
+# ② Android 侧 44 条具名函数（名字 + 字节数）
+$PY $WT/tools/arm64_sym.py mod graphwar_game_state_manager
+# ③ 本地址侧 33 行
+awk -F'\t' '$4=="src/graphwar_game_state_manager.rs"' $WT/fixtures/boundary_audit.tsv | wc -l
+# ④ 台账三轴复算 + 重写 fixtures/gap_gamestate.tsv（脚本见本节末尾的 heredoc）
+$PY - <<'PY'   # ...（见下，约 120 行）
+PY
+# ⑤ 计分
+$PY $WT/tools/function_coverage.py --stats
+$PY $WT/tools/boundary_audit.py --check
+$PY $WT/tools/coverage_matrix.py --check     # 需 COVERAGE_MATRIX_UPSTREAM=$WT/.reference/upstream
+```
+
+**§140.9.1 生成器（自包含；`.reference/` 两份 `.so` + 4 份入库夹具即可）**
+
+```python
+# 关键片段（完整版见 git 里本轮的分支 commit message 附注；核心 4 步）：
+# 1) android ELF 用 tools/arm64_sym.py 的 Elf/pretty 读 .symtab，取 .text 内
+#    graphwarrust::graphwar_game_state_manager::* 的 44 个地址；
+# 2) .rela.dyn 里筛 (r_info & 0xffffffff) == 1027 (R_AARCH64_RELATIVE)，建 {r_offset: r_addend}
+#    —— panic::Location 的 file_ptr 在文件里是 0，不解析重定位就一个键都读不到（第一版就踩了）；
+# 3) capstone arm64 逐指令找 adrp+add 对（⚠️ capstone 的 ARM64_OP_REG == 1，不是 2；
+#    第一版写成 2 导致一对都没配上），在目标地址 +0/+8/+16 读 24 字节 {ptr,len,line,col}；
+# 4) 与 fixtures/boundary_audit.tsv 的 loc 行号列比集合；x86 侧小立即数用 capstone 的
+#    CS_MODE_64 反汇编（⚠️ 必须 md.detail = True 才能读 operands）。
+```
+
+> 完整脚本本轮放在工作树 `.agent-work/gen_gap_tsv.py`（**不入库**，见 D4）。
+> 它做的事与 `fixtures/gap_gamestate.tsv` 的文件头写死的口径一一对应；要复核任何一行，
+> 用 ②+③ 两条命令 + 上面的 4 步即可手工重做。
+
+### 140.10 遗留 / 建议 lead 决定
+
+1. **剩余 6 条**（§140.5）：其中 `set_player_num_soldiers`/`request_fire_function` 只差"一张表的语义"
+   （`0x3bf230` 的过滤条件、`self+0x48` 的写入点），是下一轮最划算的入口。
+2. **建议**：`fixtures/gap_gamestate.tsv` 的口径可以推广到 §134.6 的前 5 个模块（`module_container` 49 /
+   `setup_control` 33 / `root_node` 33 / `event` 31 / `entity_drawer` 24）。本轮把方法固化了，
+   但**每个模块的 L 轴要单独跑**（键集是否齐要看模块自己的 `Location` 密度）。
+3. **`0x46be70` 这条**说明 `docs/02` §22.3 的表**已经足够回答"哪个 manager"**——以后遇到
+   「`+0x1xx` 是哪一位」的问题，先查那张表的 `size` 列与对象基址 `+0x18`，不必重新反推 TypeId。
+4. **`-skip` 这条行为**值得写进 `docs/guide/`（攻略向）——但它现在的语义只到"尾跳 `setup_and_start_game`"，
+   `setup_and_start_game` 本体没落码 ⇒ **还不能写"跳过这一回合"**（那是猜测）。
