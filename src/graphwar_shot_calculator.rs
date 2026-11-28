@@ -235,8 +235,7 @@ mod tests {
 /// ⚠️ 2026-11 之前这里是写死的 `format!("{} + {:.3}", …)`：`c < 0` 时会发出
 /// `" + -3.686"`，真机从没这么写过（`docs/127` §5 第 1 条、§2.1 第 3 条）。
 pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
-    let toks = crate::math_function::parse(text);
-    format!("{}{}", text, correction_text(&toks, x0, y0, flip))
+    GraphwarShotCalculator::calculate_corrected_function(text, x0, y0, flip)
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +249,8 @@ pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
 // | 原版函数 | Android 2.0.60 arm64 `.symtab`（未 strip） | Linux x86-64 `.eh_frame`（`addr_probe fde` 现取） |
 // |---|---|---|
 // | `calculate_function` | `0x3b5374`, 1020 B | `0x3c2530`..`0x3c2bb9`（0x689） |
-// （另两条 `calculate_corrected_function` / `calculate_function_offset_str` 在下一个 commit 落。）
+// | `calculate_corrected_function` | `0x3b79a8`, 712 B | `0x3c5c50`..`0x3c5f68`（0x318） |
+// | `calculate_function_offset_str` | `0x3b7c70`, 744 B | `0x3c5f70`..`0x3c62a7`（0x337） |
 //
 // 跨构建配对的三条独立链（**观测**，判据见预注册 §2.1）：
 //  1. **相邻性**：Android `0x3b5374 + 1020 = 0x3b5770` = `calculate_shot_results` 的起始；
@@ -295,8 +295,173 @@ impl GraphwarShotCalculator {
     ) -> Vec<(f64, f64)> {
         calculate(tokens, x0, y0, step, flip, mode)
     }
+
+    /// `GraphwarShotCalculator::calculate_function_offset_str`（Linux **`0x3c5f70`** / arm64 `0x3b7c70`）
+    ///
+    /// 右下角那行修正量的文本：`" + 0.591"` / `" - 1.000"` / `" + NaN"` / `" + -0.000"`
+    /// （前缀 **3 字节** `" + "` 或 `" - "` + `{:.3}` 格式化的数）。
+    ///
+    /// 指令锚（x86-64 Linux）：
+    ///  * `0x3c5ffd call *[0x9bacf8] -> 0x4ed670` ⇒ 先用 `MathFunction::new` 解析文本
+    ///  * `0x3c6003 movsd xmm0,[r14]` + `0x3c600d xorpd xmm0,[0x19e690]` ⇒ `flip` 时 `Point.x` 取反
+    ///  * `0x3c602a call 0x4eb9d0` ⇒ 求值器算 `f(±x0)`（`xmm1=y=0`、`xmm2=dy=0`）
+    ///  * `0x3c602f movsd xmm1,[r14+8]` + `0x3c6035 subsd xmm1,xmm0` ⇒ **`c = y0 - f(±x0)`**
+    ///  * `0x3c6043 ucomisd xmm0,xmm1` + `0x3c6047 jbe 0x3c6100` ⇒ **`0.0 <= c` 走 `+`**
+    ///    （NaN 时 `ucomisd` 置 CF=ZF=1，`jbe` 也走 `+` —— 所以 NaN 打印 `" + NaN"`）
+    ///  * `0x3c604d andpd xmm1,[0x19c050]` ⇒ 负数分支取绝对值（`0x19c050` = 符号位掩膜 `7fff…ffff`）
+    ///  * `0x3c60b8 mov byte [rax+2],0x20` + `0x3c60bc mov word [rax],0x2d20` ⇒ 分配 3 字节前缀
+    ///    `" - "`；`+` 分支同形，`word = 0x2b20` = `" + "`
+    ///  * `0x3c6125 call *[0x9ba718] -> 0x91ded0` ⇒ `core::fmt`（`` 的格式说明在 `.rodata 0x19f3c8`）
+    pub fn calculate_function_offset_str(text: &str, x0: f64, y0: f64, flip: bool) -> String {
+        // `c = y0 - f(±x0)`（与 `correction()` 同一条算式，故直接复用）
+        let c = correction(&crate::math_function::parse(text), x0, y0, flip);
+        // 分支极性照抄 `ucomisd 0.0, c` + `jbe`：`c` 不小于 0（含 NaN、含 -0.0）都走 `+`
+        if c < 0.0 {
+            format!(" - {:.3}", -c)
+        } else {
+            format!(" + {:.3}", c)
+        }
+    }
+
+    /// `GraphwarShotCalculator::calculate_corrected_function`（Linux **`0x3c5c50`** / arm64 `0x3b79a8`）
+    ///
+    /// = 原文**逐字** + 把原文里**未闭合的 `(`** 用 `)` 补齐 + 修正常数文本。
+    ///
+    /// 指令锚（x86-64 Linux）：
+    ///  * `0x3c5c5e mov r15,rcx` / `0x3c5c61 mov r14,rdx` / `0x3c5c64 mov r12,rsi`
+    ///    ⇒ 入参 = (sret, 文本指针, 文本长度, `&Point`, flip)
+    ///  * `0x3c5c80 inc ebp`（遇 `(` 加深）/ `0x3c5d20 cmp edx,0x29` + `0x3c5d2b test ebp,ebp`
+    ///    + `0x3c5d2d setg dl` + `0x3c5d30 sub ebp,edx` ⇒ 遇 `)` **只在计数 >0 时减**，
+    ///    所以净未闭合数**永不为负**（多余的 `)` 原样留着，前面不会补 `(`）
+    ///  * `0x3c5e1c`..`0x3c5e58` 把原文字节复制进新 `String`
+    ///  * `0x3c5e90` 循环 `0x3c5e97 mov byte ptr [r13+rsi],0x29` ⇒ 每个未闭合的 `(` 补一个 `')'`
+    ///  * `0x3c5d9a call *[0x9bacf0] -> 0x3c5f70` ⇒ 修正常数文本仍按**原文**算
+    ///    （`rsi/r12`、`rdx/r14` 全程没被改写）
+    ///  * `0x3c5dd8` 把 offset 串 `memcpy` 接到补齐后的文本后面
+    ///
+    /// ⚠️ 2026-11-28 之前我方（[`corrected_text`]）只做 `format!("{}{}", text, offset)`
+    /// —— **不会补括号**。真二进制会（本轮值级对拍 `fixtures/denom_drawers_math_truth.tsv`
+    /// 的 `V3-01..V3-07`：`"(x" -> "(x) + 1.000"`、`"(()" -> "(()) + 2.000"`、`"x)" -> "x) …"`）。
+    /// 这是本轮修掉的一处**真实差异**（不是实现风格）。
+    pub fn calculate_corrected_function(text: &str, x0: f64, y0: f64, flip: bool) -> String {
+        // 净未闭合 `(` 数。照 `setg` 的极性：`)` 只在计数 > 0 时才抵一个。
+        let mut depth = 0usize;
+        for ch in text.chars() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // 容量 = 原文 + 待补的 `)` + 常数文本（原程序也是先按原文长度分配再按需扩容）
+        let mut out = String::with_capacity(text.len() + depth + 8);
+        out.push_str(text);
+        for _ in 0..depth {
+            out.push(')');
+        }
+        out.push_str(&Self::calculate_function_offset_str(text, x0, y0, flip));
+        out
+    }
 }
 
+#[cfg(test)]
+mod correction_tests {
+    use super::*;
+
+    /// 真实抓包样本：士兵 234 用 `0.00` 开火，修正文本是 `0.00 + 4.638`。
+    #[test]
+    fn correction_matches_captured_text_234() {
+        let x0 = 1.651220991201045_f64;
+        let y0 = 4.638020825690482_f64;
+        let txt = corrected_text("0.00", x0, y0, false);
+        assert_eq!(txt, "0.00 + 4.638", "抓包里的修正文本");
+    }
+
+    /// 真实抓包样本：士兵 231 用空函数开火，修正文本是 ` + 10.990`。
+    #[test]
+    fn correction_matches_captured_text_231() {
+        let x0 = -19.512760846799154_f64;
+        let y0 = 10.99018276610812_f64;
+        let txt = corrected_text("", x0, y0, false);
+        assert_eq!(txt, " + 10.990", "抓包里的修正文本");
+    }
+
+    /// **符号**的回归：`c < 0` 时运算符是 `" - "`，不是 `" + -"`。
+    ///
+    /// 三条都是原始字节流抓包的**原文**（`docs/127` §2；`start_x/start_y` 取自同一回合的
+    /// `FunctionPoints`）。旧实现（写死 `" + "`）在 182/203 这两条上会给出
+    /// `" + -3.686"` / `" + -11.416"`，真机从没这么写过。
+    #[test]
+    fn correction_operator_carries_the_sign_of_the_constant() {
+        // 帧 182/183：士兵 231（Team1 ⇒ flip=false）空函数 ⇒ c = y0 = -3.6861
+        assert_eq!(
+            corrected_text("", -13.429861913415694, -3.686102115928783, false),
+            " - 3.686",
+            "抓包帧 182"
+        );
+        // 帧 203/204：士兵 233（Team2 ⇒ flip=true）曲线 + 负常数
+        assert_eq!(
+            corrected_text("abs((abs((-0.57+x))+-4.85))", 14.305645069934501, -1.3905063945238432, true),
+            "abs((abs((-0.57+x))+-4.85)) - 11.416",
+            "抓包帧 203"
+        );
+        // 帧 143/144：士兵 230 空函数，同一条链上的另一个负样本
+        assert_eq!(
+            corrected_text("", -8.2808732224322, -3.4200779499591807, false),
+            " - 3.420",
+            "抓包帧 143"
+        );
+        // 正号那一侧照旧（帧 161/162，flip=true）
+        assert_eq!(
+            corrected_text("cos((0.19*(6.70+x)))", 11.962551145879328, 3.7443842094294837, true),
+            "cos((0.19*(6.70+x))) + 3.204",
+            "抓包帧 161"
+        );
+    }
+
+    /// NaN 仍走 `+` 那一侧（`correction_text` 的既有行为，别被上面的符号分支带跑）。
+    #[test]
+    fn correction_keeps_the_nan_branch() {
+        assert_eq!(corrected_text("0.00", 0.0, f64::NAN, false), "0.00 + NaN");
+        assert_eq!(corrected_text("", 0.0, f64::NAN, false), " + NaN");
+        // 正/负两侧的定值（c = 2.000 / -2.000）
+        assert_eq!(corrected_text("0.00", 1.0, 2.0, false), "0.00 + 2.000");
+        assert_eq!(corrected_text("0.00", 1.0, -2.0, false), "0.00 - 2.000");
+    }
+
+    /// 抓到的弹道终点必须落在我们算出的轨迹上（这两发都是水平直线）。
+    #[test]
+    fn captured_shot_endpoints_lie_on_our_trajectory() {
+        // (起点 x, 起点 y, 抓到的终点 x, 终点 y, 是否反向)
+        // 方向由实测确定：第一发向左（flip=true），第二发向右（flip=false）
+        let cases = [
+            (1.651220991201045_f64, 4.638020825690482_f64, -16.405029008797804_f64, 4.638_f64, true),
+            (-19.512760846799154_f64, 10.99018276610812_f64, -12.040885846800286_f64, 10.99_f64, false),
+        ];
+        for (x0, y0, end_x, end_y, flip) in cases {
+            let pts = shot_points("0.00", x0, y0, crate::SERVER_STEP, flip, Mode::Normal, true);
+            assert!(!pts.is_empty());
+            // 水平直线：整条轨迹 y 恒等于修正后的常数
+            let c = y0; // f(x)=0 ⇒ 修正后恒为 y0
+            assert!((pts[0].1 - c).abs() < 1e-9, "起点 y 不符");
+            assert!(pts.iter().all(|p| (p.1 - c).abs() < 1e-9), "应恒为水平线");
+            // 抓到的爆炸点 y 与轨迹一致（抓到的是三位小数）
+            assert!((pts[0].1 - end_y).abs() < 5e-4, "终点 y 与轨迹不符: {} vs {}", pts[0].1, end_y);
+            // 终点 x 必须落在轨迹覆盖的 x 区间内
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for p in &pts {
+                lo = lo.min(p.0);
+                hi = hi.max(p.0);
+            }
+            assert!(end_x >= lo - 1e-6 && end_x <= hi + 1e-6,
+                    "终点 x={end_x} 不在轨迹 x 区间 [{lo}, {hi}] 内");
+        }
+    }
+}
 
 #[cfg(test)]
 mod denom_truth_tests {
@@ -309,8 +474,10 @@ mod denom_truth_tests {
     //!
     //! 覆盖（预注册 `fixtures/denom_drawers_math_plan.txt` §3）：
     //!  * `S1` = `calculate_function`（`0x3c2530`）20 组：点数 + 整条点数组 FNV + 首/末点逐位；
-    //! （`S2S3` = `calculate_corrected_function` / `calculate_function_offset_str` 的 44 组
-    //!  逐字节对拍在下一个 commit 落。）
+    //!  * `S2S3` = `calculate_corrected_function`（`0x3c5c50`）+ `calculate_function_offset_str`
+    //!    （`0x3c5f70`）33 组：两条返回的 `String` **逐字节**（长度 + 内容）相同；
+    //!  * `S2S3-extra` = 本轮读反汇编后**新发现**的行为（未闭合 `(` 补 `)`；`-0.0`/`±inf` 边界）
+    //!    11 组，标注为"不在预注册输入集内"。
     use super::*;
 
     const TRUTH: &str = include_str!("../fixtures/denom_drawers_math_truth.tsv");
@@ -490,5 +657,143 @@ mod denom_truth_tests {
             checked += 1;
         }
         assert_eq!(checked, 20, "S1 真值行数变了（预注册 §3.1 是 20 组）");
+    }
+
+    // ---------------------------------------------------------------- ② 修正量外壳
+    /// `calculate_corrected_function`（`0x3c5c50`）+ `calculate_function_offset_str`
+    /// （`0x3c5f70`）44 组的**逐字节**对拍（`S2S3` 33 + `S2S3-extra` 11）。
+    #[test]
+    fn corrected_function_matches_real_machine_code() {
+        let (cols, rows) = table();
+        let c_sec = col(&cols, "section");
+        let c_case = col(&cols, "case");
+        let t_text = col(&cols, "texts");
+        let t_x = col(&cols, "x");
+        let t_y = col(&cols, "y");
+        let t_flag = col(&cols, "flag");
+        let t_clen = col(&cols, "corr_len");
+        let t_chex = col(&cols, "corr_hex");
+        let t_olen = col(&cols, "off_len");
+        let t_ohex = col(&cols, "off_hex");
+
+        let (mut n_main, mut n_extra) = (0, 0);
+        for row in &rows {
+            let sec = get(row, c_sec);
+            if sec != "S2S3" && sec != "S2S3-extra" {
+                continue;
+            }
+            let case = get(row, c_case);
+            let text = String::from_utf8(hex_decode(get(row, t_text))).expect("UTF-8");
+            let x0 = bits(get(row, t_x));
+            let y0 = bits(get(row, t_y));
+            // 第 4 参在真二进制里按 **bool** 解释（`r8b`；`flag=0x100` 的低字节是 0 ⇒ 不 flip，
+            // 见 V2-14/V2-15）—— 不是 mode。
+            let flip = (get(row, t_flag).parse::<u32>().expect("flag") & 0xff) != 0;
+
+            let corr = GraphwarShotCalculator::calculate_corrected_function(&text, x0, y0, flip);
+            let off = GraphwarShotCalculator::calculate_function_offset_str(&text, x0, y0, flip);
+
+            assert_eq!(
+                corr.as_bytes().len(),
+                get(row, t_clen).parse::<usize>().expect("corr_len"),
+                "{case}: corrected 文本长度与真二进制不一致"
+            );
+            assert_eq!(
+                hex_encode(corr.as_bytes()),
+                get(row, t_chex),
+                "{case}: corrected 文本逐字节与真二进制不一致（{:?}）",
+                corr
+            );
+            assert_eq!(
+                off.as_bytes().len(),
+                get(row, t_olen).parse::<usize>().expect("off_len"),
+                "{case}: offset 文本长度与真二进制不一致"
+            );
+            assert_eq!(
+                hex_encode(off.as_bytes()),
+                get(row, t_ohex),
+                "{case}: offset 文本逐字节与真二进制不一致（{:?}）",
+                off
+            );
+            if sec == "S2S3" {
+                n_main += 1;
+            } else {
+                n_extra += 1;
+            }
+        }
+        assert_eq!(n_main, 33, "S2S3 真值行数变了（预注册 §3.2 是 33 组）");
+        assert_eq!(n_extra, 11, "S2S3-extra 行数变了（本轮追加 11 组）");
+    }
+
+    /// 可读版：真二进制给的三条关键行为（值取自 `fixtures/denom_drawers_math_truth.tsv`）。
+    #[test]
+    fn corrected_function_quirks_from_real_binary() {
+        // ① 原文**逐字**保留（大写/空格都不规范化）：`X^3`, `x ^ 3`, `x^3   `（V2-08/07/09）
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("X^3", 1.0, 0.0, false),
+            "X^3 - 1.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("x ^ 3", 1.0, 0.0, false),
+            "x ^ 3 - 1.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("x^3   ", 1.0, 0.0, false),
+            "x^3    - 1.000"
+        );
+        // ② 未闭合的 `(` 会被补 `)`，多余的 `)` 原样留着（V3-01/02/03/05/06/07）
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("(x", 1.0, 2.0, false),
+            "(x) + 1.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("((x", 1.0, 2.0, false),
+            "((x)) + 1.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("x)", 1.0, 2.0, false),
+            "x) + 1.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("(()", 1.0, 2.0, false),
+            "(()) + 2.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("x(", 1.0, 2.0, false),
+            "x() + 2.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_corrected_function("))x((", 1.0, 2.0, false),
+            "))x(()) + 2.000"
+        );
+        // ③ 边界：`c = -0.0` 走 `+` 分支但把 `-0.0` 原样格式化（V3-08）；
+        //    `±inf` 打印 `inf`（V3-09/10）；NaN 走 `+`（V2-21）
+        assert_eq!(
+            GraphwarShotCalculator::calculate_function_offset_str("0", 1.0, -0.0, false),
+            " + -0.000"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_function_offset_str("x", 1e308, -1e308, false),
+            " - inf"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_function_offset_str("x", -1e308, 1e308, false),
+            " + inf"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_function_offset_str("sqrt(-1)", 1.0, 0.0, false),
+            " + NaN"
+        );
+        // ④ 第 4 参是 **bool**，不是 mode：低字节 0 的 0x100 ⇒ 不反向（V2-14 真值是 `+ 2.402`）
+        assert_eq!(
+            GraphwarShotCalculator::calculate_function_offset_str("sin(x)", 2.5, 3.0, false),
+            " + 2.402"
+        );
+        assert_eq!(
+            GraphwarShotCalculator::calculate_function_offset_str("sin(x)", 2.5, 3.0, true),
+            " + 3.598"
+        );
+        // ⑤ 旧 API 也跟着修好了（之前只 `format!("{}{}")`，不补括号）
+        assert_eq!(corrected_text("(x", 1.0, 2.0, false), "(x) + 1.000");
     }
 }
