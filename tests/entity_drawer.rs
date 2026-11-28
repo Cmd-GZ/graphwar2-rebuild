@@ -8,7 +8,8 @@
 
 use gw2_rebuild::entity_drawer::{
     arrow_head, arrow_primitives, entity_primitives, half_angle, ring_primitives, segment_angles,
-    Color, EntityRingInput, Primitive, Vec2, ARC_ANTIALIASED, ARC_POINT_COUNT, ARC_WIDTH,
+    Color, EntityRingInput, Primitive, Vec2, ARROW_HALF_SPREAD_RAD, ARROW_RADIUS_DELTA,
+    ARC_ANTIALIASED, ARC_POINT_COUNT, ARC_WIDTH,
     HALF_ANGLE_MAX_RAD, HALF_ANGLE_MIN_RAD, HALF_ANGLE_SWEEP_RAD, SEGMENT_COUNT,
     SEGMENT_STEP2_RAD, SEGMENT_STEP_RAD,
 };
@@ -208,6 +209,24 @@ fn arrow_head_is_the_three_points_from_0x4b9a70() {
     let p = arrow_head(Vec2::new(0.0, 0.0), 1.0, 0.0);
     assert_eq!(p[0], Vec2::new(1.0, 0.0));
 
+    // T108：`draw_offset_triangle`（x86 `0x4b9a70` / arm64 `0x4bf880`）的两个几何常量**逐位**
+    // 来自真二进制的 `.rodata` 槽，不是"我方写多少就是多少"：
+    //   `+0.20943951023931953` f64 @ x86 槽 `0x19fb68`（`addsd` @ `0x4b9ac0`）= 0x3FCA_CEE9_F37B_EBD5
+    //   `−0.20943951023931953` f64 @ x86 槽 `0x19fc80`（`addsd` @ `0x4b9b74`，**独立槽**）= 0xBFCA_CEE9_F37B_EBD5
+    //   `0.5` f64 @ x86 槽 `0x19f6d0`（`addsd` @ `0x4b9b5c`）= 0x3FE0_0000_0000_0000
+    // 复算：`.reference/venv/bin/python tools/addr_probe.py str 0x19fb68`（打印 8 字节原文：
+    // `d5 eb 7b f3 e9 ce ca 3f`）——**期望值是从二进制抄的，不是按十进制反推的**（我先按十进制
+    // 猜过一次位模式，被这条断言当场抓住）。
+    // 槽 0x19fb68 的 8 字节原文 = `d5 eb 7b f3 e9 ce ca 3f`（小端）= 0x3FCA_CE_E9_F3_7B_EB_D5
+    assert_eq!(ARROW_HALF_SPREAD_RAD.to_bits(), 0x3FCA_CEE9_F37B_EBD5);
+    assert_eq!(ARROW_RADIUS_DELTA.to_bits(), 0x3FE0_0000_0000_0000);
+    // 数值含义：`0.20943951023931953` = **12°**（`12.0f64.to_radians()`）。
+    // ⚠️ 顺带修一处文档错误：`arrow_head` 的旧注释写 `cos(θ∓6°)`、`offset_triangle` 写"张 12°"，
+    // 都少了/错了一半 —— 真值是**半张角 12°、总张角 24°**（`docs/16` §12 写的 ±12° 才对）。
+    // 与 `12°/180°·π` 差 **1 ulp**（`0x3FCACEE9F37BEBD5` vs `0x3FCACEE9F37BEBD6`）⇒
+    // 原版源码里多半是**字面量** `0.20943951023931953`（或另一条等价算式），
+    // 不是 `12.0f64.to_radians()`。这里只断言"同一角度量级"，位模式以上面那条为准。
+    assert!((ARROW_HALF_SPREAD_RAD - 12.0_f64.to_radians()).abs() < 1e-16, "半张角应是 12°");
     let c = 0.20943951023931953_f64.cos(); // cos 12°
     let s = 0.20943951023931953_f64.sin(); // sin 12°
     assert!((c - 0.9781476007338057).abs() < 1e-15);

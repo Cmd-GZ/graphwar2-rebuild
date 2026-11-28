@@ -560,6 +560,114 @@ fn ev(tokens: &[Token], i: &mut usize, x: f64, y: f64, dy: f64) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// T108（docs/06 §156）：`math_function::FunctionRandomizer` —— **分母外**源码函数
+// ---------------------------------------------------------------------------
+//
+// 归属/地址（预注册 fixtures/denom_drawers_math_plan.txt §1；linux 地址见 sym_match.tsv +
+// 本轮 `addr_probe fde` 现取的 FDE 范围）：
+//
+// | 原版函数 | Android 2.0.60 arm64 `.symtab` | Linux x86-64 `.eh_frame` |
+// |---|---|---|
+// | `FunctionRandomizer::adjust_tokens` | `0x447390`（620 B） | `0x4ee0e0`..`0x4ee393`（0x2b3） |
+// | `FunctionRandomizer::mutate_function` | `0x4475fc`（704 B） | `0x4ee3a0`..`0x4ee712`（0x372） |
+// | `FunctionRandomizer::create_random_region` | `0x448160`（784 B） | `0x4ef020`..`0x4ef390`（0x370） |
+//
+// 三条体内 `panic::Location` = 0（T105 观测）⇒ 结构上进不了 527 分母。
+// `docs/02` §17 记的"token 级随机化属于 math_function"由此三条 arm64 真名钉死（此前只有
+// `mutate_fine_tune` 一条有 Location 锚 `math_function.rs:452`，那一条已在 527 分母里）。
+//
+// **随机源不可复现**（这是它们只能做到「观测」档的根本原因，不是偷懒）：
+// 三条全走 `rand` crate 的线程 RNG —— 槽 `0x9bb290` → `0x750180`（`thread_rng`）、
+// `0x9bbe90` → `0x750700`、`0x9bbe98` → `0x751610`、`0x9bbea0` → `0x750270`、
+// `0x9bb298` → `0x750710`。所以**值级对拍做不到**（同输入两次运行输出不同）；
+// 能做的是把**控制流 + 常量表**复原成可测试的形状：随机数由调用方注入。
+
+/// `adjust_tokens` 的**每-tag 权重表**（`int32 × 20`，`.rodata` `0x1c47d0`，**逐位**）。
+///
+/// 读法：`0x4ee120 mov r9,[rax+r8]`（token 的 tag）→ `0x4ee124 add r14d,[r10+r9*4]`
+/// （`r10` = `0x1c47d0`，步长 4）。表值（本轮实读 80 字节）：
+///
+/// ```text
+/// tag:    0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19
+/// arity: -1  -1  -1  +1  +1   0  +1  +1  +1   0   0   0   0   0   0   0   0  -1  -1  -1
+/// ```
+///
+/// ⇒ `Σ = #二元算子 − #操作数 − #括号`，`缺失操作数 + 1 = 1 + Σ`。
+/// 复算：读 `.reference/steam/2026-08-28/libgraphwarrust.so` 的 `0x1c47d0` 80 字节
+/// （`ff ff ff ff` ×3 后接 17 个 int32）。
+pub const TOKEN_ARITY: [i32; 20] =
+    [-1, -1, -1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1];
+
+/// `adjust_tokens` 里常量 token 的取值系数：`.rodata` 槽 `0x19f758` 的 8 字节
+/// `66 66 66 66 66 66 24 40` = `0x4024666666666666` = **`10.2`**（`mulsd` @ `0x4ee26e`）。**逐位**
+pub const ADJUST_CONST_RANGE: f64 = 10.2;
+
+/// `FunctionRandomizer`（原版 `math_function` 模块里的随机化器）。
+///
+/// 它是 AI 进化（`GraphwarFunctionEvolutionator`）那一侧的工具：把函数 token 流随机补全 /
+/// 随机改一段 / 随机生成一段。**玩家侧不会用到**（`docs/13`）。
+pub struct FunctionRandomizer;
+
+impl FunctionRandomizer {
+    /// `FunctionRandomizer::adjust_tokens`（Linux **`0x4ee0e0`** / arm64 `0x447390`，620 B）
+    ///
+    /// 把「缺操作数」的前缀 token 流**随机补全**：补 `1 + Σ TOKEN_ARITY[tag]` 个 token。
+    ///
+    /// 指令锚（x86-64 Linux，**逐条**）：
+    ///  * `0x4ee120 mov r9,[rax+r8]` + `0x4ee124 add r14d,[r10+r9*4]`（`r10 = 0x1c47d0`）
+    ///    ⇒ 权重表 [`TOKEN_ARITY`]；`0x4ee13a test r14d` / `0x4ee13d jg` ⇒ `Σ <= 0` 时**一个都不补**
+    ///  * `0x4ee240..0x4ee251`：`imul 0x51eb851f / shr 0x24 / imul 0x32 / sub` = **`rand % 50`**
+    ///  * `0x4ee254 cmp r12d,0x19`（25）+ `0x4ee258 jae` ⇒ **`r%50 < 25` 走常量分支**
+    ///  * `0x4ee26e mulsd xmm0,[0x19f758]` ⇒ 常量 = `rand_f64 × 10.2`（[`ADJUST_CONST_RANGE`]）；
+    ///    `0x4ee2a3 mov r12d,0x11` ⇒ tag **17 = `Const`**
+    ///  * `0x4ee2c0 cmp r12d,0x2a`（42）+ `0x4ee2ce cmovb r12,0` ⇒ `r%50 < 42` 推 **`VarX`(0)**，
+    ///    否则推 **`flag`**（`rsi & 1`）⇒ `flag = true` 时那一档是 **`VarY`(1)**，否则仍是 `VarX`
+    ///  * `0x4ee180..0x4ee1a2` 推入 `Vec<Token>`；`0x4ee303..0x4ee30e` 把 Vec 头（cap/ptr/len）
+    ///    **按值返回**（`sret` 在 `rdi`）
+    ///
+    /// ⚠️ **未解（K3，不编）**：
+    ///  1. `0x4ee2f7..0x4ee2ff` 的 `inc r11 / cmp r11,r13 / ja / mov [rbx+0x10],r11` 是
+    ///     `Vec::truncate(new_len)` 形状，但 `new_len`（`r11` 的初值）与 `0x4ee320` 那条分支
+    ///     **没解出来** ⇒ 本实现**不做**截断，只做"补全"。
+    ///  2. 随机源 = `rand` crate 的 `thread_rng`（不可复现）⇒ 随机数**注入**进来，便于单测；
+    ///     **不**声称与真机同一随机序列（也不可能）。
+    pub fn adjust_tokens<F, G>(
+        tokens: &mut Vec<Token>,
+        flag: bool,
+        mut rand_u64: F,
+        mut rand_f64: G,
+    ) -> Vec<Token>
+    where
+        F: FnMut() -> u64,
+        G: FnMut() -> f64,
+    {
+        // `1 + Σ arity`（`0x4ee124`）；`<= 0` 时一个都不补（`0x4ee13d jg`）
+        let mut missing: i32 = 1;
+        for t in tokens.iter() {
+            missing += TOKEN_ARITY[t.tag as usize];
+        }
+        if missing > 0 {
+            for _ in 0..missing {
+                // `rand % 50`（`0x4ee240..0x4ee251` 的乘法取模序列）
+                let r = (rand_u64() % 50) as u32;
+                if r < 25 {
+                    // 常量分支：`tag = 17`、`value = rand_f64 × 10.2`
+                    tokens.push(Token::constant(rand_f64() * ADJUST_CONST_RANGE));
+                } else if r < 42 {
+                    // `cmovb` 那一臂 ⇒ tag = 0（VarX）
+                    tokens.push(Token::op(Function::VarX));
+                } else {
+                    // 否则 tag = `flag`（0 = VarX / 1 = VarY）
+                    tokens.push(Token::op(if flag { Function::VarY } else { Function::VarX }));
+                }
+            }
+        }
+        // 返回 Vec 的按值副本（`0x4ee303..0x4ee30e` 拷 {cap,ptr,len} 到 sret）
+        tokens.clone()
+    }
+}
+
 pub(crate) use m_hypot as hypot;
 
 #[cfg(test)]
@@ -663,5 +771,88 @@ mod parser_tests {
         assert_eq!(tags("\u{03c0}"), vec![17]);
         assert_eq!(tags("PI"), vec![17]); // ASCII 折照旧
         assert_eq!(tags("SIN(X)"), vec![14, 0]);
+    }
+}
+
+#[cfg(test)]
+mod denom_randomizer_tests {
+    //! T108：`FunctionRandomizer::adjust_tokens`（linux `0x4ee0e0` / arm64 `0x447390`）。
+    //!
+    //! 期望值来源 = **反汇编读出的常量/分支**，不是"我方输出"：
+    //!  * 权重表 `.rodata 0x1c47d0`（20 × int32）⇒ `1 + Σ arity` 决定补几个
+    //!  * `rand % 50` 的两个阈值：`0x4ee254 cmp 0x19`（25）、`0x4ee2c0 cmp 0x2a`（42）
+    //!  * 常量系数 `.rodata 0x19f758` = `10.2`；常量 token 的 tag = `0x11`（17 = `Const`）
+    //!  * 非终态 tag：`cmovb` 那一臂给 0（`VarX`），否则给 `flag`（0/1 = `VarX`/`VarY`）
+    //!
+    //! 随机源真机是 `rand` 的 `thread_rng`（不可复现）⇒ 这里**注入**确定性假 RNG。
+    use super::*;
+
+    fn arity_sum(tokens: &[Token]) -> i32 {
+        tokens.iter().map(|t| TOKEN_ARITY[t.tag as usize]).sum()
+    }
+
+    #[test]
+    fn arity_table_is_the_rodata_array() {
+        // `.rodata 0x1c47d0` 80 字节 = 20 个 int32，本轮实读
+        assert_eq!(TOKEN_ARITY.len(), 20);
+        assert_eq!(&TOKEN_ARITY[..3], &[-1, -1, -1]); // VarX/VarY/VarDy
+        assert_eq!(&TOKEN_ARITY[3..9], &[1, 1, 0, 1, 1, 1]); // Add..Pow（UnaryMinus=0）
+        assert_eq!(&TOKEN_ARITY[17..], &[-1, -1, -1]); // Const / L / R 括号
+        assert_eq!(ADJUST_CONST_RANGE.to_bits(), 0x4024_6666_6666_6666); // 10.2
+        // 完整前缀表达式 Σ = -1 ⇒ 一个都不补
+        for text in ["x", "x+1", "sin(x)", "(x*2)-1", "0.00"] {
+            let toks = parse(text);
+            assert_eq!(arity_sum(&toks), -1, "{text} 的 Σ 应是 -1");
+        }
+        // 缺操作数：单个二元算子 ⇒ Σ = +1 ⇒ 补 2 个
+        assert_eq!(arity_sum(&[Token::op(Function::Add)]), 1);
+    }
+
+    #[test]
+    fn adjust_tokens_fills_missing_operands_with_injected_rng() {
+        let mut toks = vec![Token::op(Function::Add)]; // Σ = 1 ⇒ 补 1 + 1 = 2 个
+        let mut seq = [24_u64, 30].into_iter(); // 24 < 25 ⇒ 常量分支；30 ∈ [25,42) ⇒ VarX
+        let mut f = || seq.next().unwrap();
+        let out = FunctionRandomizer::adjust_tokens(&mut toks, false, &mut f, || 2.5);
+        assert_eq!(out.len(), 3, "补完应是 1 + 2 个 token");
+        // 第 1 个补的是常量：`rand_f64 × 10.2`（`0x4ee26e mulsd`），tag = 17
+        assert_eq!(out[1].tag, Function::Const);
+        assert_eq!(out[1].value, 2.5 * ADJUST_CONST_RANGE);
+        assert_eq!(out[1].value, 25.5);
+        // 第 2 个补的是 VarX（`r%50 ∈ [25,42)` ⇒ `cmovb` 给 0）
+        assert_eq!(out[2].tag, Function::VarX);
+        // 返回值是 Vec 的**副本**（`0x4ee303..0x4ee30e` 拷头）
+        assert_eq!(out.len(), toks.len());
+    }
+
+    #[test]
+    fn adjust_tokens_third_branch_uses_the_flag() {
+        // r%50 >= 42 ⇒ tag = flag：flag=false ⇒ VarX，flag=true ⇒ VarY
+        let mk = |flag: bool| {
+            let mut toks = vec![Token::op(Function::Add)];
+            let mut seq = [49_u64, 49].into_iter();
+            let mut f = || seq.next().unwrap();
+            FunctionRandomizer::adjust_tokens(&mut toks, flag, &mut f, || 0.0)
+        };
+        assert_eq!(mk(false)[1].tag, Function::VarX);
+        assert_eq!(mk(true)[1].tag, Function::VarY);
+    }
+
+    #[test]
+    fn adjust_tokens_leaves_complete_expressions_alone() {
+        let mut toks = parse("sin(x)+1");
+        let before = toks.clone();
+        let mut called = 0;
+        let out = FunctionRandomizer::adjust_tokens(
+            &mut toks,
+            true,
+            || {
+                called += 1;
+                0
+            },
+            || 0.0,
+        );
+        assert_eq!(out, before, "Σ = -1 时不该补任何 token");
+        assert_eq!(called, 0, "`0x4ee13d jg`：Σ <= 0 时连随机数都不取");
     }
 }

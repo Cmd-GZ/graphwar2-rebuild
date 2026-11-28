@@ -525,6 +525,68 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// T108（docs/06 §156）：`EffectDrawer` 的状态内核 + `step_effect` 真名边界
+// ---------------------------------------------------------------------------
+//
+// | 原版函数 | Android 2.0.60 arm64 `.symtab` | Linux x86-64 `.eh_frame`（addr_probe fde 现取） |
+// |---|---|---|
+// | `EffectDrawer::step_effect` | `0x444d2c`（992 B） | **`0x4eb450`**..`0x4eb82b`（0x3db） |
+//
+// 体内 `panic::Location` = 0（T105 观测）⇒ 结构上进不了 527 分母；本轮补的是**函数边界**
+// （语义此前已由 T57 按指令复原成 [`step_effects`] 自由函数）。
+//
+// ABI / 字段偏移（**观测**，逐条带指令地址）：
+//   `rdi = &mut self`、`rsi = 障碍管理器`、`edx = now_tick`、`xmm0 = delta_seconds`
+//   * `0x4eb45e mov rax,[rdi+0x10]` / `0x4eb46d mov rbx,[rdi+8]` ⇒ `self+0x08` = 元素表 ptr、
+//     `self+0x10` = len（`self+0x18` 应是 cap，本函数**没读到**）
+//   * `0x4eb46b mov ebp,edx` ⇒ 第 2 个整数参是 `now_tick`（不是 delta 的整数部分）
+//   * `0x4eb479 movsd xmm2,[0x19f918]` = `60.0`；`0x4eb481 mulsd xmm2,xmm0` ⇒ `ticks = delta*60`；
+//     `0x4eb48d..0x4eb4a4` 用 `0x19f1a0`（= `2147483647.0`）做饱和转换 ⇒ 与 [`ticks_for_delta`] 同一算式
+//   * `0x4eb4b3 ucomisd xmm0,0.0` + `ja 0x4eb50e` ⇒ `delta > 0` 才走积分慢路径，否则只推进相位
+//   * `0x4eb585 call 0x3f15b0` = **单点碰撞** `is_obstacle(&self, &[f64;2])`
+//     （`rdi=r14`= 原 rsi 的障碍管理器、`rsi=rbx`= 元素地址，x/y 就在 `+0x00/+0x08`）
+//     ⇒ 这个函数**自己不做障碍判定**，判定是外部管理器的方法
+//   * `0x4eb4c2 add edx,0x258` + `0x4eb4c8 mov [rbx+rax+0x20],edx` ⇒ 相位推进一次 +600 tick
+//     （`0x258` = 600，与 [`PHASE_TICKS`] 同一个立即数）
+//
+// ⚠️ **未解**（K3，不编）：`0x4eb511 cmp dword ptr [rdi+0x28], ebp` + `0x4eb514 jae 0x4eb687`
+//   ⇒ `self+0x28` 是另一个 u32 字段，慢路径按 `now_tick <= self[+0x28]` 分成**两份结构相同、
+//   跳表不同**的循环（`0x1c3bec` vs `0x1c3bb8`）。两份循环的语义差异本轮**没解出来**，
+//   所以下面的结构体**不编**这个字段，[`step_effects`] 只实现其中一份（登记在 docs/06 §156.6）。
+pub struct EffectDrawer {
+    /// `self+0x08`/`+0x10`/`+0x18`：特效元素表。原版 `Vec<EffectData>`（元素 0x30 字节）。
+    pub effects: Vec<EffectData>,
+}
+
+impl EffectDrawer {
+    /// 空状态（原版构造点/初值**未知**，见模块文档 §5；这里只给"没有元素"的初态）。
+    pub fn new() -> Self {
+        Self { effects: Vec::new() }
+    }
+
+    /// `EffectDrawer::step_effect`（Linux **`0x4eb450`** / arm64 `0x444d2c`，992 B）
+    ///
+    /// 每 tick 推进所有特效元素：`delta > 0` 时按 **1/600 s 固定子步**积分速度
+    /// （150 步/相位？不 — 见 [`FIXED_STEP_SECONDS`]：一帧 `1/60 s` = 10 个子步），
+    /// 撞障碍把速度清零；随后按 `start_tick + duration` 到期把相位推进 600 tick。
+    ///
+    /// 语义本体在 [`step_effects`]（T57 按指令复原的自由函数）；本方法是**真名边界**
+    /// （预注册 `fixtures/denom_drawers_math_plan.txt` §2.5 K1）。
+    pub fn step_effect<F>(&mut self, now_tick: u32, delta_seconds: f64, is_obstacle: F)
+    where
+        F: FnMut(Vec2D) -> bool,
+    {
+        step_effects(&mut self.effects, now_tick, delta_seconds, is_obstacle)
+    }
+}
+
+impl Default for EffectDrawer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 绘制计划
 // ---------------------------------------------------------------------------
 
@@ -1295,3 +1357,105 @@ mod tests {
 
 #[cfg(feature = "gdext-bindings")]
 pub use node_class::*;
+
+#[cfg(test)]
+mod denom_step_effect_tests {
+    //! T108：`EffectDrawer::step_effect`（linux `0x4eb450` / arm64 `0x444d2c`）的边界与分支。
+    //!
+    //! 期望值来源 = **反汇编读出的立即数/分支**（不是"我方输出"）：
+    //!  * `0x4eb4c2 add edx,0x258` ⇒ 相位推进 **600** tick
+    //!  * `0x4eb4bb mov ecx,0x5b` + `bt ecx,edx` ⇒ 终态相位 = 位图 `0x5b` = `{0,1,3,4,6}`
+    //!  * `0x4eb4e7 cmp edx,2` + `0x4eb4f6 mov byte [..],3` ⇒ 相位 **2 → 3**
+    //!  * `0x4eb507 mov byte [..],6` ⇒ 其余可推进相位 **→ 6**
+    //!  * `0x19f918` = `60.0`（`mulsd` @ `0x4eb481`）、`0x19ed20`/`0x19f9f0` = `1/600`（`mulpd` @ `0x4eb56f`）
+    use super::*;
+
+    fn elem(phase: Phase, start_tick: u32) -> EffectData {
+        let mut e = EffectData::new(Vec2D::new(1.0, 2.0), start_tick, 600, phase);
+        e.vel = Vec2D::new(60.0, 0.0);
+        e
+    }
+
+    #[test]
+    fn phase_advance_is_600_ticks_and_only_for_non_terminal_phases() {
+        // 常量本身就是证据：0x258 / 0x5b / 60.0 / 1/600
+        assert_eq!(PHASE_TICKS, 0x258, "相位推进量应为 0x258");
+        assert_eq!(STATE_TERMINAL_MASK, 0x5b, "终态位图应为 0x5b");
+        assert_eq!(TICKS_PER_SECOND, 60.0);
+        // 位图 0x5b = 0b1011011 ⇒ 终态 {0,1,3,4,6}、可推进 {2,5}
+        for p in [Phase::CircleSmall, Phase::Polygon, Phase::CircleLargeB, Phase::LineA, Phase::CircleDark] {
+            assert!(p.is_terminal(), "{p:?} 应被 `bt 0x5b` 判成终态");
+        }
+        for p in [Phase::CircleLargeA, Phase::LineB] {
+            assert!(!p.is_terminal(), "{p:?} 应可推进");
+        }
+
+        // 相位 2 → 3（`cmp edx,2` / `mov byte ..,3`），start_tick += 600
+        let mut fx = EffectDrawer::new();
+        fx.effects.push(elem(Phase::CircleLargeA, 0));
+        fx.step_effect(600, 0.0, |_| false); // delta=0 ⇒ 快路径：只推进相位
+        assert_eq!(fx.effects[0].phase, Phase::CircleLargeB);
+        assert_eq!(fx.effects[0].start_tick, 600, "`add eax,0x258` 的 600");
+
+        // 相位 5 → 6（`_ => 6` 那一臂）
+        let mut fx2 = EffectDrawer::new();
+        fx2.effects.push(elem(Phase::LineB, 0));
+        fx2.step_effect(600, 0.0, |_| false);
+        assert_eq!(fx2.effects[0].phase, Phase::CircleDark);
+        assert_eq!(fx2.effects[0].start_tick, 600);
+
+        // 终态相位一律不动（`bt` + `jb` 跳过）
+        let mut fx3 = EffectDrawer::new();
+        fx3.effects.push(elem(Phase::CircleSmall, 0));
+        fx3.step_effect(600, 0.0, |_| false);
+        assert_eq!(fx3.effects[0].phase, Phase::CircleSmall);
+        assert_eq!(fx3.effects[0].start_tick, 0);
+
+        // `start_tick > elapsed` 不推进（`0x4eb4f0 cmp edx,[rsp+4]` + `ja`）
+        let mut fx4 = EffectDrawer::new();
+        fx4.effects.push(elem(Phase::CircleLargeA, 1000));
+        fx4.step_effect(600, 0.0, |_| false);
+        assert_eq!(fx4.effects[0].phase, Phase::CircleLargeA);
+    }
+
+    #[test]
+    fn integration_is_ten_fixed_substeps_per_sixtieth() {
+        // `delta = 1/60 s`、子步 `1/600 s` ⇒ **10 步**；每步 `pos += vel × (1/600)`
+        // ⇒ `vel.x = 60` 时一步 0.1、十步 1.0（浮点累加，允许 1 ulp 量级误差）
+        let mut fx = EffectDrawer::new();
+        fx.effects.push(elem(Phase::CircleSmall, 0));
+        fx.step_effect(0, TICK_DELTA_SECONDS, |_| false);
+        // 初值 pos.x = 1.0 ⇒ 十步之后应是 2.0（位移 1.0）
+        assert!(
+            (fx.effects[0].pos.x - 2.0).abs() < 1e-15,
+            "十步 60×(1/600) 应位移 1.0（1.0 → 2.0），实际 {}",
+            fx.effects[0].pos.x
+        );
+        assert_eq!(fx.effects[0].pos.y, 2.0, "vel.y = 0 ⇒ y 不动");
+
+        // `delta = 0` ⇒ 快路径，**不积分**（`0x4eb4b3 ucomisd/ja`：只有 >0 才进慢路径）
+        let mut fx2 = EffectDrawer::new();
+        fx2.effects.push(elem(Phase::CircleSmall, 0));
+        fx2.step_effect(0, 0.0, |_| false);
+        assert_eq!(fx2.effects[0].pos, Vec2D::new(1.0, 2.0), "delta=0 不应移动");
+
+        // 撞障碍 ⇒ 速度清零（`0x4eb58a test al,al` / `0x4eb592 movupd [r13],xmm0`）
+        // 障碍判定在 `0x4eb585 call 0x3f15b0`，这里用闭包给同一语义。
+        let mut fx3 = EffectDrawer::new();
+        fx3.effects.push(elem(Phase::CircleSmall, 0));
+        fx3.step_effect(0, TICK_DELTA_SECONDS, |p| p.x >= 1.05);
+        assert_eq!(fx3.effects[0].vel, Vec2D::ZERO, "撞障碍后速度必须清零");
+        // 撞上之后虽然速度清零，位置停在**第一次**越界那一步（0.1 的整数倍）
+        assert!(fx3.effects[0].pos.x > 1.0 && fx3.effects[0].pos.x <= 1.1 + 1e-15);
+    }
+
+    /// 空元素表：`0x4eb462 test rax,rax; je 0x4eb81c`（len==0 直接返回）。
+    #[test]
+    fn empty_effect_table_returns_early() {
+        let mut fx = EffectDrawer::new();
+        fx.step_effect(12345, TICK_DELTA_SECONDS, |_| {
+            panic!("len=0 时不该调障碍判定（`0x4eb462 je 0x4eb81c`）")
+        });
+        assert!(fx.effects.is_empty());
+    }
+}
