@@ -152,7 +152,12 @@ PY
 > 复现：`python3 tools/coverage_matrix.py`（`--check` 只校验不重写）。
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个 scope=other 的模块占 97）
+原版可归属函数 527 个，分布在 82 个模块（66 个 scope=graphwar 占 431、16 个 scope=other 的模块占 96）
+   **模块分母 2026-11-28 从 78 修正为 82**（T112）：旧清单按 panic::Location 建 ⇒ Linux .so 里
+   `src/<模块>.rs` 字面量 0 次的模块连行都不会有（实测 11 个）。补的 4 处 = 3 个整模块缺行
+   + 1 个 scope 记错；其中 graphwar_ban_list / graphwar_version **早已实现**（观测），真正未做的是
+   graphwar_id_maker / time_probe 两个 ⇒ **模块级 80/82 = 97.6 %**（旧读数 100 % 里白送了两个模块）。
+   依据 docs/06 §157、fixtures/module_denom_plan.txt、fixtures/module_denom_audit.tsv。
    **模块级**：已归属 527（每个函数所属模块都有我方文件+档位；逐位 89 / 观测 438 / 推断 0 是模块档位的加权）｜
     **函数级（2026-11-27 收尾实测，`tools/function_coverage.py --stats`）**：**A `313/527 = 59.4 %`**（含 na）
        ／ **B `313/438 = 71.5 %`**（剔 na `na:*`，**招牌数**）／ B′ `313/445 = 70.3 %`。F 档 F1 313 / F2 71 / F3 143。
@@ -251,7 +256,7 @@ PY
 * `src/_scaffold/` = **我方自造**的桥接/工具（GDExtension 入口、C ABI、报文装配、对拍器、
   ChaCha12、gzip、broker 服务端）——原版没有这些东西，目录里有 `README.md` 逐条说明。
 
-完整对照表（78 个模块逐行 + 状态 + 依据）见 [`02-module-map.md`](02-module-map.md) §17；
+完整对照表（82 个模块逐行 + 状态 + 依据）见 [`02-module-map.md`](02-module-map.md) §17；
 **模块的权威清单（78 模块 / 165 类型 / 290 方法名）**见同文件 §18；
 **527 个可归属函数里 348 个有原版真名**（并集 351 个地址，其中 6 个不在 527 内；无名 179 个
 = 138 推断 + 41 未知）——名字 ↔ x86 地址见 `fixtures/name_to_addr.tsv`（§20 是**当轮**的

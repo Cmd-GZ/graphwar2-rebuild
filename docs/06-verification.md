@@ -31174,3 +31174,202 @@ $PY fixtures/denom_outside_audit_t110.py --impl             # ⑦ 逐条落码�
    ——那需要拿 `panic::Location` 行号或值级对拍才能定，属于下一轮；本轮只把它标成弱证据。
 6. **`_denom_ours_lookup` 的盲区（缺陷 ①）没修**：修它会让「implemented」的判定面变化，
    必须单独立项 + 重跑全台账 + 与 `fixtures/function_coverage.tsv` 的口径一起对齐。
+
+## 158. 模块分母 78 → 82：Location 口径看不见**整模块**，未 strip 符号表把它补回来（T112，2026-11-28）
+
+> 任务板 `task-105`。**预注册先提交**：`fixtures/module_denom_plan.txt`（commit `d2cdf5c`）——
+> 判据、正/负对照、生成器改法、诚实声明、门槛全部在跑之前写死，**跑完一个口径都没改**。
+> 一句话：**模块清单以前也是按 `panic::Location` 建的** ⇒ Linux `.so` 里 `src/<模块>.rs` 字面量
+> 出现 **0 次**的模块**连一行都不会有**（矩阵里现在还有 **11 个**这种模块）。改用**未 strip 的
+> Android 2.0.60 `.symtab` 的符号路径**重数，分母 **78 → 82**；补的 4 处里 **2 个早就做完了**、
+> **2 个是真没做**。函数分母（527）**一位没动**。
+
+### 158.1 结论表（先看这个）
+
+| # | 问题 | 答案 |
+|---|---|---|
+| ① | 模块分母到底多大？ | **82 = 66 个 `scope=graphwar` + 16 个 `scope=other`**（旧读数 78 = 62 + 16）。三读必须一起给：**N_2.0.60(J1') = 82**（总账用这个）／ N_2.0.60(J1) = **81**（差 1 个 = `time_probe`）／ N_union(J1') = **82**（并上 2024-07-30 版的 78 个名字，并集不多 ⇒ 没有"只有老版才有"的模块被漏掉） |
+| ② | 为什么会漏？ | 清单原先**按 Location 反推**：`.so` 里没有 `src/<模块>.rs` 字面量 ⇔ 模块里一个 panic 点都没有 ⇒ 一个锚都留不下 ⇒ 宏观上"这个模块不存在"。实测**矩阵里 11 个模块**就属于这种（列表见 §158.6-③）。**漏的不是函数，是整个模块。** |
+| ③ | 补了哪几处、各判成什么？ | 3 个**整模块缺行** + 1 个 **scope 记错**（§158.3）。其中 `graphwar_ban_list` / `graphwar_version` **已实现**（T109 已落码，档位 `观测`）；`graphwar_id_maker` / `time_probe` **未实现**（`未做`）。`graphwar_texture_loader` 只是分类改（`other` → `graphwar`），不是新模块。 |
+| ④ | 任务书/T109 说的「Android 65 个模块」对不对？ | **数法对、口径窄**：65 是"只数 `FUNC`"的读数，漏掉 **`graphwar_id_maker`**——该模块在 Android 里只剩 **1 个 `LOCAL OBJECT`**（`get_unique_id::CURRENT_ID`），`get_unique_id` 本体已被内联。按 `FUNC + OBJECT` 数是 **66**。 |
+| ⑤ | 还有没有别处漏的？ | **有 1 个**：非前缀的 **`time_probe`**（0 FUNC / 0 方法，只剩 `core::ptr::drop_in_place<…TimeProbe>`）。它是**唯一**一个"定义路径（J1）看不见、只有任意路径（J1'）才看见"的模块 ⇒ 这就是必须两个读数一起报的原因。 |
+| ⑥ | 函数分母动了吗？ | **没动**：527 / 527、逐位 89 / 观测 435 / 推断 3 **一位不变**。新增模块的 `orig_funcs` 都是 0（它们在 Location 口径下本来就没有函数）。另开 `sym_funcs` 列（Android FUNC，合计 **740**）是**另一条轴**，**不并入 527**。 |
+| ⑦ | 模块级完成度呢？ | **78/78 = 100 % → 80/82 = 97.6 %**。⚠️ 这是**分母变大导致的下降**，不是"又发现 4 个模块的活"：补的 4 处里 2 个（`ban_list` / `version`）是**已经做完却不在分母里**（等于旧读数的 100 % 里有 2 个是白送的），真正没做的只有 **2 个**。 |
+
+### 158.2 判据（三档，预注册 §A；跑完没改）
+
+模块名 = 符号路径的**第 2 段**（`graphwarrust::<m>::…`）。类型名 / 方法名 / 闭包 / 静态项名都在第 3 段及以后 ⇒ 天然不算模块（负对照 §158.4-②）。
+
+| 档 | 判据 | 目标版读数 | 用途 |
+|---|---|---|---|
+| **J1'** | demangle 后符号文本**任意位置**出现 `graphwarrust::<m>::`（含 `<… as Trait>` 的 impl 头、泛型实参位置） | **82** | **分母就用这一档**。理由：Rust 名字解析要求模块存在；且这与 `docs/02` §18.3 的既有口径一致（那里把 0 函数 0 方法的 `graphwar_game_info` / `time_probe` 也算模块） |
+| **J1** | 更严：符号的**定义路径**以 `graphwarrust::<m>::` 开头（`FUNC` 或 `OBJECT`，`LOCAL` 也算） | **81** | 证明"这个模块里确实编译出过函数/静态量"，也就是**能拿去数函数**的那一档 |
+| J1-FUNC | 再窄一档：只数 `FUNC`（T109 的 65 就是这一档） | **65**（`graphwar_*` 前缀）/ 全 crate 见下 | **不用**——`graphwar_id_maker` 只有 `OBJECT`，用它就会漏模块（§158.4-①PC6） |
+
+**证据来源与局限（写清楚）**：
+
+* 主证据 = `.reference/steam/android-2.0.60/libgraphwarrust.so`（arm64、`file` 报 **not stripped**、与逆向目标同版本）。
+* 旁证 = `.reference/steam/2024-07-30/libgraphwarrust.so`（x86-64、未剥离）——⚠️ **本机没有这份二进制**
+  （`.reference/steam/` 下只有 `2026-08-28`（stripped）与 `android-2.0.60`），所以 2024 侧只能用
+  **已入库的** `docs/02` §18.3 那张 78 行清单当输入，**不能当场重跑**。PC5 就是用这张表做的跨版本对照。
+* 两版都要看，因为**单版会漏也会多**：`graphwar_crash_reporter` 在 2024 版**完全没有**（§18.7-②，属两年间新增），
+  `time_probe` 只出现在"泛型实参"位置。⇒ 报 **N_union** 证明没有哪个模块被版本差异挡住。
+* 解名只依赖 binutils：`readelf -sW` + `c++filt -s rust`（legacy `_ZN` 与 v0 `_RN` 一起解；v0 里 crate 写作
+  `graphwarrust[<hex>]`）。**不依赖 capstone / Ghidra / pkl** —— 换台机器也能重跑。
+
+### 158.3 三方差集：Android 82 / 矩阵 78→82 / `src/` 80
+
+全量 **82 行**（一行一个模块，含 Android 的 FUNC/OBJECT 条数、矩阵 scope、`src/` 有没有、判定、备注）在
+[`fixtures/module_denom_audit.tsv`](../fixtures/module_denom_audit.tsv)，由 `python3 tools/coverage_matrix.py --modules`
+生成、`--check` 会比对（过期就失败）。**摘要**：
+
+| 模块 | Android（J1'） | 矩阵（前→后） | `src/` 顶层同名文件 | 判定 |
+|---|---|---|---|---|
+| `graphwar_ban_list.rs` | 有（FUNC=2） | **无 → graphwar** | 有（T109 建的） | **补行：已实现**（`观测`） |
+| `graphwar_version.rs` | 有（FUNC=1） | **无 → graphwar** | 有（T109 建的） | **补行：已实现**（`观测`） |
+| `graphwar_id_maker.rs` | 有（**FUNC=0 / OBJECT=1**） | **无 → graphwar** | **无** | **补行：未实现**（`未做`） |
+| `time_probe.rs` | 有（**只在泛型实参里**，FUNC=0 / OBJECT=0） | **无 → other** | **无** | **补行：未实现**（`未做`） |
+| `graphwar_texture_loader.rs` | 有（FUNC=4） | other → **graphwar** | 有 | **改 scope**（分类错，不是新模块） |
+| 其余 77 个 | 有 | 不变 | 78 个有 / `graphwar_event` 用 `src/events.rs` | 一致 |
+
+计数：Android **82** 个模块；矩阵 **82**（补 4 − 0；`texture_loader` 是移 scope 不改总数）；`src/` 顶层**同名文件 80 个**
+（缺 `graphwar_id_maker` / `time_probe`）。矩阵 − Android = **∅**（没有瞎编的模块），Android − 矩阵(修后) = **∅**。
+
+**三读怎么来的**（可复跑）：
+
+```bash
+.reference/venv/bin/python tools/coverage_matrix.py --modules   # 8 条正负对照 + 三读 + 写 audit.tsv
+# 底层（纯 binutils）：
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so   # Ndx!=UND 且 Type∈{FUNC,OBJECT}
+#   → 名字一次性 c++filt -s rust → 正则 graphwarrust(?:\[[0-9a-f]+\])?::([A-Za-z0-9_]+) 取第 2 段
+```
+
+### 158.4 正/负对照（8 条全过，**先跑后动表**）
+
+| 组 | 内容 | 结果 |
+|---|---|---|
+| **PC1** | `graphwar_ban_list` 必须被找出且 FUNC=2 | ✓ PASS |
+| **PC2** | `graphwar_version` 必须被找出且 FUNC=1 | ✓ PASS |
+| **PC3** | `graphwar_texture_loader` 必须被找出（FUNC=4）且矩阵 scope 已修为 `graphwar` | ✓ PASS |
+| **PC4** | 反方向：矩阵里每个 graphwar 模块都必须在 Android 集合里（矩阵 − Android = ∅）⇒ 矩阵没瞎编 | ✓ PASS |
+| **PC5** | 跨版本：`docs/02` §18.3 的 **78** 个名字（**另一版、另一架构**）必须全部出现在 Android 集合里 | ✓ PASS（差集 ∅） |
+| **PC6** | `graphwar_id_maker` FUNC=0 / OBJECT≥1 / J1=True ⇒ 证明「只数 FUNC」会漏模块（这是 65 vs 66 的根因） | ✓ PASS |
+| **NC1–5** | 负对照名单 13 个**不许**进模块集合：`graphwarrust`（crate 名）、`GraphwarTextureLoader` / `GraphwarBanList` / `GraphwarIdMaker` / `TimeProbe`（**类型名**）、`CURRENT_ID`（静态项名）、`core` / `alloc` / `std` / `libc` / `gdext`（外部 crate）、`{{closure}}`、`graphwar`（crate 根） | ✓ PASS（无一越界） |
+| **NC6** | 解名健全性：只解 legacy(`_ZN`) 与 legacy+v0 混合两种解法，模块集合必须一致（Android 有 **901** 条 v0 符号） | ✓ PASS（对称差 ∅）——**如实记：v0 支持对模块识别没有影响**，别把它写成必要条件 |
+
+> ⚠️ 关于负对照的一个真实教训：我第一版把 `graphwar_plane.rs`（**它是真模块**）写进负对照名单，NC1–5 当场 FAIL。
+> 判据把"我以为不该算的"当成了"不该算的"——**负对照名单本身也要先自查**。
+
+**"第 2 段规则"的边界（写清楚，换二进制时先查这条）**：crate 根上的**自由函数**如果被 mangling 了，
+它的路径也是 `graphwarrust::<函数名>::h…`，会被这条规则误当成"模块"。本二进制里**没有**这种误判
+（唯一的 crate 根导出 `gdext_rust_init` 是 `#[no_mangle]`，demangle 后就是一个裸名字、没有路径段），
+而且 PC4（矩阵 ⊆ Android）与 PC5（2024 版 78 个名字 ⊆ Android）**两个独立来源都吻合** ⇒ 现在的 82 个
+里没有混进函数名。**换一份没 strip 的二进制时，必须把这两条对照重跑一遍再信模块数。**
+
+### 158.5 生成器怎么改（`tools/coverage_matrix.py`，`TOOL_VERSION` 1 → 2）
+
+1. **新增 `android_symtab_modules()`**：`readelf` + `c++filt` 抽模块路径（§158.2 的 J1'/J1/条数），
+   文件缺失返回 `None`（**SKIP + 警告**，不让它变成主流程硬依赖；主证据仍是 Linux `.so` + pkl）。
+2. **新增手工列/覆盖表 `ANDROID_SYM_FUNCS`**（82 行：模块 → Android `FUNC` 条数），`mod()` 增可选参数
+   `sym_funcs=`，TSV **末尾追加** `sym_funcs` 列。
+   ⚠️ **只许追加不许插入**：`tools/audit_src.py` / `bitexact_classify.py` / `boundary_audit.py` / `global_triage.py` /
+   `file_structure.py` / `function_coverage.py` / `bitexact_plan.py` 都按**列下标 0–8** 读这张表，插入会静默错位（已逐个核过）。
+3. **`--check` 增三条硬断言**（这是 t109 那种"模块静默缺行"的防回归闸，以后不用靠人记得）：
+   (a) 矩阵模块集合 **==** Android J1' 集合（多一个/少一个都失败并打印差集）；
+   (b) 每行 `sym_funcs` 必须与活的符号表相符；
+   (c) 8 条正负对照不许有 FAIL；另加 `fixtures/module_denom_audit.tsv` 内容比对（过期就失败）。
+   符号表不在本机 ⇒ 这三条 SKIP 并**打印警告**（不静默通过）。
+4. **新增 `--modules` 子命令**：只写 `fixtures/module_denom_audit.tsv` + 打印对照，**不碰** `docs/` 两个生成物
+   （方便下一个人单独复核分母，不用重跑 Location 扫描）。
+5. **行改动**：补 4 行（`ban_list` 2 / `version` 1 / `id_maker` 0 / `time_probe` 0）、
+   `graphwar_texture_loader` scope `other → graphwar`。
+6. **分清两种"未做"**：`by_status["未做"]` 累的是**函数数**（新增模块 `orig_funcs=0` ⇒ 它还是 0），
+   所以另加 `pending_modules`（模块数）并写进总账行 —— 否则 `未做 0` 会被读成"模块都做完了"。
+7. **顺手修两处会自相矛盾的历史文案**：`graphwar_prefixed()` 的 docstring（写着"现值 58/62/59"）、
+   `docs/149` 里"15 个不带前缀 + `graphwar_texture_loader.rs`"与硬编码的 7 个未知模块名 ⇒ **一律改成算出来的**。
+
+### 158.6 顺带发现（**只登记，本轮不改**）
+
+1. **`src/graphwar_event.rs` 是个"没被认领"的同名文件**：矩阵的 `graphwar_event.rs` 行 `ours_file` 只指
+   `src/events.rs`（枚举 + 表），而 `src/graphwar_event.rs`（285 行）装的是该模块的 3 个固有方法
+   （`serialize` / `deserialize` / `make_new_connection_request_event`）。⇒ **一个模块的内容分在两个文件里**，
+   `ours_file` 少写了一个。改它会动 `ours_funcs` 的读数、且不在本任务范围（模块分母），**登记在 audit 表的 `note` 列**。
+2. **老 78 与 2024 版的 78 不是同一个集合**（数字撞车，别互相"印证"）：矩阵老 78 里有 `graphwar_crash_reporter`
+   （2024 版没有），2024 版 78 里有 `time_probe`（矩阵老 78 没有）。⇒ 这次的修正**不是**"抄一份旧表"，
+   而是按同一判据在新证据上重算。
+3. **11 个模块的 Location 串在 Linux `.so` 里是 0 次**（旧清单里这些行**全靠人工补行**）：
+   `backtracer` / `function_token` / `graphwar_ban_list` / `graphwar_event_queue` / `graphwar_game_info` /
+   `graphwar_id_maker` / `graphwar_player_config` / `graphwar_replay_reader` / `graphwar_stream_buffer` /
+   `graphwar_version` / `time_probe`。这条数字现在由生成器自动算并写进 audit 表头。
+4. **`orig_funcs` 与 `sym_funcs` 的落差很大**（527 vs 740，Android 口径）——这不是矛盾：
+   前者是"能被 Location 硬钉到源文件"的下限，后者是"符号表里编译出来的函数条数"（含闭包/单态化/drop glue）。
+   **两条轴不许混报**（同 fire / batch / batch_conv 的规矩）。
+
+### 158.7 文档同步了哪几处（模块数字；范围外的一律没碰）
+
+| # | 文件 | 改了什么 |
+|---|---|---|
+| 1 | `AGENTS.md` §0 第 1 条 | `78 = 62 + 16` / `59 个同名文件` → **`82 = 66 + 16` / `65 个`**，并指向本节与预注册 |
+| 2 | `AGENTS.md` §4 | 同上（"文件名就是证据"那条）；旧读数三串（`78 = 62 + 16` / `59 个` / `58 + 12`）全部标作废 |
+| 3 | `AGENTS.md` 目录段 | `src/` 那段的 `78 个原版模块：59 个同名` → `82 个：65 个` |
+| 4 | `docs/02-module-map.md` §17 开头 | 口径块三条 awk（62→**66**、65 个文件）＋新增 🟥 T112 更正块（4 处改动表 + 80/82） |
+| 5 | `docs/02-module-map.md` §17.1 / §17.2 | 标题 62→**66** / 59→**65**；§17.1 表**追加 4 行**（3 个新模块 + 移回的 `texture_loader`）；§17.2 把 `texture_loader` 行换成 `time_probe` 行，注明本节 16 个**全不带前缀**。两处 `comm -3` 差集现在都是 **∅** |
+| 6 | `docs/00-status.md` §0.2 + §目录说明 | 总账行（82 个模块 / 431 + 96）＋一段"分母为什么从 78 修到 82、哪两个真没做"；"78 个模块逐行" → 82 |
+| 7 | `docs/HANDOVER.md` §1 + P3 | 模块级读数改成 **527/527 个函数 · 80/82 个模块**（2 个未做点名）；P3 的"19 个模块还没有同名文件" → **2 个** |
+| 8 | `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | **重跑生成物**（`tool_version: 2`、新增 `sym_funcs` 列、新增 §0.2 模块分母小节、口径行/tally 全部改算出来） |
+| 9 | 本节 + `fixtures/module_denom_plan.txt` / `module_denom_audit.tsv` / `tools/coverage_matrix.py` | 本任务本体 |
+
+**没碰**：`src/**`、`client/**`、`tests/**`、`fixtures/function_coverage.tsv`、`fixtures/denom_outside.tsv`、
+门槛/护栏文件（`frame_diff_thresholds*` / `guardrails.json`）、既有断言。
+
+### 158.8 诚实声明（照预注册 §F 逐条对）
+
+1. **新增的 3 个 `graphwar_*` 模块里 2 个已实现**（`graphwar_ban_list` 2 函数 / `graphwar_version` 1 函数，
+   T109 已落码、档位 `观测`）——**补进分母不是新活**，而是修掉"做完了却不在分母里"的虚报方向。
+2. **1 个没实现**：`graphwar_id_maker`（只有 1 个 `LOCAL OBJECT CURRENT_ID`@arm64 `0x8b4378` +
+   `GraphwarIdMaker` / `get_unique_id` 名字，无 `src/` 文件）⇒ `未做`。
+3. **另补 1 个非前缀模块** `time_probe`（0 函数 / 0 方法）⇒ `未做`。
+4. ⇒ **模块级完成度 100 % → 97.6 %**（分母变大的下降）；**函数级 527 / 527 一位没动**。
+5. `sym_funcs` 合计 740 是**另一条轴**，任何时候都不许和 527 混着报。
+
+### 158.9 门槛读数与复跑命令
+
+| 门槛 | 读数 | 命令 |
+|---|---|---|
+| `cargo test --offline` | **1765 passed / 0 failed / 1 ignored** | `CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.cargo-target cargo test --offline` |
+| `cargo test --features gdext-bindings` | **1925 passed / 0 failed / 1 ignored** | 同上加 `--features gdext-bindings` |
+| `coverage_matrix --check` | **OK** | `.reference/venv/bin/python tools/coverage_matrix.py --check` |
+| `check_doc_refs` | **rc=0** | `python3 tools/check_doc_refs.py` |
+| `docsec check docs/06` | **通过**（无重复号/空心节/冲突标记） | `python3 tools/docsec.py check docs/06-verification.md` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（一位没动） | 见下面的三条命令 |
+| `boundary_audit --check` | **mismatch 0** | `.reference/venv/bin/python tools/boundary_audit.py --check` |
+
+```bash
+# 三轴（快照 401 份，只读；别往快照里拷新样本）
+SNAP=$PWD/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+# 模块分母（本任务的核心复核）
+.reference/venv/bin/python tools/coverage_matrix.py --modules
+```
+
+### 158.10 遗留 / 下一步（**给下一任，别重做一遍**）
+
+1. **`graphwar_id_maker`（未做）**：可攻的点很具体 —— ① `CURRENT_ID` 是 4 字节静态量 @ arm64 `0x8b4378`，
+   读 `.data` 能拿到初值；② 找 `adrp/add` 到该地址的代码 ⇒ 就知道 `get_unique_id` 被内联进哪些函数；
+   ③ 语义大概是"自增唯一 id"，但**步进与回绕没有证据**，别写成结论。我方要落码就得建
+   `src/graphwar_id_maker.rs`（**本任务不碰 `src/**`**）。
+2. **`time_probe`（未做）**：静态侧只剩类型名 + drop glue。要么从 2024 版二进制（**本机没有**）读它的字段，
+   要么放弃"还原它"并在 `docs/02` §17.2 打上"证据不可及"的标记。**别猜一个 `TimeProbe` 出来。**
+3. **`src/graphwar_event.rs` 的 `ours_file` 漏登记**（§158.6-①）：改它会让 `ours_funcs` 变，属于另一个口径，
+   留给人决定。
+4. **`sym_funcs` 手工列的维护**：现在 `--check` 会拿活的符号表核对，所以**过不了就说明该更新它**；
+   真正该自动化的是"从 Android `.symtab` 直接生成这张表"，本轮为了"符号表缺失也能复现"仍然采用手工列 + 核对。
+5. **`docs/02` §18.3 那张 2024 版表**：本机没有那份二进制 ⇒ 它是**冻结的历史证据**，别再当成可重跑的输入；
+   要重跑就得先把 `.reference/steam/2024-07-30/libgraphwarrust.so`（sha256 `6eee7bb8…`，见 §18.9）找回来。
+6. **`fixtures/file_structure.tsv` / `file_structure_gaps.tsv` 现在会漂**：`tools/file_structure.py`（和
+   `global_triage.py` 一类）**每次运行都会重写** `fixtures/` 里的产物，而它们按模块清单生成 ⇒ 模块数
+   78→82 之后重跑会得到不同的行（本轮实测 `file_structure.tsv` 有 140 行左右变化）。那两个文件是**别人的
+   写范围**，本任务**没有**入库它们的重跑产物（跑完已 `git checkout` 还原）⇒ **下一任跑这个工具时，
+   记得连同它的生成物一起提交**，别把它当成"我改坏了"。

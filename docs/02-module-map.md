@@ -742,22 +742,42 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 ## 17. 我们的 `src/` ↔ 原版模块（文件级对照）
 
 > 为什么要有这一节：`src/` 原来用的是**我们自己的架构名**（`game.rs` / `api.rs` / `shot.rs`…），
-> 而原版是 **78 个模块 = `scope=graphwar` 62 + `scope=other` 16**（`docs/coverage-matrix.tsv` 的
+> 而原版是 **82 个模块 = `scope=graphwar` 66 + `scope=other` 16**（`docs/coverage-matrix.tsv` 的
 > `scope` 列，`tools/coverage_matrix.py` 生成、`--check` 通过）。文件名言不达意，读者就得自己猜
 > 对应关系。本节把对应关系写成表，并把能定为 1:1 的**用原版名重命名**（`git mv`，历史可 `--follow`）。
 
 > 📌 **口径（现值的唯一算法，别再抄旧读数）**
 > ```bash
-> awk -F'\t' '$2=="graphwar"' docs/coverage-matrix.tsv | wc -l   # 62 个 graphwar 作用域模块
+> awk -F'\t' '$2=="graphwar"' docs/coverage-matrix.tsv | wc -l   # 66 个 graphwar 作用域模块
 > awk -F'\t' '$2=="other"'    docs/coverage-matrix.tsv | wc -l   # 16 个 scope=other 模块
-> ls src/graphwar_*.rs | wc -l                                   # 62 个同名文件（扁平，不含子目录）
+> ls src/graphwar_*.rs | wc -l                                   # 65 个同名文件（扁平，不含子目录）
 > ```
-> 62 = **61 个有同名文件的模块** + **1 个没有同名文件的模块**（`graphwar_event.rs`，内容在 `src/events.rs`）。
-> ⚠ **2026-11-26 起读数变了（T30 / `task-27`）**：原来"4 个没有同名文件"（`graphwar_event.rs` /
+> **66 = 64 个有同名文件的模块 + 2 个没有同名文件的模块**（`graphwar_event.rs` 内容在 `src/events.rs`；
+> `graphwar_id_maker.rs` **我方还没建文件**，见下面的 T112 更正块）。
+> 65 个文件 = 64 个 graphwar 作用域模块的同名文件 + `src/graphwar_event.rs`（该模块的分文件，见 `docs/06` §157.6）。
+>
+> 🟥 **2026-11-28 大改（T112 / 模块分母 78 → 82）：上面这套口径的"模块清单"来源换了。**
+> 旧清单是**从 `panic::Location` 反推**的 —— 于是 `.so` 里 `src/<模块>.rs` 字面量出现 **0 次**的模块
+> **连一行都不会有**（实测有 **11 个**这样的模块），分母被系统性漏算。现在改为**从未 strip 的
+> Android 2.0.60 `.symtab` 的符号路径**读（与逆向目标同版本），模块名 = 路径第 2 段：
+> ```bash
+> python3 tools/coverage_matrix.py --modules   # 写 fixtures/module_denom_audit.tsv + 打印 8 条正负对照
+> ```
+> 本轮因此**补 4 处**（依据与对照全部写在 `docs/06` §157 与 `fixtures/module_denom_plan.txt`）：
+>
+> | 模块 | 处理 | 我方状态 |
+> |---|---|---|
+> | `graphwar_ban_list.rs` | 补行（旧清单里**整模块没有**） | **已实现**（T109 落码，`观测`） |
+> | `graphwar_version.rs` | 补行（同上） | **已实现**（T109 落码，`观测`） |
+> | `graphwar_id_maker.rs` | 补行（同上；Android 只剩 1 个 `LOCAL OBJECT`） | **未做**（无 `src/` 文件） |
+> | `time_probe.rs` | 补行（非前缀，`scope=other`） | **未做**（0 函数 / 0 方法） |
+> | `graphwar_texture_loader.rs` | **改 scope**：`other` → `graphwar`（带前缀，旧表分类错） | `观测` |
+>
+> ⇒ **分母 78 = 62 + 16 修成 82 = 66 + 16**；**模块级完成度从 100 % 变成 80/82 = 97.6 %**（分母变大导致的
+> 下降，其中 2 个新增模块是**早就做完的**、2 个是真没做）。`docs/06` §157 有完整依据。
+> ⚠ **2026-11-26 起读数变过（T30 / `task-27`）**：原来"4 个没有同名文件"（`graphwar_event.rs` /
 > `graphwar_event_handler.rs` / `graphwar_remote_event_handler.rs` / `graphwar_server_connection_handler.rs`），
 > 后三个已按 `panic::Location` 各建同名文件（`fixtures/boundary_audit.tsv` 的 10 条 `mismatch` 清零，`docs/06` §80）。
-> 62 个文件 = 61 个 graphwar 作用域模块 + **`graphwar_texture_loader.rs`**（它带前缀，
-> 但在矩阵里是 `scope=other`，见 §17.2）。
 
 > 📌 **T45（2026-11-26）补的两条 `ours_file` 说明**（`docs/06` §95）：
 > * `src/graphwar_server_connection_handler.rs` 的 6 个可归属函数（`0x45a560` `forward_event` / `0x45a6b0`
@@ -771,7 +791,8 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 > 既漏了 5 个后来定性的模块，又把 `graphwar_texture_loader.rs` 算进了 graphwar）；总账一律以
 > [`149-coverage-matrix.md`](149-coverage-matrix.md)（生成物）为准。
 
-> ⚠️ **本节所有模块名都是从 `.rodata` 残留串反推的。**
+> ⚠️ **本节所有模块名原来都是从 `.rodata` 残留串反推的**（2026-11-28 T112 起**模块清单**改由未 strip 的
+> Android 2.0.60 `.symtab` 符号路径定，见上面的 🟥 块；下面这段是名字来源的历史记录，仍然有效）。
 > 2026-11 拿到了 **2024-07-30 版未 strip 的符号表**，从中读出 78 个模块、165 个类型、290 个方法名，
 > 并解出本节「未知」档 22 个模块里的 21 个真身。**名字以 [`§18`](#18-权威名字清单2024-07-30-版未-strip-的符号表2026-11) 为准**；
 > 本节 §17.1/§17.2/§17.4 里有 5 处归属被 §18.7 更正（`weak_caller` / `graphwar_crash_reporter` /
@@ -817,11 +838,12 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 > "把已做完的写成没做"那类虚报的样本）。
 > 每一行的**依据列**（锚点 / 文档 / 已解出的判据）仍然有效，仍可当该模块的入口读。
 
-### 17.1 `scope=graphwar` 的 62 个模块（我方 `src/` 顶层 59 个 `graphwar_*.rs`）
+### 17.1 `scope=graphwar` 的 66 个模块（我方 `src/` 顶层 65 个 `graphwar_*.rs`）
 
-> 本节**按原版模块列**（= 矩阵里 62 个 `scope=graphwar` 模块，一行一个），不按文件列：
-> 4 个模块没有同名文件（内容在 `src/events.rs` / `src/server.rs`，见 §17.4），所以「表里的模块数 ≠ 文件数」。
-> `graphwar_texture_loader.rs` 虽带 `graphwar_` 前缀，但矩阵把它归 `scope=other` ⇒ 只在 §17.2 出现。
+> 本节**按原版模块列**（= 矩阵里 66 个 `scope=graphwar` 模块，一行一个），不按文件列：
+> 2 个模块没有同名文件（`graphwar_event.rs` 内容在 `src/events.rs`；`graphwar_id_maker.rs` 我方无文件），
+> 所以「表里的模块数 ≠ 文件数」（66 个模块 vs 65 个文件 = 64 个同名 + `src/graphwar_event.rs` 这个分文件）。
+> `graphwar_texture_loader.rs` 带 `graphwar_` 前缀 ⇒ T112 起归回本节（旧版它在 §17.2）。
 > 逐行核对（差集必须为空）：
 > ```bash
 > awk -F'\t' '$2=="graphwar"{print $1}' docs/coverage-matrix.tsv | sort > /tmp/m.txt
@@ -905,16 +927,21 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_target_manager.rs`（3/4） | — | [`docs/archive/123`](archive/123-target-reset.md)：重置规则形状已钉住，判定点未知（397 份回放 0 次部分命中）；`src/` 只有 `Target` 数据结构 | `观测` |
 | `graphwar_team_manager.rs`（7/10） | — | `docs/02 §16.3`：`Team1Container`/`Team2Container` 串池（推断）；7 个锚未解 | `观测` |
 | `graphwar_video_writer.rs`（3/4） | — | `docs/02 §16.3`：3 个锚，无字符串线索 | `观测` |
+| `graphwar_ban_list.rs`（0/2） | `src/graphwar_ban_list.rs` | 🆕 **T112 新补行**（旧清单整模块没有）：Android `.symtab` 真名 `GraphwarBanList::new`（`0x4086a0`）/ `is_connection_banned`（`0x408460`）；96 B 值 + 120 B `RcInner<RefCell<…>>`，两张表 ctrl+0x00/mask+0x08/items+0x18/hasher+0x20。**Linux `.so` 里 `src/graphwar_ban_list.rs` 串 0 次** ⇒ 旧 Location 口径看不见它。封禁的可见效果 = 入队 `"You have been kicked."`（`docs/06` §153.3/§157） | `观测` |
+| `graphwar_version.rs`（0/1） | `src/graphwar_version.rs` | 🆕 **T112 新补行**：Android `.symtab` 唯一函数 `graphwar_version_get_full_version`（`0x3913e4`），返回**编译期常量** `"2.0.60"`（4 处立即数拼 6 字节 + sret 3 字）；Location 串同样 0 次（`docs/06` §157） | `观测` |
+| `graphwar_id_maker.rs`（0/0） | — | 🆕 **T112 新补行，且 `FUNC = 0`**：Android `.symtab` 只剩 1 个 `LOCAL OBJECT`（`graphwar_id_maker::GraphwarIdMaker::get_unique_id::CURRENT_ID`，4 B @ arm64 `0x8b4378`），`get_unique_id` 本体被内联 ⇒ **只数 FUNC 就会漏掉整个模块**（T109 数 65 而非 66 的原因）。缺的证据：`CURRENT_ID` 的初值/步进 + 调用点。**我方未做**（`docs/06` §157.3） | `未做` |
+| `graphwar_texture_loader.rs`（1/1） | `src/graphwar_texture_loader.rs` | 🔀 **T112 从 §17.2 移回**：名字带 `graphwar_` 前缀 ⇒ `scope=graphwar`（旧表把它记成 `other` 是分类错，不是它不在原版）。**4 个函数，不是 1**（旧记 1 是 Location 口径下限：三个 getter 从不 panic）。三张 `HashMap<String,_>` @ `+0x150/+0x180/+0x1b0`（步长 `0x30`、表项 `0x28`），按名字 memcmp，21 KB 饿汉加载；唯一构造点 `0x39a328` 在 `GraphwarRootNode` 的 `INode` impl 里（`docs/16` §31/§32） | `观测` |
 
-### 17.2 `scope=other` 的 16 个模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`）
+### 17.2 `scope=other` 的 16 个模块（16 个都不带 `graphwar_` 前缀）
 
 > **口径**：`scope=other` 的模块数 **16**（`awk -F'\t' '$2=="other"' docs/coverage-matrix.tsv | wc -l`），
-> 合计 **97** 个可归属函数。标题里旧的「12 个」是按文件名前缀数出来的，既不代表模块数、也不代表函数数；
-> 「非 `graphwar_`」这个说法同样不准确 —— **`graphwar_texture_loader.rs` 带前缀，但在矩阵里是 `scope=other`**
-> （它的 Location 一对多复用，归属天然有歧义，见该行）。
+> 合计 **96** 个可归属函数（T112 前是 97：`graphwar_texture_loader` 归回 `scope=graphwar` 后少 1）。
+> 标题里旧的「12 个」是按文件名前缀数出来的，既不代表模块数、也不代表函数数；
+> 旧版还有「`graphwar_texture_loader.rs` 带前缀但归 other」这条例外 —— **T112 起取消**：
+> 带 `graphwar_` 前缀的一律 `scope=graphwar`（见 §17.1 末行），所以本节 16 个**全部**不带前缀。
 
-下表 15 个文件名不带 `graphwar_` 前缀，但**是游戏自己的模块**（§9 提醒过：`entity_drawer.rs` /
-`effect_drawer.rs` 虽无前缀，确实是游戏代码）；第 16 个（`graphwar_texture_loader.rs`）按矩阵归在 `other`。
+下表 16 个文件名都不带 `graphwar_` 前缀，但**是游戏自己的模块**（§9 提醒过：`entity_drawer.rs` /
+`effect_drawer.rs` 虽无前缀，确实是游戏代码）。T112 起本节不再有 `graphwar_texture_loader.rs`（归回 §17.1）。
 **逐行核对**（差集必须为空）：
 ```bash
 awk -F'\t' '$2=="other"{print $1}' docs/coverage-matrix.tsv | sort > /tmp/o.txt
@@ -939,7 +966,7 @@ comm -3 /tmp/o.txt /tmp/d.txt
 | `server_broker_request_connection.rs`（0/1） | — | [`docs/archive/115`](archive/115-broker.md) 只覆盖 broker 线格式；这个连接对象本身没看过 | `观测` |
 | `backtracer.rs`（0/0） | `src/backtracer.rs` | panic 钩子写 `user://crash_log.txt`；**两侧都没有 `Backtrace::capture`**（名字误导）（`docs/16` §33） | `观测` |
 | `function_token.rs`（0/0） | `src/function_token.rs` | 16 B token `{tag,value}` + 字符串表；tag 20 = 无效、`(` = 18、`)` = 19、**`ˆ`(U+02C6) 也是 `^`**（`docs/16` §33） | `观测` |
-| `graphwar_texture_loader.rs`（1/1） | `src/graphwar_texture_loader.rs` | 归属天然有歧义：`0x4d3180` 一对多复用（`docs/02` §16.3）。**4 个函数，不是 1**（旧记 1 是 Location 口径下限：三个 getter 从不 panic）。三张 `HashMap<String,_>` @ `+0x150/+0x180/+0x1b0`（步长 `0x30`、表项 `0x28`），按名字 memcmp，21 KB 饿汉加载；唯一构造点 `0x39a328` 在 `GraphwarRootNode` 的 `INode` impl 里（`docs/16` §31/§32） | `观测` |
+| `time_probe.rs`（0/0） | — | 🆕 **T112 新补行**：`FUNC = 0` 且 `OBJECT = 0`，Android 2.0.60 里只剩一条 泛型实例化 `core::ptr::drop_in_place<graphwarrust::time_probe::TimeProbe>`（⇒ `TimeProbe` 是会被 drop 的值类型）；`docs/02` §18.3 在 2024-07-30 版上记的同样「0 函数 / 0 方法，只在 impl / 泛型实参里露面」⇒ 两版一致。**我方未做**；缺的证据：`TimeProbe` 的字段与用途（既无 Location、也无自有符号，静态侧只能拿到类型名）。⚠ 它是唯一一个 **J1（定义路径）看不见、只有 J1'（任意路径）才看见**的模块（`docs/06` §157.2） | `未做` |
 | `weak_caller.rs`（39/2） | `src/weak_caller.rs` | 结构 = `Weak<RefCell<T>>`，一个类型参数、8 字节、`self` 按值消费（尾部自减弱计数，调用方必须 clone）；`upgrade()==None` ⇒ 静默跳过返回 `()`；唯一 panic 是 `RefCell` 已被可变借出。是 `call_0<F>` / `call<A,F>` **两个**泛型 × 26 个类型，不是回调派发器；39/39 个单态化在 x86 目标里（23 个 `call` + 16 个 `call_0`，两块各自无空洞），第 40 个符号 `0x3d4fa0` 查明是内联了 `call` 的 `GraphwarGameRecorder` 方法（§34） | `观测` |
 
 > 🟢 **日期更正 2026-11-26（T22 / `task-19`）：本表 905、907–915 共 10 行原标 `未实现`，同批过期。**
@@ -961,7 +988,7 @@ comm -3 /tmp/o.txt /tmp/d.txt
 | `src/_scaffold/protocol.rs` | 报文编解码装配层（`Frame` / `parse_message` / `emit_*`）；原版没有同名模块，编解码分散在各 handler 里 | `docs/07`/[`docs/archive/33`](archive/33-server-handshake.md) 的抓包口径 | `我方自造（无原版对应）` |
 | `src/_scaffold/broker.rs` | **我们自己的一台** broker 服务端；原版只有连 broker 的客户端，没有服务端 | [`docs/archive/115`](archive/115-broker.md) | `我方自造（无原版对应）` |
 | `src/_scaffold/capi.rs` | C ABI，纯为把实现暴露出去做对拍（ctypes）；原版无此物 | — | `我方自造（无原版对应）` |
-| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（`gdext_rust_init`）；原版入口在 Godot 模块侧，不在 §17.1/§17.2 那 78 个模块里 | [`docs/archive/116`](archive/116-kernel-api.md) | `我方自造（无原版对应）` |
+| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（`gdext_rust_init`）；原版入口在 Godot 模块侧，不在 §17.1/§17.2 那 82 个模块里 | [`docs/archive/116`](archive/116-kernel-api.md) | `我方自造（无原版对应）` |
 | `src/_scaffold/gdext_class.rs` | `classdb_register_extension_class4` 的封装（同上） | [`docs/archive/116`](archive/116-kernel-api.md) §3 | `我方自造（无原版对应）` |
 | `src/_scaffold/rng.rs` | ChaCha12 的重写；原版是 `rand_chacha` crate，不是游戏模块 | [`docs/archive/53`](archive/53-rng-found.md) | `我方自造（无原版对应）` |
 | `src/_scaffold/replay_inflate.rs` | 手写 DEFLATE / gzip；原版用第三方 crate | [`docs/archive/133`](archive/133-replay-player.md) §6 | `我方自造（无原版对应）` |
@@ -1081,7 +1108,7 @@ rng|ai_explain|turn|aigen|play_control|life|path|tick|replay|shot|settle|levelge
 function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include='*.py' \
   --include='*.toml' --include='*.gd' . | grep -v 'src/_scaffold/' | grep -v 'docs/02-module-map.md'
 
-# 3) §17.1/§17.2 两张表的模块名必须覆盖 `coverage-matrix.tsv` 的全部 78 个模块（差集必须为空）
+# 3) §17.1/§17.2 两张表的模块名必须覆盖 `coverage-matrix.tsv` 的全部 82 个模块（差集必须为空）
 awk -F'\t' '$1!="module" && $1!~/^#/{print $1}' docs/coverage-matrix.tsv | sort > /tmp/all.txt
 sed -n '/^## 17\./,/^## 18\./p' docs/02-module-map.md \
   | grep -o '^| `[a-z0-9_]*\.rs`（' | sed 's/^| `//; s/`（.*//' | sort -u > /tmp/doc.txt
