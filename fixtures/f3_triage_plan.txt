@@ -201,3 +201,88 @@ G4 只是"这一条判不了"的兜底，不许把已经能用结构性证据定
 | 机判自校验：12 条 std 的 FDE 尺寸 | — | 六对逐对相同 | `0x100/0x158/0x164/0x564/0x66f/0x721` 各 ×2 | ✓ |
 
 复跑：`PY=.reference/venv/bin/python; $PY tools/f3_triage.py --control`（rc=0 即全对）。
+
+## 10. 勘误（**追加式**，2026-11-27 T92，写于「跑全量之前」；上文 §1–§9 一个字未改）
+
+**触发**：T89 在 `docs/06` §138.5 驳回 T87 的 R3 对 `0x438880` 的 `na:std-mono` 判定，并在 §138.9-3 留下
+「`na` 判据必须加**调用形态**」这条教训。本节把那条教训写成**可机判的闸**，然后再全量重扫 na 台账。
+
+> §138.5 的原始表述：「泛型单态化是**被直接调用**的（`call rel32 ≥ 1` 且地址不被取走）；交给 API 的闭包，
+> 其地址**只出现在数据槽里**（`call rel32 = 0`、`slot ≥ 1`）。实测 6/6 采纳项是 `call rel32=1 / slot=0`，
+> 唯一驳回项 `0x438880` 是 `call rel32=0 / slot=1`。」
+
+### E6 `R-CALLFORM`：`na:std-mono` 的**硬闸**（只对 `na:std-mono` 生效）
+
+**预注册判据**：`na:std-mono` 必须满足「**体本身就是泛型算法**」的形态证据 —— 二者取一：
+* `CALLERS >= 1`（全 `.text` 有 `call rel32` 指向它 ⇒ 被直接调用），**或**
+* R-STD 结构组 A/B/C 命中（§3：自递归+步长 / 比较器+整块搬运或选择链 / 比较器+同尺寸成对）。
+
+两条都不满足 ⇒ **不许判 `na:std-mono`**，机器候选降 **`unknown`**（`unknown` 计入缺口，保守方向），
+并在「依据」里写清缺什么；只有人工还能给出**可复核的业务描述**（游戏模块 Location / 业务常数 / 业务串 /
+已知游戏被调者）时才升 `real-missing` 并写进 `MANUAL`。
+
+**为什么不是「`CALLERS>=1`」单条（这条是实测出来的，先记在这里）**：预注册 §4 的 **12 条 std 正对照里
+有 2 条 `CALLERS=0`**（`0x4825b0` / `0x482c20`，`SLOT=1`）。逐指令查了它们的槽：
+`0x9bbf40` / `0x9bbf38` 被 **5 条 `call qword ptr [rip+…]`**（`0x4819c7` / `0x481cbc` / `0x481d35` /
+`0x481f29` / `0x482977` 与 `0x481297` / `0x48158c` / `0x481605` / `0x4817f9` / `0x482fe7`）**间接调用**，
+调用者在 `graphwar_function_evolutionator` 的排序实例里 ⇒ 它们是**经 GOT 槽被间接调用**的，只是不走 `rel32`。
+⇒ 「`CALLERS>=1`」单条会把两条正对照打掉，所以硬闸必须接受「体是泛型算法」这第二条腿。
+
+**为什么「`SLOTS==0`」不能当硬闸**：同上，上面两条正对照 `SLOT=1`；而 §138.5 的「地址不被取走」这条
+在本批数据上**不成立**（`0x438880` 也确实 `slot=1` 且被 `0x43b070` —— std 线程入口 —— 用
+`call qword ptr [rip+0x580839]` **间接调用**）。⇒ 真正可机判、且能挡住 `0x438880` 的是
+「有没有 R-STD 结构证据」：`0x438880` 的 `self_calls=0 / strides=[] / ucomisd=0 / bulk=0 / cmov=0`
+（= A/B/C 全不中），而 12 条 std 正对照全部命中其中一组。
+
+**不适用于 `na:gdext-glue`**：G1/G1b/G2 三种形态的定义本身就是「`CALLERS==0`（或 ≤1）**且** `SLOT>=1`」
+（类注册表 / 0x78 字节方法记录表 / 属性访问器表）—— 它们「被交出去」是**设计如此**，
+用同一把尺子会一次把 60+ 条 gdext 行全打掉，是错的。
+
+### E7 `R-WRAP`：复核闸（**只有 wrapper 家族命中才升级为「不许 na」**）
+
+T89 驳回 `0x438880` 的机理是：**游戏闭包被整体内联进 std 的 wrapper**，于是 Android 侧那个 Location 键集
+只命中 wrapper 符号、没有游戏符号（R3 的负向推断在这里必然失效）。
+⇒ 预注册一个**符号家族名单**（子串匹配，名单在跑之前写死）：
+`__rust_begin_short_backtrace` / `catch_unwind` / `std::thread::spawn` / `LangStart`。
+
+* **命中名单 + Linux 函数自身引用的 `panic::Location` 里有 `src/graphwar_*.rs`** ⇒ 判断为
+  「游戏闭包被内联进 foreign wrapper」⇒ **不许 `na:*`**（至少 `real-missing`；若已实现则它根本不该在 F3）。
+* **命中名单 + Linux 自身 Location 全在非游戏文件**（`/rustc/…`、`~/.cargo/git/checkouts/gdext-…`）⇒
+  这个 Linux 函数就是 wrapper/宏的**本体实例** ⇒ `na` 成立。
+
+> 例：`0x426430` / `0x433c00` 的 Android 命中是 `godot_core::private::handle_fallible_call`（属 wrapper 家族），
+> 但它们的 Linux Location **全在** `godot-cell/src/guards.rs` + `godot-core/src/private.rs`、**没有**游戏文件
+> ⇒ 按本条 `na:gdext-glue` 成立（它们本来就在 §4 的 B 组正对照里）。
+
+### E8 全量重扫 na 台账（本轮交付物）
+
+对 `fixtures/f3_triage.tsv` 主表的**全部 `na:*` 行**逐条算调用形态与证据摘要，产出
+`fixtures/f3_triage_na_rescan.tsv`。列：
+`vaddr | 台账类别 | FDE尺寸 | CALLERS(rel32) | SLOTS | 间接调用点数 | 形态 | R-STD命中 | G命中 |
+ Linux自身Location | Android命中符号(家族) | 复核触发 | 裁决 | 依据`
+「形态」四档（本轮新增，全部机判）：
+* `direct`（`CALLERS>=1`）；
+* `indirect`（`CALLERS==0` 且槽被 `call/jmp qword ptr [rip+槽]` 引用过 ⇒ 经 GOT 间接调用）；
+* `handed-out`（`CALLERS==0`、槽存在、但没有任何 `call/jmp [槽]` ⇒ 地址**只被取走**）；
+* `dead`（`CALLERS==0` 且无槽）。
+
+**改判纪律**：只有 E6/E7 给出**机判的不成立理由**、且人工能补上一条可复核证据时才改判；
+判不了就维持并在表里写「缺什么」。**不许为了对齐数字改判**。
+
+### E9 控制组的两处修正（不做就永远不可能绿）
+
+1. **3 条 G4 源码闭包的期望值已过期**：`0x4dec00 / 0x500070 / 0x5005b0` 被 T87 用 Android `.symtab`
+   定名成 `GraphwarLanVBox::update_game_list::{{closure}}` ⇒ 已被判 **F1**、**不在 F3 集合**里；
+   `machine_class()` 只对 F3 行生效，所以现在跑出 `real-missing` 是**预期**，不是判据坏了。
+   ⇒ 控制组对这三条改为断言「**已不在 F3**（T87 定名后升 F1）」+「机器候选不是 `na:*`」，并打印原因。
+2. **补一条活着的 G4 正对照**：从当前 F3 集合里挑一条真命中 `G4-CLOSURE` 且机器候选为 `unknown` 的行
+   （本轮实测：`0x4eb94b` / `0x4ebb68`，Location 都是 `src/math_function.rs:184:24`，被 ≥2 条无名 F3 行共享），
+   期望仍判 `unknown` —— 保证 G4 判据本身还被验证，不是靠三条已经离场的样本。
+
+### E10 `fixtures/f3_triage.tsv` 的历史行怎么归档（T89 §138.9-1 留的最后一件事）
+
+台账是**历史裁决记录**，不是 F3 的派生视图；但重跑会整表重写。⇒ 给 `write()` 加「归档」块：
+把**上一版台账里有、本轮重跑后已不属于 F3 集合**的行，写成**注释行**
+`# [归档] <vaddr> <旧类别> ⇒ 已离开 F3（现 <F1/F2>：<判定> <名字>）`，放在主表之后、F2-scan 分节之前。
+注释行**不参与任何机读计数**（`tools/function_coverage.py` 读到 `#` 就跳过），重复重跑不丢（归档行会被读回来再去重）。
+⇒ 重跑既能让台账与当前 F3 一致，又不销毁历史裁决。
