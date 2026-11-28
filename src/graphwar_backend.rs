@@ -592,6 +592,21 @@ pub enum StartLanBroadcasterStep {
     Install,
 }
 
+/// `stop_lan_broadcaster`（arm64 `0x407068` / 172 B）的步骤，顺序 = 指令地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopLanBroadcasterStep {
+    /// `close(fd)`（`0x407098 bl close@plt`）—— **只有 `fd != -1` 才调**
+    /// （`0x407090 cmn w0,#0x1` / `0x407094 b.eq` 跳过）。
+    CloseSocket,
+    /// `+0x1c8` 写回 `-1`（`0x40709c mov w8,#-1` + `0x4070a0 str`）—— **无条件**（close 两条路汇合到这里）。
+    ResetFd,
+    /// 丢 LAN 广播者里的 hashbrown 表（`0x4070a4 add x0,x19,#0x188` + `0x4070a8 bl RawTable::drop`）—— 无条件。
+    DropTable,
+    /// 释放那块的堆缓冲（`0x4070bc ldr x0,[x19,#0x118]` + `w2=1` + `0x4070c8 bl __rust_dealloc`）。
+    /// **两条跳过判据**：长度 `== 0x8000_0000_0000_0000`（`0x4070b0`/`0x4070b4`）或 `== 0`（`0x4070b8 cbz`）。
+    DeallocBuffer,
+}
+
 /// `setup_level`（arm64 `0x406b4c` / 88 B）的步骤。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupLevelStep {
@@ -968,6 +983,57 @@ impl GraphwarBackend {
             buffer_len: 0,
         });
         steps.push(StartLanBroadcasterStep::Install);
+        steps
+    }
+
+    /// `stop_lan_broadcaster` —— **原版 arm64 `0x407068` / 172 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x407068..0x407114`，主路径；`0x4070e0` 之后是 panic 垫片）：
+    ///
+    /// ```text
+    /// 0x407078  ldr  x20,[x0,#0x110]           ; 槽首字（空哨兵见 LAN_SLOT_EMPTY）
+    /// 0x407084  cmp  x20,x21                   ; x21 = 0x8000_0000_0000_0001
+    /// 0x407088  b.eq 0x4070cc                  ; **已经是空 ⇒ 跳过全部收尾**（只写回哨兵）
+    /// 0x40708c  ldr  w0,[x19,#0x1c8]           ; socket fd
+    /// 0x407090  cmn  w0,#0x1 / 0x407094 b.eq   ; fd == -1 ⇒ 不 close
+    /// 0x407098  bl   close@plt
+    /// 0x40709c  mov  w8,#-1 / 0x4070a0 str w8,[x19,#0x1c8]   ; fd = -1（无条件）
+    /// 0x4070a4  add  x0,x19,#0x188
+    /// 0x4070a8  bl   RawTable::drop            ; 丢掉 hashbrown 表（无条件）
+    /// 0x4070ac  mov  x8,#-0x8000000000000000
+    /// 0x4070b0  cmp  x20,x8 / 0x4070b4 b.eq     ; 长度 == i64::MIN ⇒ 不 dealloc
+    /// 0x4070b8  cbz  x20,0x4070cc              ; 长度 == 0 ⇒ 不 dealloc
+    /// 0x4070bc  ldr  x0,[x19,#0x118]           ; 指针（注意：**指针在 +0x118，长度在 +0x110**）
+    /// 0x4070c0  mov  x1,x20 / 0x4070c4 mov w2,#1
+    /// 0x4070c8  bl   __rustc::__rust_dealloc   ; dealloc(ptr, size=长度, align=1)
+    /// 0x4070cc  str  x21,[x19,#0x110]          ; 槽 = 空哨兵（空槽时也走这一句）
+    /// ```
+    ///
+    /// ⇒ 语义：**空槽什么都不做；非空则 close(fd) → fd=-1 → 丢表 → （长度合法才）释放缓冲 → 写空哨兵**。
+    /// 三个不显然的点：
+    /// 1. `fd` 与"长度"是**同一个对象里**的两个字段（`+0x1c8` / `+0x110`），所以"关 socket"和
+    ///    "释放缓冲"是**两件独立的事**（一个成功另一个也可能跳过）；
+    /// 2. 释放用的 `size` 是槽的**首字**（既是空哨兵位、又是 dealloc 的 size 实参）
+    ///    ⇒ 这也是为什么"空/未分配"必须用哨兵和 0 两个特例把它排掉（`0x4070b0`/`0x4070b8`）；
+    /// 3. 收尾的写哨兵（`0x4070cc`）在**两条路汇合之后** ⇒ 空槽调用也是幂等的（写回同一个值）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。不声称"逐位"：x86 侧没有锚。
+    pub fn stop_lan_broadcaster(&mut self) -> Vec<StopLanBroadcasterStep> {
+        let mut steps = Vec::new();
+        // 0x407084/0x407088：空槽 ⇒ 一步都不推（但 0x4070cc 的写哨兵是汇合后的，照做）
+        if let Some(slot) = self.lan_broadcaster {
+            // 0x407090 cmn w0,#0x1 / b.eq：fd == -1 就不 close
+            if slot.fd != LAN_FD_CLOSED {
+                steps.push(StopLanBroadcasterStep::CloseSocket); // 0x407098
+            }
+            steps.push(StopLanBroadcasterStep::ResetFd); // 0x40709c/0x4070a0（无条件）
+            steps.push(StopLanBroadcasterStep::DropTable); // 0x4070a4/0x4070a8（无条件）
+            // 0x4070b0/0x4070b4 + 0x4070b8：两个"跳过 dealloc"的特例
+            if slot.buffer_len != 0 && slot.buffer_len != 0x8000_0000_0000_0000 {
+                steps.push(StopLanBroadcasterStep::DeallocBuffer); // 0x4070bc..0x4070c8
+            }
+        }
+        self.lan_broadcaster = None; // 0x4070cc str x21(哨兵),[x19,#0x110]
         steps
     }
 
@@ -1423,6 +1489,51 @@ mod denom_t106_tests {
         // 第二个次调用：槽非空 ⇒ 0x40723c b.ne 直接返回，连 new 都不调
         assert!(b.start_lan_broadcaster(9999).is_empty(), "0x40723c b.ne 0x407288");
         assert_eq!(b.lan_broadcaster.unwrap().port, 35245, "旧槽不被覆盖（与 start_server 相反）");
+    }
+
+    /// `stop_lan_broadcaster` 的四条分支：①空槽 ②fd 打开 + 长度合法（四步全走）
+    /// ③fd 已关 + 长度 0（跳过 close 与 dealloc）④长度 = `0x8000…0000`（跳过 dealloc）。
+    /// 判据地址：0x407090（cmn）、0x4070a8（RawTable::drop）、0x4070b0/0x4070b4、0x4070b8。
+    #[test]
+    fn stop_lan_broadcaster_walks_four_guards() {
+        use StopLanBroadcasterStep::*;
+
+        // ① 空槽：一步不推，且写回哨兵（= 我方 None，幂等）
+        let mut b = GraphwarBackend::new();
+        assert!(b.stop_lan_broadcaster().is_empty(), "0x407088 b.eq");
+        assert!(b.lan_broadcaster.is_none(), "0x4070cc 写回空哨兵");
+
+        // ② fd=7、长度 64：close → fd=-1 → 丢表 → dealloc
+        let mut b = GraphwarBackend::new();
+        b.lan_broadcaster = Some(LanBroadcasterSlot { port: 35245, fd: 7, buffer_len: 64 });
+        assert_eq!(
+            b.stop_lan_broadcaster(),
+            vec![CloseSocket, ResetFd, DropTable, DeallocBuffer],
+            "地址顺序 0x407098 → 0x40709c → 0x4070a8 → 0x4070c8"
+        );
+        assert!(b.lan_broadcaster.is_none());
+
+        // ③ fd 已关（-1）+ 长度 0：两条跳过判据都命中 ⇒ 只剩 ResetFd + DropTable
+        let mut b = GraphwarBackend::new();
+        b.lan_broadcaster = Some(LanBroadcasterSlot { port: 1, fd: LAN_FD_CLOSED, buffer_len: 0 });
+        assert_eq!(b.stop_lan_broadcaster(), vec![ResetFd, DropTable], "0x407094 b.eq + 0x4070b8 cbz");
+
+        // ④ 长度 == 0x8000_0000_0000_0000：只跳过 dealloc（close 照做）
+        let mut b = GraphwarBackend::new();
+        b.lan_broadcaster =
+            Some(LanBroadcasterSlot { port: 2, fd: 9, buffer_len: 0x8000_0000_0000_0000 });
+        assert_eq!(b.stop_lan_broadcaster(), vec![CloseSocket, ResetFd, DropTable], "0x4070b4 b.eq");
+    }
+
+    /// 与 `start_lan_broadcaster` 配对的正对照：装进去（fd=−1、长度 0）再停，
+    /// 只应推 `ResetFd + DropTable`（close 与 dealloc 都被判据跳过）。
+    #[test]
+    fn start_then_stop_lan_broadcaster_skips_socket_and_buffer() {
+        use StopLanBroadcasterStep::*;
+        let mut b = GraphwarBackend::new();
+        b.start_lan_broadcaster(35245);
+        assert_eq!(b.stop_lan_broadcaster(), vec![ResetFd, DropTable]);
+        assert!(b.lan_broadcaster.is_none());
     }
 
     /// 差分对拍：我方这段循环与 `partition_point(|&c| c <= current)`（upper_bound 的另一种写法）
