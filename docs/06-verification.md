@@ -28517,3 +28517,33 @@ _ZN133_$LT$graphwarrust..graphwar_setup_control..GraphwarSetupControl$u20$as$u20
 | `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑生成物（`src_fns` 4125 → 4135、`src_tree_sha256` 更新） | 不是手改 |
 | `docs/06-verification.md` | 追加本节 | 不动既有节 |
 | **没动** | `src/graphwar_game_recorder.rs`（本轮只读：3 条都缺边界，硬写要越界）、`src/graphwar_setup_control.rs`（只读核台账）、`src/graphwar_replay_player.rs`、`src/_scaffold/**`、`client/**`、`tests/` 既有断言、`fixtures/function_coverage.tsv`、`fixtures/boundary_audit.tsv`、`fixtures/global_triage*.tsv`、`fixtures/f3_triage.tsv`、`docs/00`/`02`/`16`/HANDOVER/README、门槛/护栏文件 | 只读引用 |
+
+### 148.10 补记（同一分支续做：第 5 条落码 + 两条新证据）
+
+**落码 5/5：`subscribe_to_event`（arm64 `0x406e80` / 488 B；x86 **`0x514b40`** / FDE `0x1d7`）**
+——把 §148.0③ 里那条**假 F1**（落点只是 `entity_drawer.rs:3015` 的注释）补成真函数体。
+这不改任何数字（它本来就在分子里），改的是"分子站不站得住"。逐指令注释在函数体上方，`0x406fd0` 之后
+直接 epilogue ⇒ **返回值就是被调者（`subscribe_to_event_with_id`）的返回值**。
+
+**两条新证据（比落码本身更值钱，下一轮直接用）**
+
+1. **订阅 id 不是线上 tag，是"分配"出来的**：`0x406e84 adrp 0x8b4000` + `0x406eb8 add #0x378`
+   ⇒ `0x8b4378` 是一个**全局原子计数器**，`0x406ebc ldxr` / `0x406ec0 add w9,w22,#1` / `0x406ec4 stxr`
+   = `fetch_add(1)` 且**返回旧值**。⇒ `+0x1d8` 的键（T95 记作"事件 id"）是**订阅 id**。
+2. **表项是 4 个字，不是"只有名字"**：`0x406f2c stp x20,x26,[sp,#0x28]` + `0x406f30 a903e7f4`
+   （存 `x20`=name_len / `x26`=刚 alloc 的名字缓冲 / `x25`=arg3） + `0x406f34 f90027f8`（存 `x24`=arg4）
+   ⇒ 值是 `(name: Box<[u8]>, arg3, arg4)`。**arg3/arg4 的类型本轮没读出**——最大可能是
+   `Box<dyn FnMut>` 的胖指针（数据 + vtable），旁证是 `0x406f78 ldr x8,[x25]` + `0x406f7c blr x8`
+   那次"drop 旧值"的调用形态。
+   ⇒ **T95 把 `+0x1d8` 的值建模成 `String` 是简化、不是结论**；要修就得同时改
+   `resubscribe_to_events` / `subscribe_to_event_with_id` 的建模与它们的单测（本轮**没动**，
+   因为那会把 T95 的三条已落码函数一并改签名，超出"补一条函数体"的范围）。
+
+**落地状态（更新 §148.0① 的 backend 行）**：F1 **7** / F2 6 / F3 **1** / F4 5
+⇒ **真实待写 = 6 条从零写 + 6 条要补**（上一版是 7 + 6）。剩的 F3 只有 `process`（0x407ef0 / x86 `0x515dc0`，
+0x5a9 字节、7 个 Location 行、4 次 `get_module`，超本轮 VOL_CAP）。
+
+**门槛（第 5 条落码后重跑）**：`cargo test --offline` **1642 / 0 / 1ignored**（基线 1634 ⇒ **+8**，
+= 6 条生命周期单测 + 2 条本函数单测）；`coverage_matrix.py --check` **OK**（`src_fns` 4135→4138）；
+其余门槛（gdext / 三轴 / boundary_audit / check_doc_refs / docsec）与 §148.7 相同、未退。
+**三个数仍一位未动**：A `333/527 = 63.2 %`、B `333/438 = 76.0 %`、1:1 `261/527 = 49.5 %`（`--stats` 复算）。

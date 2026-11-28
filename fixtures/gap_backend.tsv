@@ -18,7 +18,7 @@ android_vaddr	android_size	android_name	src_kind	class	na_evidence	x86_anchor	in
 0x00406c0c	88	GraphwarBackend::stop_server	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	（本轮前）无	none	F4 real-missing ⇒ 本轮落码	✅ 落码（观测）
 0x00406c64	216	GraphwarBackend::start_server	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	（本轮前）无	none	F4 real-missing ⇒ 本轮落码	✅ 落码（观测）
 0x00406d3c	324	GraphwarBackend::button_pressed	src-fn	real	—	0x514a10	yes	0x12e	F1（pinned=**addr**）	src/graphwar_game_client.rs:390 on_command（自述"`0x514a10` 的纯逻辑等价"）	body-partial	F2（只有 `start_game`/`fire` 两条命令的**真值表**；原版 324 B 还有取命令总线 / 键鼠分支 / 发事件。台账的 F1 靠"地址出现在注释里"）	—
-0x00406e80	488	GraphwarBackend::subscribe_to_event	src-fn	real	—	0x514b40	yes	0x1d7	F1（pinned=**addr**）	src/entity_drawer.rs:3039 `fn is_kernel_event`（**落点是注释命中**：`0x514b40` 只出现在 :3015 的注释里；本模块无 `fn subscribe_to_event`）	addr-only	**F3 ⇒ real-missing**（台账 F1 = **假 F1**，按 plan E-1/E-2）	—
+0x00406e80	488	GraphwarBackend::subscribe_to_event	src-fn	real	—	0x514b40	yes	0x1d7	F1（pinned=**addr**）	src/graphwar_backend.rs:new subscribe_to_event（T103 落码）	body-ok	**台账的 F1 原本是假 F1**（落点 `entity_drawer.rs:3039` 只是注释命中：`0x514b40` 只出现在 :3015 的注释里）⇒ 本轮**读通 488 B 并落成真函数体**，F1 现在成立（观测）	✅ 落码（观测）
 0x00407068	172	GraphwarBackend::stop_lan_broadcaster	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing	—
 0x00407114	268	GraphwarBackend::resubscribe_to_events	src-fn	real	—	0x514d80	yes	0x112	F1（name 锚）	src/graphwar_backend.rs:467 resubscribe_to_events	body-ok	F1（T95 落码，逐指令注释）	—
 0x00407220	144	GraphwarBackend::start_lan_broadcaster	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing	—
@@ -37,18 +37,19 @@ android_vaddr	android_size	android_name	src_kind	class	na_evidence	x86_anchor	in
 #
 # ---- 汇总（机读分节）----
 # A_addr = 22 ; A_src = 19（18 方法 + 1 闭包）; na:other = 3 ; na:gdext-glue = 0 ; unknown = 0
-# 落地状态（今日，含本轮落码的 4 条）：
-#   F1 = 6  （resubscribe_to_events / start_client_to_replay / setup_level / stop_client / stop_server / start_server）
+# 落地状态（今日，含本轮落码的 **5** 条）：
+#   F1 = 7  （resubscribe_to_events / start_client_to_replay / setup_level / stop_client / stop_server / start_server
+#            / subscribe_to_event ← 台账本来是**假 F1**，本轮落成真函数体）
 #   F2 = 6  （subscribe_to_event_with_id / 它的闭包 / start_client_to_local_server / start_client_to_remote_server / new / button_pressed）
-#   F3 = 2  （subscribe_to_event / process —— 台账的两条**假 F1 / 假 F2** 就落在这里）
+#   F3 = 1  （process —— 台账的**假 F2** 就在这里；另一条假 F1 `subscribe_to_event` 本轮已补实）
 #   F4 = 5  （stop_lan_broadcaster / start_lan_broadcaster / get_next_clip_checkpoint / stop_server_broker_handler / start_server_broker_handler）
-# ⇒ **真实待写源码函数数 = 7 条从零写 + 6 条要补到 F1**（合计 13 条待办；19 − 6 = 13）
+# ⇒ **真实待写源码函数数 = 6 条从零写 + 6 条要补到 F1**（合计 12 条待办；19 − 7 = 12）
 # ⚠️ 527 分母关系（plan §2-4）：19 条里 **6 条**在 `function_coverage.tsv` 的 527 内（0x514a10/0x514b40/0x514d80/
 #    0x514f20/0x5153f0/0x515dc0，另 0x520100 是同一闭包的第二条），**13 条在分母外**（无 Location）。
-#    本轮落码的 4 条全在分母外 ⇒ 三个口径数字预期**一位不动**（T97/T98 的先例）。
+#    本轮落码的 5 条里 **4 条在分母外**、1 条（0x514b40）**本来就在分子里** ⇒ 三个口径数字**一位不动**（T97/T98 的先例）。
 # 台账两处**假档位**（本轮结论，按 plan E-1/E-2；不改生成物）：
 #   ① `0x514a10` button_pressed 记 F1：落点 `game_client.rs:390 on_command` 只是两条命令的真值表 ⇒ 应为 F2。
-#   ② `0x514b40` subscribe_to_event 记 F1：落点 `entity_drawer.rs:3039` 是 `fn is_kernel_event`，
-#      `0x514b40` 只出现在 :3015 的注释里 ⇒ 应为 F3（我方**没有**这个函数）。
+#   ② ~~`0x514b40` subscribe_to_event 记 F1~~ **本轮已补实**：台账的 F1 当时是假 F1（落点只是注释命中），
+#      现在函数体在了（T103 落码 5/5）⇒ 这条 F1 成立。
 #   ③ `0x515dc0` process 记 F2：落点 `game_client.rs:754` 是**另一条原版函数**（`GraphwarGameClient::process`
 #      0x518400）的循环体 ⇒ 应为 F3。
