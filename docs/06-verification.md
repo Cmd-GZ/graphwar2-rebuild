@@ -28236,3 +28236,332 @@ llvm-objdump -d --start-address=0x4c91e4 --stop-address=0x4c9270 $AND
 | `src/graphwar_setup_control.rs` | +184 行（2 个 commit） | `enable_play_chat_button` 新增、`on_visibility_change` 补实、4 条常量、4 条单测 |
 | `docs/06-verification.md` | 追加本节 | 不动既有节 |
 | **没动** | `src/graphwar_root_node.rs` / `graphwar_button.rs`（t97）、`src/_scaffold/**`、`client/**`、`tools/**`、`fixtures/guardrails.json`、`fixtures/function_coverage.tsv`、`fixtures/boundary_audit.tsv`、`fixtures/global_triage*.tsv`、`fixtures/f3_triage.tsv`、`docs/00`/`02`/`16`/HANDOVER/README | 只读引用 |
+
+## 148. T102 `entity_drawer`（29 / 14 / 5 / 9 / real-missing **3**）与 `graphwar_plane`（27 / 10 / 4 / 6 / real-missing **0**）两块"最大缺口"的定性：真缺口 **7 个源码函数**（本轮落 **5**），其中 `entity_drawer` 是 **4** 不是 3、`graphwar_plane` 是 **3** 不是 0（2026-11-28，任务 T102 / 分支 `agent/gap-drawers2`）
+
+`docs/06` §143 刷新后的 `fixtures/global_triage_modules.tsv` 把这两行排进了 `gap_proxy` **前两名**（24 / 23）：
+
+| 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `entity_drawer.rs` | **29** | 14 | 5 | 9 | **3** | **24** |
+| `graphwar_plane.rs` | **27** | 10 | 4 | 6 | **0** | **23** |
+
+本节回答三个问题：**①** 这 24 / 23 是不是"要写 24 / 23 个函数"；**②** `real-missing` 到底几条；
+**③** 这两个模块**真实待写源码函数数**是多少（跨 527 分母内外）。
+答案：**① 不是**（`A` 口径天然含 drop glue 与 gdext 宏产物：29 = 13 宏产物 + 5 编译器胶水 + 11 源码函数；
+27 = 13 + 6 + 8）；**②** `entity_drawer` = **4**（§143 记 3，差的那条是 `get_entity_skin_sprite` 被
+"地址注释"抬成 F1）、`graphwar_plane` = **3**（§143 记 0，因为这 3 条体内 `panic::Location` = 0，
+**进不了 527 分母**）；**③** 合计 **19 个源码函数**（11 + 8），本轮落 **5** 条，**剩 2 条**（`clear_state` / `update_entities`）。
+
+### 148.0 一页结论
+
+| # | 交付 | 结果 |
+|---|---|---|
+| ① | `entity_drawer` 29 条逐条定性 → `fixtures/gap_entity_drawer.tsv` | implemented **7** / real-missing **4** / `na:gdext-glue` **13** / `na:other` **5**（drop-glue 4 + closure-in-fn 1）。⇒ **源码函数 11**，不是 29 |
+| ② | `graphwar_plane` 27 条逐条定性 → `fixtures/gap_plane.tsv` | implemented **5** / real-missing **3** / `na:gdext-glue` **13** / `na:other` **6**（drop 4 + closure 2）。⇒ **源码函数 8**，不是 27 |
+| ③ | `real-missing` **落码 5 条** | `entity_drawer`：`get_entity_skin_sprite` / `get_entity_face_sprite` / `get_entity_hat_sprite` / `get_entity_name_label`（**1 个 commit**，四者互为前提）；`graphwar_plane`：`on_resized`（**1 个 commit**）。各带单测（4 + 2 条） |
+| ④ | 顺手解掉的两条旧悬案 | **`on_resized` 的 3 次 `Control::set_*` 方法名**（`docs/16` §23.3 / 本模块 `UNKNOWNS` 第 3 条）= **`Control::set_size` ×3 + `Control::get_size` ×1**，槽→thunk→`(类名,方法名)` 字面量逐位；**`+0x1f8` 闸门**：这两个模块**只有读点、0 个写点**（12 个读点逐条列出，见本节 §148.6-6） |
+| ⑤ | 只登记不落码的 | `clear_state`（x86 `0x4bded0`）：3 个被调 thunk **没有** `(名,长度)` 字面量对 ⇒ 方法名定不了（§148.5.3）；`update_entities`（`0x4be270`）：`queue_free` 的对象字段未定。两条都写清了缺什么 |
+
+> **招牌三个数（分开报，起点 → 终点）**：A **333 → 336** / 527（**63.2 % → 63.8 %**）、
+> B **333 → 336** / 438（**76.0 % → 76.7 %**）、1:1 **261 → 264** / 527（**49.5 % → 50.1 %**）。
+> **为什么机器码口径这次动了**（T98 §147 那轮一位未动）：那轮落码的函数**本来就在 F1 里**；
+> 本轮落的三条（`get_entity_hat_sprite` / `get_entity_face_sprite` / `get_entity_name_label`）
+> 原来是 **F3**，现在有了函数体和同名指认 ⇒ **F3 123 → 120、F1 +3**。起点读数由 `git archive 58d9238`
+> + `tools/function_coverage.py --stats` 独立复算（§148.8 第 ①&#160;条）。
+
+### 148.1 预注册与口径（`fixtures/gap_drawers2_plan.txt`，单独 commit `a65631c`）
+
+判据**原样继承** T82 `fixtures/f3_triage_plan.txt` §1–§3 + §10（E6 `R-CALLFORM` / E7 `R-WRAP`）、
+T86 §134.3 的五类、`VOL_CAP = 0x800`、T89 §138.5 的调用形态闸、T98 §147.1 的 **R4**
+（"Linux 侧没有"必须先排除三种解释：① 体内无 `panic::Location` ② 归属被多数投票压到别处 ③ 被内联）。
+本轮**新增只有两条**，都写在预注册文件里、跑的时候没换法：
+
+* **§4.1 `implemented` 加严**：**只贴地址注释、没有函数体 ⇒ 不算 `implemented`**。
+  这条直接改判了 `get_entity_skin_sprite`（下 §148.4）。
+* **§口径第 4 条：引擎方法定名法** —— `GOT 槽 → thunk → thunk 里那两对 `(名指针, 名长度)` 字面量`。
+  这是把 `docs/16` §23.3 的"方法名未解"变成可解的那一步，见本节 §148.2。
+
+**目标集合（跑前钉死，跑后逐数复现）**：按 `tools/global_triage.py --android-census` 的模块归属规则，
+在 Android 2.0.60 `.symtab`（`.text` 内 `FUNC`、按地址去重）上独立复算得到
+**entity_drawer = 29 / graphwar_plane = 27**，与 `fixtures/global_triage_modules.tsv` **逐数相等**（硬闸 C1 通过）。
+`A` 口径**天然含** `core::ptr::drop_in_place<…>`（4 + 4 条）与 gdext 宏产物（13 + 13 条）——
+这正是 `gap_proxy` 是**代理**而不是缺口条数的原因（与 T97 §145 在 `button` 上的结论同型）。
+
+### 148.2 方法学：本轮新增的可机判一步（引擎方法定名）+ C2 自校验
+
+`docs/16` §23.3 原来写着「`on_resized` 的 3 次 `Control::set_*` **方法名未解**（走 GOT 槽）」。
+本轮把它变成可判：gdext 每个引擎方法调用都经过一个 thunk，thunk 体内**成对写入**
+`(类名指针, 类名长度)` 与 `(方法名指针, 方法名长度)` 四个立即数：
+
+```text
+0x891146  mov qword [rsp+0x40], rax   ; rax = 0x29dac7 → 'Control…'（运行时串表起点）
+0x89114b  mov qword [rsp+0x48], 7     ; ← 长度 7 ⇒ 类名 = "Control"
+0x89115b  mov qword [rsp+0x50], rax   ; rax = 0x19f3c0 → 'set_size'
+0x891160  mov qword [rsp+0x58], 8     ; ← 长度 8 ⇒ 方法名 = "set_size"
+```
+
+⇒ 槽 `0x9bc0c8` → thunk `0x8910e0` → **`Control::set_size`**。
+
+**C2 自校验（预注册 §5，防"凡是 slot 都给个名字"）**：
+
+| 槽 | thunk | 解出 | 期望 |
+|---|---|---|---|
+| `0x9bc0c8` | `0x8910e0` | `('Control', 7)` + `('set_size', 8)` | ✓ 引擎方法 |
+| `0x9bb000` | `0x8925f0` | `('Control', 7)` + `('get_size', 8)` | ✓ 引擎方法 |
+| `0x9ba680` | `0x89b170` | **解不出**（thunk 里只有 gdext 的 `WithBaseField::base()…` panic 串） | ✓ **必须解不出** |
+
+**本轮用同一把尺子定名的 4 个槽**（`entity_drawer` 的创建路径）：
+
+| 槽 | thunk | 解出 | 用在哪 |
+|---|---|---|---|
+| `0x9bc0b8` | `0x8ad2e0` | `('CanvasItem',10)` + `('set_texture_filter',18)` | `get_entity_*_sprite` 建节点 |
+| `0x9bc0c0` | `0x89e550` | `('Sprite2D',8)` + `('set_flip_v',10)` | 同上 |
+| `0x9bb260` | `0x8aeff0` | `('Node',4)` + `('add_child',9)` | 同上 |
+| `0x9ba8b8` | `0x88d750` | `('RefCounted',10)` + `('unreference',11)` | 同上（`Gd` 放引用） |
+
+### 148.3 `graphwar_plane`：27 条逐条定性（`fixtures/gap_plane.tsv`）
+
+| 类别 | 条数 | 是哪些 |
+|---|---|---|
+| `implemented` | **5** | `draw`(0x4bc54c→x86 0x4b5df0，F1) / `init`(0x4bd73c→0x4b7380，F1，Location 落 `obstacle_drawer.rs:37:97` = 内联的 ObstacleDrawer 构造) / `ready`(0x4bdc74→0x4b7a70，F1) / `process`(0x4be534→0x4b83f0，F1) / `obstacle_partial_update_event`(0x4c38d8→0x4be3e0，M 记 F2，**边界不符**：原版是方法、我方是自由函数) |
+| `real-missing` | **3** | `on_resized`(0x4c3308→**0x4bddb0**) / `clear_state`(0x4c3408→**0x4bded0**) / `update_entities`(0x4c378c→**0x4be270**) —— 三条**都在 527 分母外**（体内 Location = 0） |
+| `na:gdext-glue` | **13** | `__register_methods` / `__register_constants` / 3 × `__virtual_call::virtual_fn` / 4 × `__init::__inner_init` / `ptrcall_fn` / `varcall_fn` / `__default_virtual_call` / `class_id` |
+| `na:other` | **6** | 4 × `core::ptr::drop_in_place<…>`（含 2 份 `.llvm.` 克隆）+ 2 × `ready::{{closure}}`（父函数 `ready` 已 implemented） |
+
+**`real-missing = 0` 与 `real-missing = 3` 都对，说的是不同口径**（T98 §147.3 的同型结论）：
+`clear_state` / `update_entities` / `on_resized` 的 `x86` 侧**一个 `panic::Location` 都没有**
+⇒ `tools/function_coverage.py` 的 527 分母**永远收不到它们**（R2①）。所以：
+`M` 口径（机器码）说"这个模块 F3 里 real-missing 0 条"**没错**；`S` 口径（源码函数）说
+"这个模块还缺 3 个函数"**也没错**。
+
+另有一条**映射缺 1 条**要登记：Android 有 **2 条** `ready::{{closure}}`（0x4be1ec 404 B / 0x4be380 436 B），
+而 `PLANE_FUNCS` 只对上了 1 条（x86 `0x4b8210` ↔ arm64 `0x4be1ec`）。第二条闭包的 Linux 对端**未定位**
+（缺的证据：在 `0x4b7a70` 的 FDE 之后的相邻函数里逐条比 `subscribe_to_event` 的参数字面量）。
+
+### 148.4 `entity_drawer`：29 条逐条定性（`fixtures/gap_entity_drawer.tsv`）
+
+| 类别 | 条数 | 是哪些 |
+|---|---|---|
+| `implemented` | **7** | `draw`(0x4b9430→0x4b2890 F1) / `init`(0x4ba8e4→0x4b3ff0，527 外) / `ready`(0x4bab44→0x4b4130 F1) / `process`(0x4bb508→0x4b4b60 F1) / `update_sprite`(0x4bf418→0x4b9530 F1) / `update_name_label`(0x4bf690→0x4b9810，527 外，**边界不符**) / `draw_offset_triangle`(0x4bf880→0x4b9a70，527 外，**边界不符**) |
+| `real-missing` | **4** | `get_entity_skin_sprite`(0x4c1068→0x4bb6b0) / `get_entity_face_sprite`(0x4c0b94→0x4bb0a0) / `get_entity_hat_sprite`(0x4bfbb0→0x4b9e70) / `get_entity_name_label`(0x4c0084→0x4ba4a0) |
+| `na:gdext-glue` | **13** | 同 plane 的十三类 |
+| `na:other` | **5** | 4 × drop glue + 1 × `ready::{{closure}}`（0x4bb378，父函数已 implemented） |
+
+**为什么是 4 不是 §143 的 3**：`get_entity_skin_sprite` 在 `fixtures/function_coverage.tsv` 里是
+**F1**，但 `name_src` 是 **`addr`** —— 那一条的意思是"**我方注释里贴了 0x4bb6b0 这个地址**"，
+而不是"我方有这个函数"。实测 `grep -c 'fn get_entity_skin_sprite' src/entity_drawer.rs` = **0**
+（只有 `texture_for(kind, name)` 这个**不同形状**的私有函数 + 地址注释）。
+按预注册 §4.1（T98 §147.6-3 的教训）⇒ 它是 `real-missing`。**其它三条同病**（`0x4b9e70/0x4ba4a0/0x4bb0a0`
+在 `f3_triage.tsv` 里已是 `real-missing`）。这是**修正**，不是回退：M 台账的 F1 是 P2「地址指认」抬上去的。
+
+### 148.5 落码（5 条，2 个 commit，各带单测）
+
+#### 148.5.1 `entity_drawer` 的 4 个 `get_entity_*`（commit `86052e3`）
+
+一个 commit 落 4 条的理由：它们**互为前提**（`relayout` 的取子节点路径从"直接读字段"改成"走这 4 个函数"，
+缺一个就编译不过），不是 4 个独立改动。
+
+**判别性证据（逐位）**：三个 sprite getter **逐指令同形**，只差"读哪张名字表"这一对立即数：
+
+| 函数 | `cmp` 立即数 | `lea` 立即数 | arm64 `st_size` | x86 FDE |
+|---|---|---|---|---|
+| `get_entity_skin_sprite`（0x4bb6b0） | `[rsi+0x60]` | `[r15+0x68]` | 1236 | `0x60d` |
+| `get_entity_face_sprite`（0x4bb0a0） | `[rsi+0x90]` | `[r15+0x98]` | 1236 | **`0x60d`**（与 skin **逐字节相同**） |
+| `get_entity_hat_sprite`  （0x4b9e70） | `[rsi+0xc0]` | `[r15+0xc8]` | 1236 | `0x62c` |
+| `get_entity_name_label`  （0x4ba4a0） | `[rsi+0xd8]` / `[rsi+0xf0]` | — | 2832 | `0xbf9` |
+
+* 三个偏移**步长恰 `0x30`** = `HashMap<u32, String>` 的 48 B ⇒ 是同一结构的三张相邻表；
+* 基址寄存器 = `GraphwarGraphicsManager`（`0x46a8e0` = `get_module::<GraphwarGraphicsManager>`），
+  `+0x18` 是 `RcBox` 数据起点 ⇒ 表字段 = 管理器自己的 `+0x48 / +0x78 / +0xa8 / +0xd8`。
+  指令里的 `cmp` 立即数 = 表起点 **+0x18**（`0x48+0x18=0x60` / `0x78+0x18=0x90` / `0xa8+0x18=0xc0` / `0xd8+0x18=0xf0`）
+  —— **四对全部对上**，这不是凑出来的；
+* 创建路径三个引擎调用 + 实参（§148.2 的表）：`set_texture_filter(4)` → `set_flip_v(true)` → `add_child`
+  （实参 4 / true 来自 arm64 `0x4bfe10` / `0x4bfe30` 的立即数）；
+* `get_entity_name_label` 体 **2832 B > `VOL_CAP`** ⇒ 按预注册 §7 L4 整函数读完才下的结论：
+  剩下部分全是 hashbrown 表操作 + `RichTextLabel` 的 8 个属性写入，**没有第三张表、没有第二条创建路径**。
+
+落点：`ENTITY_GETTER_NAME_MAP_OFFSETS` / `ENTITY_GETTER_NAME_LABEL_MAP_{BASE,CMP_IMMEDIATE}` /
+`ENTITY_GETTER_ENGINE_CALLS` / `EntityChildNode::sprite_index` / 4 个 `fn get_entity_*` + 私有 `entity_sprite`，
+`relayout` 改为**只从这 4 个函数取子节点**。单测 4 条：`getter_name_map_offsets_step_by_hashmap_size` /
+`name_label_map_is_the_fourth_hashmap` / `getter_creation_path_is_three_engine_calls` /
+`sprite_index_mirrors_child_node_order`。
+
+#### 148.5.2 `graphwar_plane::on_resized`（commit `b2654df`）
+
+原版 **x86 `0x4bddb0` / arm64 `0x4c3308`**（256 B / FDE span `0x120`）。调用者复核
+（`addr_probe.py callers 0x4bddb0`）= 3 个 `call rel32`，其中**唯一游戏内**的是 **`0x4b7b0a`，落在 `ready`（`0x4b7a70`）体内**
+⇒ 与"`resized` 只在 `ready` 里连"一致（树外 `set_size` 不会触发）。
+
+体（12 条指令读完，**逐位**）：
+
+```text
+0x4bddbe  size = Control::get_size()                   ; 槽 0x9bb000 → thunk 0x8925f0
+0x4bde39  [self+0xc8].set_size(size)                   ; 槽 0x9bc0c8 → thunk 0x8910e0（⚠️ r12 里存的就是这个 thunk）
+0x4bde63  [self+0xe0].set_size(size)
+0x4bde8d  [self+0xf8].set_size(size)
+0x4bde90  [self+0x60] = 0                              ; 脏矩形队列 len = 0
+0x4bde98  if [self+0x50] == 0 { 槽 0x9bbdf0 → 0x460e50 } ; RawVec 增长（新 cap = max(2·cap, 4)）
+0x4bdead  movaps xmm0, [0x19c0e0]                      ; 16 个 0 字节
+0x4bdeb4  movups [ [self+0x58] ], xmm0                  ; *ptr = (0,0,0,0)
+0x4bdeb7  [self+0x60] = 1                              ; len = 1  ⇒ = vec![PixelRect::default()]
+```
+
+`+0x50`(cap) / `+0x58`(ptr) / `+0x60`(len) 就是 [`PlaneIntent::partial_updates`] 那个 `Vec<PixelRect>`
+（字段恒等 T88 那一轮钉的；本轮独立复核两点：**16 B = `PixelRect` 的大小**、**`0x460e50` 的 min-cap 4**
+正是 Rust `RawVec` 对"元素 > 1 字节"的规则 ⇒ 元素确实是 16 B 的那个 `PixelRect`）。
+落点：`ON_RESIZED_ENGINE_SLOTS` / `ON_RESIZED_CHILD_OFFSETS` / `reset_partial_updates()` + `fn on_resized` 重写。
+单测 2 条（不链接引擎）：`on_resized_tail_resets_partial_updates_to_one_zero_rect` /
+`on_resized_slots_resolve_to_control_methods`。
+
+⚠️ 唯一"我方接线"：末尾那句 `queue_redraw()`。原版 `0x4bddb0` 的调用目标只有 4 个槽
+（`0x9ba680`/`0x9bb000`/`0x9bc0c8`/`0x9bbdf0`），**没有** `queue_redraw`。留着是因为
+`client/tools/*.gd` 有"树外显式调 `on_resized` 后要重画"的既有断言；已在函数文档与 §148.6-7 声明。
+
+#### 148.5.3 没落的两条（`clear_state` / `update_entities`）—— 缺什么
+
+| 函数 | x86 | 已读到的 | 缺的证据 |
+|---|---|---|---|
+| `clear_state` | `0x4bded0`（928 B / span `0x3a0`） | 调用序：`Node::queue_free`（`0x4be015 call %rbx`，rbx 来自槽 `0x9ba7e8`→`0x8ca920` 取的子节点）→ `0x4971e0`（FunctionDrawer 家族）→ 槽 `0x9bbdf0`→`0x460e50`（与 `on_resized` 尾部同一个 Vec helper）→ `0x91e8d3` / `0x925430` 各 2 次 → 槽 `0x9ba5a0`→`0x528070` → `0x47f890` ×2 | 三个 thunk（`0x91e8d3` / `0x925430` / `0x528070`）里**没有** `(名,长度)` 字面量对（预注册 §7 L3 预设的失效情形）⇒ 方法名定不了；另 `EntityDrawer` / `EffectDrawer` 两个类名的用途仍未解（`UNKNOWNS` 第 4 条） |
+| `update_entities` | `0x4be270`（332 B / span `0x170`） | docs/16 §23.3 记"与 `clear_state` 同型但只 `queue_free` ×1"；`fixtures/hybrid_names.tsv` 记 `fp` 高置信同源（score 0.7725） | `queue_free` 的**对象**来自哪个字段未定；332 B 里另有 1 次 `0x460e50` 同族 helper |
+
+### 148.6 与旧台账 / 任务书的冲突（**只报告、不改**，7 条）
+
+1. **`entity_drawer` 的 `real-missing` 是 4，不是 §143 的 3** —— 差 `get_entity_skin_sprite`
+   （M 台账 F1 属 P2 假命中，见 §148.4）。**要改的是生成器**：`tools/function_coverage.py` 的 P2
+   判据（"注释里有地址"）不能单独构成 F1；修法建议：P2 命中但**同名 `fn` 不存在**时降 F3。
+2. **`graphwar_plane` 的 `real-missing` 是 3，不是 §143 的 0** —— 但**两边都不错**：
+   §143 的 `lin_F3_real` 只统计 527 分母内（这 3 条 Location = 0，永远进不去）。
+   建议 `global_triage_modules.tsv` 加一列 `src_missing_out527`（源码函数里在 527 外且未实现的条数）。
+3. **`docs/16` §23.3 与 `src/graphwar_plane.rs` 的 `UNKNOWNS` 第 3 条已过期**（"`Control::set_*`
+   方法名未解"）：本轮解出 `Control::set_size` ×3 + `Control::get_size` ×1。**docs/16 与 UNKNOWNS
+   已就地改**（UNKNOWNS 从 6 条降到 5 条，`docs/16` §23.3 那格改成"T102 已解"）；
+   `docs/16` §23.3 表格以外若有引用旧措辞的地方，下一轮统一扫。
+4. **三条"已实现但边界不符"**（`update_name_label` / `draw_offset_triangle` / `obstacle_partial_update_event`）：
+   原版都是**类型上的方法**，我方是**自由函数**（`name_label_layout` / `arrow_head`+`offset_triangle` /
+   `graphwar_plane::obstacle_partial_update_event`）。语义已复原、**函数边界没复原** ⇒
+   `docs/02` §17 的 `ours_funcs` 会看到"多了几个自由函数"。建议下一轮按 `impl` 收拢（改 `src/`，
+   本轮不在写范围）。
+5. **`fixtures/seq_align_conv93.tsv` 与 `PLANE_FUNCS` 对 `on_resized` 的结论冲突**：
+   `seq_align` 把 arm64 `0x4c3308` 对到 x86 **`0x539460`**（等级 `order+size(noanchor)`），
+   而 `PLANE_FUNCS` 是 **`0x4bddb0`**（观测链：唯一游戏内调用者 = `ready`；与 `clear_state`
+   首尾相接；两侧 3 个 `Control` 方法调用同形）。本轮实跑 `callers 0x4bddb0` 得 3 个调用点、
+   其中一个在 `ready` 体内 ⇒ **支持 `PLANE_FUNCS`**。`seq_align_conv93.tsv` 是"推断级、不是命名"
+   （文件头自己写的），**不改它**，只登记这处冲突。
+6. **`+0x1f8` 闸门**（T97 §145：全 `.text` 19 条写点、唯一落 527 的是 `setup_control 0x4d4b99`）：
+   本轮按预注册 §6.3 **只判"这两个模块有没有读/写点"**，结果 = **0 个写点、12 个读点**：
+   `entity_drawer::draw` `0x4b29c5`(cmp) `0x4b2a52`(lea)、`entity_drawer::process` `0x4b4d53`(mov)
+   `0x4b4fcc/0x4b509a/0x4b50f2/0x4b514a/0x4b536c`(lea)、`plane::draw` `0x4b5f2c`(mov) `0x4b5f7f`(lea)、
+   `plane::process` `0x4b854b`(lea) `0x4b8557`(mov)。⇒ **`+0x1f8` 不是这两个类自己的字段**
+   （它们是读**别人**对象上的这一格），与"闸门在 `GraphwarRootNode`/client 一侧"的既有判断一致。
+7. **`drive_frame` 发件箱（T99 §144.6-3）**：**结论 = 该转发、我方不该清**。证据由同轮 **t104**
+   取证（分支 `agent/flow-semantics`）：`GraphwarGameClient::process`（`0x518400`，
+   Location `graphwar_game_client.rs:132:28`）每帧主体是 `0x518484 call 0x519450`（now-base 的 Duration）
+   → `0x51848e cmp edx,0x3b9aca00` → `0x518499 call r13`（`[GOT 0x9baf38]` = `0x518240`，其 Location =
+   `graphwar_game_client.rs:139:41`/`:139:86`/`:140:22` ⇒ 它体内 **只** borrow → `call 0x519840`
+   （= `GraphwarTickHandler::tick`）→ 放回借用、**自己不清发件箱**）→ **紧接** `0x51849f call rbp`
+   （`[GOT 0x9baef8]` = `0x3d3630`，其唯一 Location = `src/graphwar_event_handler.rs:467:42` ⇒ 事件泵）。
+   ⇒ **原版每个 tick 之后都把发件箱泵出去**；`self.tick_source.outbox.clear()` 与 `0x518400` 不符。
+   **该行 hunk 由 t104 改**（`agent/flow-semantics`，含 `take_tick_requests()`/`tick_connected()`），
+   本节只写结论（预注册 §6 的分工）。
+8. **`on_resized` 的 `queue_redraw()`** 与**"急建 vs 懒建"**两处是我方接线/化简（§148.5.2 / §148.5.1），
+   已在 `src/` 就地声明。
+
+### 148.7 门槛读数（本机实跑，读数为本分支终点）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1636 passed / 0 failed / 1 ignored**（起点 **1634** + 本轮 2 条非 feature-gated 单测） |
+| `cargo test --offline --features gdext-bindings` | **1795 passed / 0 failed / 1 ignored**（起点 **1789** + 本轮 6 条：`entity_drawer` 4 + `graphwar_plane` 2） |
+| `tools/coverage_matrix.py --check` | **OK**（改了 `src/` ⇒ 按规矩重跑生成物：`docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md`） |
+| `tools/check_doc_refs.py` | **rc = 0** |
+| `tools/docsec.py check docs/06-verification.md` | 无重复号 / 无冲突标记 / 无空心节（节数 146，断号 `[43, 89]` 是两个历史缺口，不算错） |
+| 三轴 · `fire`（`replay_attrib --drive fire --policy default`，冻结快照 401 份 / 目录 403 条目） | 结算批 **1080**、**内容命中 647** ✔ |
+| 三轴 · `batch`（`--drive batch --policy default`） | 结算批 **1080**、**内容命中 647** ✔ |
+| 三轴 · `batch_conv`（`batch_conv --policy strict`） | 种类 **1075/1080**、**内容命中 637**（多发批 130：32 / 单发批 950：605；变好 128 / 变差 0）✔ |
+| `tools/boundary_audit.py --check` | 527 个可归属函数：match **441** / **mismatch 0** / multi 86 ✔ |
+| `tools/function_coverage.py --stats` | F1 **336** / F2 71 / F3 120；**A = 336/527 = 63.8 %**、**B = 336/438 = 76.7 %**、1:1 = **264/527 = 50.1 %**。（起点：333 / 333 / 261，§148.8①） |
+
+### 148.8 复算命令（照抄可跑；`$WT` = 本工作树 = `.agent-work/cg/wt-t102`）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t102
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$MAIN/.reference/cargo-home/target
+export GW2_PROBE_CACHE=$MAIN/.agent-work/gap-drawers2/probe_index.pkl     # 随便一个可写目录
+PY=$MAIN/.reference/venv/bin/python
+
+# ① 起点 / 终点两个读数（起点用 git archive 摊一份干净树再跑，避免相信别人报的数）
+mkdir -p /tmp/t102base && git -C $WT archive 58d9238 | tar -x -C /tmp/t102base
+ln -sfn $MAIN/.reference /tmp/t102base/.reference
+(cd /tmp/t102base && $PY tools/function_coverage.py --stats | grep -E '口径 A|口径 B |1:1')
+(cd $WT      && $PY tools/function_coverage.py --stats | grep -E '口径 A|口径 B |1:1')
+#   期望：起点 333/527=63.2%、333/438=76.0%、1:1 261/527=49.5%
+#         终点 336/527=63.8%、336/438=76.7%、1:1 264/527=50.1%
+
+# ② Android 目标集合（C1 硬闸：必须 29 / 27）
+readelf -sW $MAIN/.reference/steam/android-2.0.60/libgraphwarrust.so \
+  | awk '$4=="FUNC"' | grep -cE '13entity_drawer|14graphwar_plane'   # 带同址别名，不是 29/27
+
+# ③ 三个 getter 的判别性立即数（逐位）
+$PY $WT/tools/addr_probe.py dis 0x4bb6b0 | grep -E 'rsi \+ 0x60|r15 \+ 0x68'   # skin 表
+$PY $WT/tools/addr_probe.py dis 0x4bb0a0 | grep -E 'rsi \+ 0x90|r15 \+ 0x98'   # face 表
+$PY $WT/tools/addr_probe.py dis 0x4b9e70 | grep -E 'rsi \+ 0xc0|r15 \+ 0xc8'   # hat 表
+$PY $WT/tools/addr_probe.py dis 0x4ba4a0 | grep -E 'rsi \+ 0xd8|rsi \+ 0xf0'   # name_label 表
+$PY $WT/tools/addr_probe.py fde 0x4bb0a0   # 0x4bb0a0..0x4bb6ad size 0x60d
+$PY $WT/tools/addr_probe.py fde 0x4bb6b0   # 0x4bb6b0..0x4bbcbd size 0x60d（与 face 逐字节相同）
+
+# ④ on_resized 的 4 个调用目标 + 唯一游戏内调用者
+$PY $WT/tools/addr_probe.py dis 0x4bddb0 | grep -E 'slot|call'
+$PY $WT/tools/addr_probe.py callers 0x4bddb0     # 3 个 call 点，0x4b7b0a 在 ready(0x4b7a70) 里
+
+# ⑤ 引擎方法定名（§148.2 那把尺子；C2 自校验必须"该解出的解出、该解不出的解不出"）
+#    thunk 里成对的 (名指针,长度)：手工读 `dis 0x8910e0` 的 0x891146..0x891160 四行
+$PY $WT/tools/addr_probe.py dis 0x8910e0 | sed -n '20,30p'    # ('Control',7)+('set_size',8)
+$PY $WT/tools/addr_probe.py dis 0x89b170 | grep -c "'Control'" # 期望 0（gdext 助手，解不出）
+
+# ⑥ +0x1f8 只有读点（本两模块）
+for a in 0x4b2890 0x4b4b60 0x4b5df0 0x4b83f0; do
+  echo "== $a"; $PY $WT/tools/addr_probe.py dis $a | grep '0x1f8]'; done
+#   期望：12 条，全是 cmp/mov/lea **读**，没有一条 `mov [.. +0x1f8], imm`
+
+# ⑦ 门槛四件套 + 三轴
+cargo test --offline && cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py && python3 tools/docsec.py check docs/06-verification.md
+S=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $S --drive fire  --policy default | tail -1
+cargo run --release --offline -q --example replay_attrib -- --dir $S --drive batch --policy default | tail -1
+cargo run --release --offline -q --example batch_conv   -- --dir $S --policy strict | tail -2
+$PY tools/boundary_audit.py --check | head -2
+```
+
+### 148.9 遗留 / 建议下一步（下一任直接接）
+
+1. **`clear_state`（928 B）与 `update_entities`（332 B）落码**：前置是先解那三个 thunk
+   （`0x91e8d3` / `0x925430` / `0x528070`）—— 它们没有 `(名,长度)` 字面量对，说明方法名**不经 thunk 传**
+   （可能走 `GOT` 二次转发或内联）⇒ 下一步用"被调方体内引用哪个 `.rodata` 方法名串"反向定名。
+2. **`src/function_coverage.py` 的 P2 判据要不要收紧**（§148.6-1）：这是**记账口径**变更，
+   会一次改掉一批 F1（`name_src=addr` 的行），必须 lead 批 + 重跑 + 三轴复验。
+3. **三条边界不符的收拢**（§148.6-4）：`update_name_label` / `draw_offset_triangle` /
+   `obstacle_partial_update_event` 该住进 `impl`，而不是自由函数。
+4. **`ready::{{closure}}` 第二条**的 Linux 对端（§148.3 末）—— 缺 1 条映射。
+5. **`docs/16` §23.3 之外的旧措辞**（"方法名未解"）需要一次全仓扫（本轮只改了 §23.3 那一格与 UNKNOWNS）。
+6. **`drive_frame` 发件箱的代码改动**在 t104 的分支（`agent/flow-semantics`）；合并时注意本条与
+   §148.6-7 的结论要保持一致（`outbox` 不许 clear，要 drain 计数）。
+
+### 148.10 本轮改了什么（范围核对）
+
+| 文件 | 改动 |
+|---|---|
+| `fixtures/gap_drawers2_plan.txt` | 新增（预注册，commit `a65631c`） |
+| `fixtures/gap_entity_drawer.tsv` / `fixtures/gap_plane.tsv` | 新增（29 + 27 行，commit `58422ba`） |
+| `src/entity_drawer.rs` | 4 个 `get_entity_*` + 常量表 + `sprite_index` + `relayout` 取节点路径 + 4 条单测（commit `86052e3`） |
+| `src/graphwar_plane.rs` | `on_resized` 重写 + `ON_RESIZED_*` 常量 + `reset_partial_updates` + 2 条单测 + `UNKNOWNS` 6→5 条（commit `b2654df`） |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 按规矩重跑生成物（`src/` 变了） |
+| `docs/06-verification.md` | 本节 |
+
+**没碰**：`src/graphwar_nodes.rs` / `src/player_showcase.rs`（t101）、`src/graphwar_backend.rs` /
+`src/graphwar_game_recorder.rs`（t103）、`src/_scaffold/**`、`client/**`、`tests/`、别人的台账
+（含 `fixtures/function_coverage.tsv`）、门槛/护栏文件、`fixtures/guardrails.json`。
+**`src/graphwar_plane.rs` 的 `drive_frame` 发件箱那一 hunk 归 t104**（本轮只写结论，§148.6-7）。
