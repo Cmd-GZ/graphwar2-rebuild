@@ -256,6 +256,8 @@ var _judged: Dictionary = {}
 var _flow := GwShotFlow.new()
 ## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
 var _turn_clock := GwTurnClock.new()
+## `TickRequest` 的节奏时钟（Rust：`GraphwarTickHandler`，`0x519840` / `0x519630`）。
+var _flow_clock := GwFlowClock.new()
 ## **对局状态机本体**（8 个 `GameState`，原版是 `[self+0x120]` 那一个字节）。
 ##
 ## 迁移表在 Rust（`GwTurnState` → `src/turnstate.rs::next_state`），本屏只**发事件、问状态**。
@@ -1213,17 +1215,20 @@ func _drive_clock(delta: float) -> void:
 ## `TickRequest`（`current_tick % 60 == 0`），服务端回 `TickReply{current_tick}`；
 ## 客户端的 tick 轴**就是**这样对齐到服务端的（`docs/06` §60.2.1，`tools/match_serve.py`
 ## 也是照这个行为实现的）。`FunctionActive.active_tick` 就长在这条轴上。
-const TICK_REQUEST_PERIOD := 1.0
-var _tick_request_acc := 0.0
+## `TickRequest` 的节奏（T99 / `docs/06` §144）：真值 `GraphwarTickHandler::tick`（**`0x519840`**）
+## = 每 tick `accum += 16_666_666 ns`，**`tick % 60 == 0`** 时再发一条；连上时那条走
+## `handle_connected_to_server_event`（**`0x519630`**，不看载荷）。改前是自造的墙钟累加器
+## （`_tick_request_acc += delta`）⇒ 与 tick 计数无相位关系。现在判据只在 Rust（`GwFlowClock`）。
 var _online_tick_synced := -1
 
 func _online_poll_tick(delta: float) -> void:
 	if _online_session == null:
 		return
-	_tick_request_acc += delta
-	if _tick_request_acc >= TICK_REQUEST_PERIOD:
-		_tick_request_acc = fmod(_tick_request_acc, TICK_REQUEST_PERIOD)
+	var due := int(_flow_clock.drive(delta))
+	for _i in due:
 		_online_session.send_tick_request()
+	# 收到 `TickReply{current_tick}` 就把 tick 轴拨过去（原版客户端对齐服务端 tick 轴那件事；
+	# 平面 `set_fractional_tick` 的读法见 `docs/06` §60.2.1 / §137）。
 	var cur := int(_online_room().get("current_tick", -1))
 	if cur >= 0 and cur != _online_tick_synced:
 		_online_tick_synced = cur
@@ -1860,10 +1865,12 @@ func _reset_shot_state() -> void:
 	if _effects != null:
 		_effects.clear()
 	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
-	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。累加器直接推到"该发"的门槛上：
-	# 原版连上服务器时会立刻发一条 `TickRequest`（`handle_connected_to_server_event`
-	# `0x519630`，不看载荷），所以第一条也该在第一帧就发出去，而不是等满 1 s。
-	_tick_request_acc = TICK_REQUEST_PERIOD
+	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。原版连上服务器时会**立刻**发一条
+	# `TickRequest`（`handle_connected_to_server_event` **`0x519630`**，不看载荷）⇒ 这里调
+	# `GwFlowClock.connected()` 那一下，而不是把某个累加器推到门槛上当替身（改前就是那样）。
+	_flow_clock.reset()
+	if _online_mode and _online_session != null and int(_flow_clock.connected()) > 0:
+		_online_session.send_tick_request()
 	_online_tick_synced = -1
 
 ## 把 `_soldiers` 摊成"每玩家一张士兵表"，交给回合轮转（`docs/143` §6）。
