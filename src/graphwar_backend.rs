@@ -154,6 +154,16 @@ impl BackendField {
     pub const MODULES: usize = 0x220;
     /// `Option<GraphwarServerBrokerHandler>`（内联）。
     pub const BROKER: usize = 0x228;
+    /// `+0x228..+0x260` = `GraphwarServerBrokerHandler` 本体 **0x38 = 56 字节**（内联，不是堆对象）。
+    /// 真值：`start_server_broker_handler` `0x407800`–`0x40781c`（3 条 `ldur q` + 1 条 `ldr x9`，
+    /// 从 `sp+0x8` 拷 0x38 字节到 `self+0x228`）；`GraphwarBackend::new` `0x407e14`/`0x407e24`/`0x407e28`
+    /// 写的是同一段（`stp q0,q1` + `str q0,[x8,#0x20]` + `str x9,[x21,#0x258]`）。
+    pub const BROKER_SLOT_SIZE: usize = 0x38;
+    /// `+0x230`（**broker handler 对象内 `+0x8`**）：那个 `HashMap` 的 hashbrown 表。
+    /// `stop_server_broker_handler` `0x407540`/`0x407560` 的 `add x0,x19,#0x230` + `bl RawTable::drop`。
+    /// 对象布局 ⇒ `+0x228` 一个 8 字节指针（Arc 指针）+ 48 字节 `HashMap`
+    /// （hashbrown `RawTable` 32 + `RandomState` 16 = 48）。
+    pub const BROKER_MAP: usize = 0x230;
     /// `+0x188`（**LAN 广播者对象内 `+0x78`**）：hashbrown 表。
     /// `stop_lan_broadcaster` 的 `0x4070a4 add x0,x19,#0x188` + `0x4070a8 bl RawTable::drop` 就是它。
     pub const LAN_TABLE: usize = 0x188;
@@ -474,6 +484,8 @@ pub struct GraphwarBackend {
     pub clip_checkpoints: Vec<u32>,
     /// `+0x110`：**内联 `GraphwarLanBroadcasterV6`**（0xC0 字节；空槽编码见 [`LAN_SLOT_EMPTY`]）。
     pub lan_broadcaster: Option<LanBroadcasterSlot>,
+    /// `+0x228`：**内联 `GraphwarServerBrokerHandler`**（0x38 字节；空 = 首字 0，见 [`BrokerSlot`]）。
+    pub broker: Option<BrokerSlot>,
 }
 
 /// `start_client_to_replay` 造的那个 `SocketAddr`：**`[::1]:0`**。
@@ -589,6 +601,43 @@ pub enum StartLanBroadcasterStep {
     /// `GraphwarLanBroadcasterV6::start`（`0x407254 bl 0x3de19c`，实参 `&mut 栈上对象`）。
     StartBroadcaster,
     /// 装槽：`0x407258`–`0x407284` 八组 `ldp q / stp q`，把栈上 0xC0 字节搬进 `self+0x110..+0x1d0`。
+    Install,
+}
+
+/// 内联 `GraphwarServerBrokerHandler`（`+0x228..+0x260`，0x38 字节）里**我方建模**的那部分。
+///
+/// 布局证据（都是指令）：槽的**首字**是一个带原子强计数的堆指针（`stop` 里
+/// `0x407520 ldxr` / `0x407524 subs #1` / `0x407528 stlxr` / `0x40753c bl Arc::drop_slow`），
+/// 紧随其后 `+0x230` 是一个 hashbrown 表 ⇒ 对象 = `{ Arc<…>(8) , HashMap(48) }`。
+/// `Option<…>` 的空靠**首字为 0**（`0x407510 cbz x20` / `0x4077d0 cbz x8` / 收尾 `0x407548 str xzr`），
+/// 与 LAN 槽那个 `0x8000_0000_0000_0001` 哨兵**不是同一套编码**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrokerSlot {
+    /// `GraphwarServerBrokerHandler::start` 的第 2 个实参（`0x4077f4 mov x1,x19` ⇒
+    /// `start_server_broker_handler` 的实参**原样**透传；宽度本轮未证 —— 用 `u32` 承载只为可测）。
+    pub arg: u32,
+    /// `+0x228`（对象首字）那个 `Arc` 的**强引用计数**。
+    ///
+    /// ⚠️ **推断**：装槽时给 1 是 `Arc::new` 的 std 契约；`GraphwarServerBrokerHandler::new`（0x489d64）
+    /// 的体内本轮**没读**，所以"新建对象时是不是恰好 1"没有指令证据。
+    /// `stop` 侧用得到它：`0x407524 subs #1` 之后 `0x407530 b.ne` ⇒ 归零才 `Arc::drop_slow`。
+    pub arc_strong: usize,
+    /// `+0x230`（对象内 `+0x8`）那个 `HashMap` 里几条 —— 只在文档/测试里用；
+    /// `stop` 里丢表是**无条件**的（`0x407540` 没有守卫）。
+    pub map_entries: usize,
+}
+
+/// `start_server_broker_handler`（arm64 `0x4077bc` / 140 B）的步骤，顺序 = `bl` 地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartBrokerStep {
+    /// `GraphwarServerBrokerHandler::new`（`0x4077f0 bl 0x489d64`，sret = `x8 = sp+0x8`）。
+    /// ⚠️ 该调用点 `x0` 仍是 `self`、`x1` 是 `start` 的第 2 实参 ⇒ `new` 的头两个实参
+    /// **本轮没读明白**（`0x489d64` 的体没读）；只确定 sret 是 `sp+0x8`、对象 0x38 字节。
+    NewHandler,
+    /// `GraphwarServerBrokerHandler::start`（`0x4077fc bl 0x489fa8`，实参 `&mut 栈上对象` + 原实参）。
+    StartHandler,
+    /// 装槽：`0x407814 stp q0,q1,[x8]` / `0x407818 str q2,[x8,#0x20]` / `0x40781c str x9,[x8,#0x30]`
+    /// （`x8 = self+0x228`，共 0x38 字节）。
     Install,
 }
 
@@ -1034,6 +1083,50 @@ impl GraphwarBackend {
             }
         }
         self.lan_broadcaster = None; // 0x4070cc str x21(哨兵),[x19,#0x110]
+        steps
+    }
+
+    /// `start_server_broker_handler` —— **原版 arm64 `0x4077bc` / 140 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x4077bc..0x407848`）：
+    ///
+    /// ```text
+    /// 0x4077bc  sub  sp,sp,#0x60 / 存 x29,x30,x20,x19   ; 0x38 字节区给 handler 对象
+    /// 0x4077cc  ldr  x8,[x0,#0x228]                     ; 槽首字（= Arc 指针，0 = 空）
+    /// 0x4077d0  cbz  x8,0x4077e4                        ; **空才装**；非空 ⇒ 0x4077d4 直接 epilogue
+    /// 0x4077e4  add  x8,sp,#0x8                         ; sret = 栈上对象
+    /// 0x4077e8  mov  x20,x0                             ; self
+    /// 0x4077ec  mov  x19,x1                             ; 唯一的实参
+    /// 0x4077f0  bl   0x489d64                           ; GraphwarServerBrokerHandler::new
+    /// 0x4077f4  add  x0,sp,#0x8 / 0x4077f8 mov x1,x19
+    /// 0x4077fc  bl   0x489fa8                           ; GraphwarServerBrokerHandler::start(&mut, 实参)
+    /// 0x407800..0x40781c  ldur q0/q1/q2 + ldr x9（sp+0x8..sp+0x40，共 0x38 字节）
+    ///                     → stp q0,q1,[x8] + str q2,[x8,#0x20] + str x9,[x8,#0x30]（x8 = self+0x228）
+    /// ```
+    ///
+    /// ⇒ 语义：**只在槽为空时装**（与 `start_lan_broadcaster` 同形态、与 `start_server` 相反）：
+    /// `new()` → `start(实参)` → 整块 0x38 字节搬进 `+0x228`。`new`/`start` 都在栈上完成
+    /// ⇒ 中途 panic 不会留下半个槽。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。`new`/`start` 的体内没读 ⇒ "装进来的对象里有什么"
+    /// 只有槽首字的 Arc 指针 + 后随 hashbrown 表两条（见 [`BrokerSlot`]）。
+    pub fn start_server_broker_handler(&mut self, arg: u32) -> Vec<StartBrokerStep> {
+        let mut steps = Vec::new();
+        // 0x4077d0 cbz x8：槽非空 ⇒ 一步都不做
+        if self.broker.is_some() {
+            return steps;
+        }
+        // 0x4077f0：GraphwarServerBrokerHandler::new（栈上，sret = sp+0x8）
+        steps.push(StartBrokerStep::NewHandler);
+        // 0x4077fc：GraphwarServerBrokerHandler::start(&mut 栈上对象, 实参)
+        steps.push(StartBrokerStep::StartHandler);
+        // 0x407814..0x40781c：0x38 字节整块写进 self+0x228
+        self.broker = Some(BrokerSlot {
+            arg,
+            arc_strong: 1, // Arc::new 的契约初值（**推断**，见 BrokerSlot::arc_strong）
+            map_entries: 0,
+        });
+        steps.push(StartBrokerStep::Install);
         steps
     }
 
@@ -1534,6 +1627,32 @@ mod denom_t106_tests {
         b.start_lan_broadcaster(35245);
         assert_eq!(b.stop_lan_broadcaster(), vec![ResetFd, DropTable]);
         assert!(b.lan_broadcaster.is_none());
+    }
+
+    /// broker 槽的布局契约：handler 对象 0x38 字节、`HashMap` 在对象内 +0x8（绝对 +0x230）、
+    /// 空编码 = 首字 0（**不是** LAN 那个 0x8000…0001 哨兵）。指令：0x407800–0x40781c / 0x4077d0 / 0x407510。
+    #[test]
+    fn broker_slot_layout_matches_instructions() {
+        assert_eq!(BackendField::BROKER_SLOT_SIZE, 0x38, "0x407800..0x40781c 拷 0x38 字节");
+        assert_eq!(BackendField::BROKER_MAP, BackendField::BROKER + 8, "对象内 +0x8");
+        assert_eq!(BackendField::BROKER + 0x38, 0x260, "槽结束位置（new 的 0x407e28 写 +0x258）");
+        assert!(GraphwarBackend::new().broker.is_none(), "new 把这段写成 0（0x407e14/0x407e24）");
+    }
+
+    /// `start_server_broker_handler`：**只在空槽时装**（0x4077d0 `cbz`），顺序 new → start → 装。
+    #[test]
+    fn start_server_broker_handler_only_installs_into_an_empty_slot() {
+        let mut b = GraphwarBackend::new();
+        assert_eq!(
+            b.start_server_broker_handler(35245),
+            vec![StartBrokerStep::NewHandler, StartBrokerStep::StartHandler, StartBrokerStep::Install],
+            "顺序 = bl 地址顺序 0x4077f0 → 0x4077fc → 0x407814"
+        );
+        assert_eq!(b.broker.unwrap().arg, 35245, "0x4077f4 mov x1,x19：实参原样进 start");
+
+        // 第二次：槽非空 ⇒ 0x4077d0 cbz 走 0x4077d4 的 epilogue，连 new 都不调
+        assert!(b.start_server_broker_handler(1).is_empty(), "0x4077d0 cbz 0x4077e4 的反面");
+        assert_eq!(b.broker.unwrap().arg, 35245, "旧槽不被覆盖");
     }
 
     /// 差分对拍：我方这段循环与 `partition_point(|&c| c <= current)`（upper_bound 的另一种写法）
