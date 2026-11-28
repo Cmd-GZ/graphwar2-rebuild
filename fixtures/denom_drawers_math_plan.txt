@@ -1,0 +1,189 @@
+# denom_drawers_math_plan.txt —— T108 **预注册**（本文件先单独 commit，再动 `src/`）
+#
+# 任务：T105（docs/06 §152）量化出的「527 分母之外真缺 55 个源码函数」里，
+#       **绘制/数学/弹道**这条线的 **11 条**，逐条取证 + 落码。
+# 工作树 `.agent-work/cg/wt-t108`，分支 `agent/denom-drawers-math`。
+# 判据只能在这里定；跑完为了对上数而改口径 = 违约（AGENTS.md §0.3 / §0.6）。
+#
+# 地址口径（AGENTS.md「反复踩过的坑」第 1 条）：本文件全部是 **ELF vaddr（RVA）**。
+#   `android_addr` = Android 2.0.60 arm64（`.reference/steam/android-2.0.60/libgraphwarrust.so`，
+#   **未 strip**，名字来自其 `.symtab`；sha256 8a612e95…54df）
+#   `linux_addr`   = Linux 2026-08-28 x86-64（`.reference/steam/2026-08-28/libgraphwarrust.so`，
+#   stripped；sha256 9a538115…b187）。Ghidra/REA = linux_addr + 0x100000。
+#   两份构建地址**互不可换算**，配对方法逐条写在 §2。
+
+# ============================================================================
+# §1 目标集合（11 条源码函数 / 11 条机器码 = 分母外 real-missing 57 条里的 11 条）
+# ============================================================================
+# 列：id | 模块 | 源码函数（符号表真名，原样） | android_addr | android_st_size
+#     | linux_addr | linux_FDE_size | 来源（判据见 §2）
+# 注：`android_st_size` 是 `.symtab` 的 st_size，**可能与下一条重叠**（T101 §149 的坑），
+#     所以另给 linux FDE（`.eh_frame`）真范围；两条给出的范围都写进 anchors 表。
+#   S1 graphwar_shot_calculator  GraphwarShotCalculator::calculate_function              0x3b5374 1020  0x3c2530 0x689
+#   S2 graphwar_shot_calculator  GraphwarShotCalculator::calculate_corrected_function    0x3b79a8  712  0x3c5c50 0x318
+#   S3 graphwar_shot_calculator  GraphwarShotCalculator::calculate_function_offset_str   0x3b7c70  744  0x3c5f70 0x337
+#   M1 math_function             FunctionRandomizer::adjust_tokens                       0x447390  620  0x4ee0e0 0x2b3
+#   M2 math_function             FunctionRandomizer::mutate_function                     0x4475fc  704  0x4ee3a0 0x372
+#   M3 math_function             FunctionRandomizer::create_random_region                0x448160  784  0x4ef020 0x370
+#   E1 entity_drawer              EntityDrawer::update_name_label                         0x4bf690  496  0x4b9810 0x25f
+#   E2 entity_drawer              EntityDrawer::draw_offset_triangle                      0x4bf880  816  0x4b9a70 0x3f3
+#   P1 graphwar_plane             GraphwarPlane::clear_state                              0x4c3408  900  0x4bded0 0x3a0
+#   P2 graphwar_plane             GraphwarPlane::update_entities                          0x4c378c  332  0x4be270 0x161
+#   F1 effect_drawer              EffectDrawer::step_effect                               0x444d2c  992  0x4eb450 0x3db
+#
+# 数据来源（逐条可查）：
+#   android 名+地址+size = `fixtures/denom_outside.tsv`（= T105 从 Android `.symtab` 全量取出，
+#     `module/owner/method` 三列就是符号名的三段；`verdict=real-missing/denom:no-loc`）
+#   linux 地址 = `fixtures/sym_match.tsv` / `fixtures/hybrid_names.tsv` / `fixtures/gap_*.tsv` 既有配对；
+#     FDE 范围本轮实跑 `python tools/addr_probe.py fde <linux_addr>` 现取（见 anchors 表）
+#   `fixtures/seq_align_conv93.tsv` 里 `calculate_function` 还有一条低分候选 0x440ee0（score 0.784 vs
+#     sym_match 的 0x3c2530）—— §2.1 用**结构邻接 + 值级对拍**裁决，不靠分数投票。
+
+# ============================================================================
+# §2 逐条取证方法（写死，不许事后换）
+# ============================================================================
+# 通用四步：
+#   (1) `tools/addr_probe.py fde <linux>` 取 FDE 真范围（不信 `.symtab` st_size，T101 §149）
+#   (2) `tools/addr_probe.py dis <linux>` 读控制流/常量/调用点；关键指令连地址写进落码注释
+#   (3) `tools/addr_probe.py callers <linux>` + `locs <linux>` 补调用者与 `panic::Location`
+#   (4) 语义**必须**由 (2) 的指令决定；读不出的一律标「未解」，不许编
+#
+# §2.1 跨构建配对（android ↔ linux）——**不靠名字投票，靠三条独立链**
+#   a. **相邻性/链接序**：同一 crate 内两构建的模块内函数顺序一致 ⇒ 若 android 上 A 紧接 B
+#      （addr+span == next addr），linux 上同模块已锚定的 B' 之前恰好有 A'，且**两条的
+#      `FDE 跨度比例` 同量级**，则 A↔A'（**观测**）。
+#      本批实测：S1 后面紧接 `calculate_shot_results`（android 0x3b5770 ↔ linux 0x3c2bc0，
+#      T81 已用它做隔离对拍）；S2 后面紧接 S3（android/linux 两侧都严丝合缝）。
+#   b. **值级对拍**（本文件 §3）：S1/S2/S3 有可隔离执行的入口（ABI 已知：见 §3），
+#      真机器码跑出来的输出与我方实现**逐位/逐字符串**相同 ⇒ 地址取错则不可能全同。
+#   c. `panic::Location`（仅当函数体内有 Location 时）：本批 11 条 **全部 gameLOC=0**（T105 观测），
+#      所以这条对它们**用不上** —— 这正是它们进不了 527 分母的原因（不是它们不存在）。
+#
+# §2.2 「落码」判据（三条全满足才算落，缺一条只算「登记」）
+#   R1 **真名 + 真落点**：函数名 = 符号表真名原文（`GraphwarShotCalculator::calculate_function` 等），
+#      写在**原版模块文件**里（`src/graphwar_shot_calculator.rs` / `src/math_function.rs` /
+#      `src/entity_drawer.rs` / `src/graphwar_plane.rs` / `src/effect_drawer.rs`），不是 `_scaffold`。
+#   R2 **可审计的边界与证据**：函数体首部注释 = android vaddr/size + linux vaddr/FDE + 证据档；
+#      语义相关的关键指令带地址（`0x…… <指令> ⇒ <解读>`）。
+#   R3 **期望值不来自我方实现**：至少 1 条单测，其期望值取自 (i) 反汇编读出的常数/分支，或
+#      (ii) 真二进制（unicorn）输出（§3 的夹具），或 (iii) 真实抓包原文；注释写清是哪一种。
+#
+# §2.3 证据档（沿用 AGENTS.md 四档）
+#   逐位   = 原版**机器码**在 unicorn 下执行同输入，输出与我方**逐位/逐字节**相同（§3 覆盖的才有）
+#   观测   = 指令级读出并照写 + 单测钉反汇编常数/分支（**没有**跑真二进制对比）
+#   推断   = 有依据未证（必须写缺什么）
+#   未知   = 读不出 / 读出来但边界定不了
+#
+# §2.4 三条**旧结论继承**（不推翻、不重复劳动）
+#   - `calculate_shot_results` = linux 0x3c2bc0（T81 隔离对拍用过）⇒ 本批 S1 的配对靠它当锚。
+#   - 求值器 0x4eb9d0 / 解析器 0x4ed670 / `remove_offset` 0x4eb830 / `simplify_recursive` 0x4ebbe0：
+#     本批 S2/S3 调它们，直接复用，不重新证。
+#   - `entity_drawer`：T102 落的 4 个 getter + `draw`=0x4b2890 不动；E1/E2 的**算术**已在
+#     `name_label_layout`(src/entity_drawer.rs:628) / `arrow_head`(:218)+`offset_triangle`(:716) 里，
+#     本轮**只补方法边界（真名 + vaddr + 单测）**，不改既有算术（要改必须单独给指令级证据）。
+#   - `graphwar_plane` 尺寸 0x110 / `on_resized`=0x4bddb0（T102 已落）不动。
+#   - `effect_drawer` 类已由 T57 搬过；`step_effect` 的常量表已在 `src/effect_drawer.rs` 头部注释里
+#     （60.0/1-600/0x5b 相位），本轮**复核 + 落函数体**。
+#
+# §2.5 允许的落码形态（事先声明，避免"搬语义"时口径漂移）
+#   K1 **边界包装**：语义本体已在别处（同 crate 的自由函数 / 别的文件），本函数只做
+#      真名边界 + 真值单测 ⇒ 允许，但**必须在注释里写明本体在哪、为什么不搬**（搬迁会碰
+#      本任务范围外的文件），并登记「源码级遗留：本体归属待搬」。
+#      本批适用：S1（本体 = `graphwar_path_calculator::calculate`，采样器 0x3c2530 的归属在
+#      docs/02 §20.5 记为**文档级**、且该文件不在本任务写范围）、S2/S3（本体 = `corrected_text`/
+#      `correction_text`，同名语义已有）、E1/E2（本体 = 上述自由函数）。
+#   K2 **新写**：语义真缺 ⇒ 按反汇编写函数体（P1/P2/F1/M1/M2/M3）。
+#   K3 **部分落**：只读出部分语义 ⇒ 落已解部分 + 未解部分用显式 `TODO(未知)` 常量/分支占位并在
+#      注释与 docs/06 写清缺什么；**不许**用看起来合理的默认值冒充已复原。
+#
+# ============================================================================
+# §3 值级对拍（预注册输入集，不许事后增删取舍）
+# ============================================================================
+# 执行体：`.reference/venv/bin/python` + `tools/crossarch_emu.py::X86`（= `analysis/gwemu.py`，
+#         docs/06 的 88 条「逐位」结论都出自它）+ 真 glibc libm。**真机器码**，不是符号名假装。
+# 复算脚本入库：`tools/denom_drawers_truth.py`（新工具，只读 `.reference/`），产物
+#         `fixtures/denom_drawers_math_truth.tsv`（每行：func/case/输入/真二进制输出/我方输出/判）。
+#
+# §3.1 S1 `calculate_function`（采样器 linux 0x3c2530，ABI = `rdi=tokens_vec`, `esi=flip`,
+#      `edx=mode`, xmm0/1/2 = x0,y0,step, sret=Vec<Vec2>`；既有 `analysis/gwemu.py::call_path`）
+#   输入集 V1（≥16 组）：token 流取 {常量 0, x, x+1, x^3, sin(x), exp(x)+ln(x), -x, 空 token 流}
+#      × x0 ∈ {0.0, -0.0, 5.0, -24.5, 1e308, NaN} × (flip, mode) ∈ {(0,0),(1,0),(0,1),(1,1)}
+#      中固定 20 组；**ODE（mode=1）必须覆盖**（RK4 一步），**空 token 流 + ODE** 也要覆盖
+#      （ours 里有"空 = 导数 0"的分支）。判据：点数相同 + **每个点 16 字节逐位相同**。
+# §3.2 S2/S3 `calculate_corrected_function` + `calculate_function_offset_str`
+#      （ABI：x86 `rdi=sret(64B)`, `rsi=text_ptr`, `rdx=len`, `rcx=&Point{x,y}`, `r8b=flip`；
+#       沿用 `tools/crossarch_emu.py::X86.textpt` 的既有口径）
+#   输入集 V2（≥24 组）：text ∈ {"", "0", "x", "x/2", "x^3", "x ^ 3", "X^3", "x^3   ", "  x^3",
+#      "sin x", "sin(x)", "tan(x)", "sqrt(x)", "exp(x)+ln(x)", "abs((abs((-0.57+x))+-4.85))",
+#      "1/0", "sqrt(-1)", "2+3", "x/100000"} × (x,y,flip) 覆盖 {0,-0.0,1,-1,2.5,-24.5,24.5,
+#      ±inf, NaN, 1e308, 1ulp 邻域}；y ≠ 0 至少 6 组（把 c=y0−f(±x0) 两个符号都钉住）。
+#      flip 还测 `flag=0x100`（低字节 0 ⇒ 真二进制不反向 ⇒ 证明第 4 参是 **bool 而非 mode**）。
+#   判据：两条函数各自返回的 String **逐字节**相同（长度 + 内容；指纹 FNV-1a 64 + 前 64 B 原文）。
+# §3.3 其余 8 条（M1/M2/M3/E1/E2/P1/P2/F1）：**不做**值级对拍 —— 它们要么吃 `&self`/Godot 对象
+#      （无法在没有引擎的情况下构造合法状态），要么内部随机（M1/M2/M3 若用系统 RNG 则不可复现）。
+#      这些只做 R1–R3（指令级 + 反汇编常数单测）。哪条**本来能做**但我没做，必须在 docs/06 写清原因。
+#
+# §3.4 正/负对照（必须在写 fixture 之前跑）
+#   C1 正对照：V1 取一条已在 `fixtures/test_expectation_truth.tsv` 里的用例
+#      （shot/B01：sin(x) 从 (5,2) step=0.01）⇒ 本次 unicorn 输出必须与既有夹具**逐位相同**。
+#   C2 负对照：V1 里把某条的 `step` 改 1 ulp ⇒ 点数或末点必须变（证明比较器不是空判）。
+#   C3 负对照：V2 里把 `text` 改一个字符（"x"→"y"）⇒ 输出必须变。
+#   C4 我方实现侧对照：把 ours 的 `correction` 临时改符号，Rust 单测必须变红（不提交那次改动）。
+
+# ============================================================================
+# §4 逐条期望落点 + 期望档位（跑完按实际改，改了就写进 docs/06 §153）
+# ============================================================================
+#  S1 calculate_function            → src/graphwar_shot_calculator.rs  impl GraphwarShotCalculator（K1；§3.1 值级）  期望 逐位
+#  S2 calculate_corrected_function  → 同上（K1；§3.2 值级）                                                     期望 逐位
+#  S3 calculate_function_offset_str → 同上（K1；§3.2 值级）                                                     期望 逐位
+#  M1 adjust_tokens                 → src/math_function.rs  impl FunctionRandomizer（K2/K3）                     期望 观测 或 未知
+#  M2 mutate_function               → 同上                                                                     期望 观测 或 未知
+#  M3 create_random_region          → 同上                                                                     期望 观测 或 未知
+#  E1 update_name_label             → src/entity_drawer.rs  impl EntityDrawer 方法边界（K1）                    期望 观测
+#  E2 draw_offset_triangle          → 同上                                                                     期望 观测
+#  P1 clear_state                   → src/graphwar_plane.rs  impl GraphwarPlane（K2/K3）                        期望 观测/部分
+#  P2 update_entities               → 同上                                                                     期望 观测/部分
+#  F1 step_effect                   → src/effect_drawer.rs  impl EffectDrawer（K2/K3）                          期望 观测
+#
+# 预判的「做不到」点（§2.5 K3；真发生就写"缺什么"，不许编）：
+#  - P1/P2：t102 已记 `0x91e8d3`/`0x925430`/`0x528070` 三个 thunk 里**没有** `(名,长度)` 字面量对
+#    ⇒ 方法名定不了；`queue_free` 的对象来自哪个字段未定。本轮先自己复核；仍定不了就落已解部分。
+#  - M1–M3：若函数体内走 `getrandom`/`std::sys::rand`/时间种子，则**随机序列不可复现** ⇒ 只能复原
+#    "取哪个随机数、怎么用"的控制流结构，不能值级对拍（这正是它们 gameLOC=0 的原因之一 —— 无 panic 点）。
+
+# ============================================================================
+# §5 计数口径（三个数分开报；本任务只动分母外 X 的一部分）
+# ============================================================================
+# 机器码（条）：T105 全量 1244 条 / 分母外 real-missing 57 条 ⇒ 本批 11 条落成 ⇒ 报 57→?
+#              （逐条核对：只有 `fixtures/denom_outside.tsv` 里那一行 verdict 变了才算，不按"我觉得"数）
+# 源码函数（组）：T105 分母外真缺 55 组 ⇒ 本批 11 组 ⇒ 报 55→?
+# 严格 1:1     ：分母外函数里"有真名边界 + 有物证（R1–R3 全满足）"的条数，**不**把 K1 边界包装
+#              与 K2 新写混着数；K1 的"本体归属待搬"另列遗留。
+# ⚠️ **不动的三个招牌数**：A 336/527=63.8%、B 336/438=76.7%、D_A 336/670=50.1%。
+#    本批落的是分母外（X 内），**不进 A/B 分子**；D_A 的分母是 670 = 527+143，分子只有 A ⇒ 也不动。
+#    要报"分母外已实现"的变化：X 内 implemented 88 → 88+?（报告里单独给）。
+#
+# ============================================================================
+# §6 门槛（每处落码后跑；退一位就停下报告）
+# ============================================================================
+#  cargo test --offline                          → 期望 1666 passed / 0 failed / 1 ignored
+#  cargo test --offline --features gdext-bindings → 期望 1826 / 0 / 1
+#  python3 tools/coverage_matrix.py --check      → OK（改了 src 要重跑生成物）
+#  python3 tools/check_doc_refs.py               → rc=0
+#  python3 tools/docsec.py check docs/06-verification.md → 无重复号/空心节（本批追加 **§153**）
+#  三轴（冻结快照 401 份回放，别混新样本）：
+#    replay_attrib --drive fire  --policy default → 647
+#    replay_attrib --drive batch --policy default → 647
+#    batch_conv --policy strict                   → 637
+#  python3 tools/boundary_audit.py --check       → mismatch 0（match 441）
+# 本批改的都是"分母外"函数，**理论上三轴应一位不动**；动了就是改了行为 ⇒ 立即停。
+#
+# ============================================================================
+# §7 交付物
+# ============================================================================
+#  ① 本文件（单独 commit #1）
+#  ② `fixtures/denom_drawers_math_anchors.tsv`：11 条 × (android/linux vaddr+范围、配对判据、
+#     Location、调用者、证据档、落点文件:行、档位) —— 可审计台账
+#  ③ `fixtures/denom_drawers_math_truth.tsv` + `tools/denom_drawers_truth.py`：§3 的值级真值
+#  ④ 5 个原版模块文件的落码（逐处单独 commit）
+#  ⑤ `docs/06-verification.md` **§153**：逐条"落了/没落 + 理由"、分母外 57→?、遗留、门槛读数
