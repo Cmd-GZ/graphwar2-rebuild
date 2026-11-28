@@ -253,8 +253,24 @@ var _judged: Dictionary = {}
 var _flow := GwShotFlow.new()
 ## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
 var _turn_clock := GwTurnClock.new()
-## `TickRequest` 的节奏时钟（Rust：`GraphwarTickHandler`，`0x519840` / `0x519630`）。
+## 联机时序的**纯**出口 + 取证计数（T104 起**不再持有时钟**：节奏与 tick 计数只在平面那台
+## `GraphwarTickHandler` 里，`docs/06` §150 第③条）。
 var _flow_clock := GwFlowClock.new()
+## **联机倒计时的剩余秒**（`-1` = 这一档没有截止 ⇒ 标签空白）。
+##
+## 轴是**服务端绝对 60Hz tick**（原版 `0x3dcd47 sub edx,ebx` 两个操作数同一根轴），
+## 不是我方"时长 − 本回合已过 tick"。取数在 `_online_tick()`，换算在 Rust
+## （`GwFlowClock.seconds_left_in_turn`，逐位判据见 `docs/06` §150 P4-*）。改前这里是
+## `_turn_clock.advance(delta)` 的墙钟折 tick ⇒ **与平面那台 tick handler 不同轴**。
+var _online_seconds_left := -1.0
+## **本回合已过 tick**（同时回合收集阶段的 deadline 轴，`docs/06` §150 P1-3）。
+##
+## 原版判"什么时候该结算"用的是**同一根 60Hz 轴上的两个数**：
+## `Match::handle_tick`（**`0x470840`**）`0x4709dc cmp ebp,edx` / `0x4709de jb` ⇒
+## **`now_tick >= end_of_turn_tick`**（`jb` 是无符号"<"⇒ 跳过）。本地局没有服务端
+## `EndOfTurnInfo`，所以两边都换成"本回合内"的量：`now` = 这个累加器、
+## `end` = `GwTurnClock.duration_ticks()`（两者同减回合起点 ⇒ 比较结果逐位等价）。
+var _round_ticks := 0
 ## **对局状态机本体**（8 个 `GameState`，原版是 `[self+0x120]` 那一个字节）。
 ##
 ## 迁移表在 Rust（`GwTurnState` → `src/turnstate.rs::next_state`），本屏只**发事件、问状态**。
@@ -784,6 +800,7 @@ func begin_match() -> void:
 	_set_replay_input_enabled(true)
 	_functions.clear()
 	_shot_queue.clear()
+	_round_ticks = 0
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
@@ -1197,8 +1214,10 @@ func _drive_clock(delta: float) -> void:
 		_advance_curve(delta)
 		return
 	if _online_mode:
+		# **一台时钟**：`drive_frame` 推进平面那台 `GraphwarTickHandler`（`0x519840`），
+		# 并把这一帧产出的 `TickRequest` 条数留在平面里（`0x51849f call 0x3d3630` 那一泵的等价物）。
 		_plane.call("drive_frame", delta)
-		_online_poll_tick(delta)
+		_online_poll_tick()
 		_curve_tick = float(_plane.call("fractional_tick"))
 		if _curve_player >= 0:
 			_feed_curve()
@@ -1213,14 +1232,20 @@ func _drive_clock(delta: float) -> void:
 ## 也是照这个行为实现的）。`FunctionActive.active_tick` 就长在这条轴上。
 ## `TickRequest` 的节奏（T99 / `docs/06` §144）：真值 `GraphwarTickHandler::tick`（**`0x519840`**）
 ## = 每 tick `accum += 16_666_666 ns`，**`tick % 60 == 0`** 时再发一条；连上时那条走
-## `handle_connected_to_server_event`（**`0x519630`**，不看载荷）。改前是自造的墙钟累加器
-## （`_tick_request_acc += delta`）⇒ 与 tick 计数无相位关系。现在判据只在 Rust（`GwFlowClock`）。
+## `handle_connected_to_server_event`（**`0x519630`**，不看载荷）。
+##
+## **T104 / `docs/06` §150 第③条**：这两条判据的**唯一持有者**是平面那台
+## `GraphwarTickHandler`（`GraphwarPlane::drive_frame` / `tick_connected`）；本函数只是消费者。
+## 改前 `GwFlowClock` 自己又握了一台（同源时钟 ×2）—— 因为平面把发件箱 `clear()` 丢了。
+## 现在平面把产出 drain 成计数（`take_tick_requests()`）：节奏判据仍然只有一份，
+## 且**跟着平面的 tick 走**（含 `TickReply` 把轴拨到服务端之后）。
 var _online_tick_synced := -1
 
-func _online_poll_tick(delta: float) -> void:
+func _online_poll_tick() -> void:
 	if _online_session == null:
 		return
-	var due := int(_flow_clock.drive(delta))
+	_flow_clock.note_frame()
+	var due := int(_flow_clock.note_requests(int(_plane.call("take_tick_requests"))))
 	for _i in due:
 		_online_session.send_tick_request()
 	# 收到 `TickReply{current_tick}` 就把 tick 轴拨过去（原版客户端对齐服务端 tick 轴那件事；
@@ -1811,16 +1836,15 @@ func _commit_shot(shot: Dictionary) -> void:
 		# 一回合 N 发一个事务，按公告顺序收）。本屏只递"这一发是谁打的"。
 		# ⚠️ 这一支**没有**接逐 tick 时序（见 `docs/143` §9 "未做"）：整批一落地就算完。
 		if _shot_queue.is_empty():
-			_turn_driver.round_open(_simultaneous_announced())
+			_open_simultaneous_round()
 		_shot_queue.append(shot)
 		var collected := _turn_driver.round_submit(_active)
-		if bool(collected.get("complete", false)):
-			_resolve_shots(_shot_queue)
-			_shot_queue.clear()
-			_turn_driver.round_reset()
-			_next_turn(true)
-			_settle_round()
-			_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
+		# **"该不该结算" = 攒齐 ∨ 到点**（Rust 的 `RoundCollection::should_resolve`，
+		# `docs/06` §150）：`complete` 只覆盖"攒齐"那一半。改前只问 `complete`，
+		# 而 `round_open()` 传的 deadline 是 `None` ⇒ 公告里只要有人不交，
+		# 这一轮**永远**结算不了（P25 把公告改成"全部玩家"就会踩到）。
+		if _turn_driver.round_should_resolve(_round_ticks):
+			_resolve_simultaneous_round()
 		else:
 			_next_turn(false)
 		return
@@ -1862,10 +1886,11 @@ func _reset_shot_state() -> void:
 		_effects.clear()
 	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
 	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。原版连上服务器时会**立刻**发一条
-	# `TickRequest`（`handle_connected_to_server_event` **`0x519630`**，不看载荷）⇒ 这里调
-	# `GwFlowClock.connected()` 那一下，而不是把某个累加器推到门槛上当替身（改前就是那样）。
+	# `TickRequest`（`handle_connected_to_server_event` **`0x519630`**，不看载荷）。
+	# T104 起这条也走平面那台时钟（`GraphwarPlane::tick_connected()`）—— 它是 `0x519630` 的
+	# 唯一接线点；改前在 `GwFlowClock` 里还有第二份同源实现（`docs/06` §150 第③条）。
 	_flow_clock.reset()
-	if _online_mode and _online_session != null and int(_flow_clock.connected()) > 0:
+	if _online_mode and _online_session != null and int(_plane.call("tick_connected")) > 0:
 		_online_session.send_tick_request()
 	_online_tick_synced = -1
 
@@ -2180,6 +2205,31 @@ func _simultaneous_announced() -> Array:
 				break
 	return out
 
+## 开一轮同时回合的收集（`RoundCollection`，`docs/141` §1）。
+##
+## **deadline 必须给**（`docs/06` §150 P1-*）：改前这里调的是 `round_open(announced)`，
+## 也就是 `deadline = None` ⇒ `expired()` 恒假 ⇒ 只要公告里有一个人不交，
+## 这一轮就永远结算不了（P25 的"全部玩家"公告集合一搬过来就会死锁）。
+## 截止 = `GwTurnClock.duration_ticks()`（`TimeMode::seconds()` × 60；`TimerInf` ⇒ `-1` = 不计时）。
+func _open_simultaneous_round() -> void:
+	_round_ticks = 0
+	_turn_driver.round_open_with_deadline(_simultaneous_announced(),
+		int(_turn_clock.duration_ticks()))
+
+## 结算这一批同时回合的弹道，然后换手 + 结算 + 回状态机。
+##
+## 两个进入点共用这一条路径（**只有一份**）：①攒齐了（`_commit_shot` 里最后一次 `submit` 之后）；
+## ②到点了（`_process` 每帧查 `round_should_resolve`）。原版到点是
+## `0x4709ec call 0x470eb0 fire_functions` —— 把**已提交的**打出去，也就是按现有内容结算。
+func _resolve_simultaneous_round() -> void:
+	_resolve_shots(_shot_queue)
+	_shot_queue.clear()
+	_turn_driver.round_reset()
+	_round_ticks = 0
+	_next_turn(true)
+	_settle_round()
+	_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
+
 ## 命中表（= 原版 **`SynchronizingResults`** 那一步的结果：服务端在开火那一刻就把谁死算完）。
 ##
 ## **判定本体在 Rust**：`GwShotFlow.judge()` → `src/graphwar_shot_calculator/settle.rs::resolve_points_owned`
@@ -2485,6 +2535,7 @@ func _begin_replay(path: String) -> void:
 	_replay_shot_status = ""
 	_functions.clear()
 	_shot_queue.clear()
+	_round_ticks = 0
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
@@ -2910,6 +2961,7 @@ func _begin_online(app_node) -> void:
 
 	_functions.clear()
 	_shot_queue.clear()
+	_round_ticks = 0
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
@@ -3174,12 +3226,20 @@ func _online_can_fire() -> bool:
 ## 联机下的时钟：只走数、不换手。换手是服务端 `TurnInfo` 的事 ——
 ## 本地那条"到点自动换手"（`_process` 的另一半）在这里会让两个真相源打架。
 ##
-## 倒计时**不是**我方的墙钟（T99 / `docs/06` §144）：改前是 `_time_left -= delta`，与
-## `GwTurnClock` 平行；现在推进 Rust 的 `TurnClock`（`graphwar_play_screen_control`）——
-## 它按 `TICKS_PER_SECOND` 把秒折成 tick、`seconds_left()` = 时长 − 已过 tick，
-## 时长来自 `graphwar_mode_manager::TimeMode::seconds()`（`docs/42` 抓包实证 30/60/120/180/300）。
-func _online_tick(delta: float) -> void:
-	_turn_clock.advance(delta)
+## **倒计时的轴**（T104 / `docs/06` §150 第④条）：原版是
+## `剩余秒 = saturating_sub(end_of_turn_tick, now_tick) / 60`，两个操作数**同一根 60 Hz tick 轴**
+## （`0x3dcd47 sub edx,ebx` / `0x3dcd49 cmovb` / `0x3dcd4c` 除 60 幻数 `0x88888889>>0x25`）；
+## `now_tick` 读的是 `GraphwarTickHandler` 的 `current_tick`（`0x3dccd6 mov ebx,[r15+0x58]`，
+## r15 是 RefCell 守卫 ⇒ 载荷 +0x40）。改前我方用的是 `TurnClock` 的"时长 − 本回合已过 tick"
+## （墙钟折 tick）—— 与平面那台 tick handler **不同轴**，只是因为两边都被夹到同一个时长，
+## 读数上只差一个常量偏移（T99 §144.6 #4 的登记）。
+## 现在：`end_of_turn_tick` 来自服务端 `EndOfTurnInfo`（`session.gd::_apply`），
+## `now_tick` 取平面那台 tick handler（`integer_tick_now()`；收到 `TickReply` 时被
+## `set_fractional_tick` 拨到服务端轴上、之后由 `drive_frame` 按 60 Hz 推进）。
+func _online_tick(_delta: float) -> void:
+	_online_seconds_left = float(GwFlowClock.seconds_left_in_turn(
+		int(_online_room().get("end_of_turn_tick", 0)),
+		int(_plane.call("integer_tick_now")) if _plane != null else 0))
 	_update_timer_label()
 
 ## 联机开火：**只发两条请求**，弹道与服务端算。判定/生死/回合全在服务端
@@ -3525,7 +3585,16 @@ func _process(delta: float) -> void:
 	if not _turn_clock.has_deadline():
 		_update_timer_label()      # `TimerInf`：没有截止时刻（战役关 21/21 都是这一档）
 		return
-	_turn_clock.advance(delta)
+	var ticks := int(_turn_clock.advance(delta))
+	# 同时回合的收集阶段：本帧推进的 tick 记进 `_round_ticks`（deadline 的 now 轴），
+	# 再问一次"该不该结算"—— 这就是"有人不交"的兜底（`docs/06` §150 P1-4）。
+	# 原版这条兜底在 `0x4709dc`/`0x4709de`（`now_tick >= end_of_turn_tick` ⇒ `fire_functions`）。
+	if _turn_driver.round_is_open():
+		_round_ticks += ticks
+		if _turn_driver.round_should_resolve(_round_ticks):
+			_resolve_simultaneous_round()
+			_update_timer_label()
+			return
 	if String(_turn_clock.decide(_shot_in_flight, _running)) == "auto_fire":
 		# 原版到点做的**不是**换手，而是 `call fire_functions`（`0x4709ec`）：
 		# 把已提交的那个函数打出去。这里照做；万一打不出去（输入框空 / 轮到 AI），
@@ -3543,8 +3612,11 @@ func _update_timer_label() -> void:
 	var app_node := app()
 	if app_node == null:
 		return
-	# 本地与联机**同一条**路径：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
-	var left := _turn_clock.seconds_left()
+	# 两条路径，**两条不同的轴**（原版就是这样，见 `docs/06` §150）：
+	# * 联机 = 服务端绝对 tick 轴（`end_of_turn_tick − 平面 tick`，`0x3dcd47`）；
+	# * 本地局 = `GwTurnClock`（时长 − 本回合已过 tick；本地没有服务端的 `EndOfTurnInfo`）。
+	# 两者 `-1.0` 都表示"这一档没有截止" ⇒ 标签空白（`TimerInf`）。
+	var left := _online_seconds_left if _online_mode else _turn_clock.seconds_left()
 	_timer_label.text = "" if left < 0.0 else GwModes.format_clock(left)
 
 # ---------------------------------------------------------------- 附加按钮与显示开关

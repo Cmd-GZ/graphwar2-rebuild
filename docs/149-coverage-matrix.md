@@ -113,7 +113,7 @@
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 50 | 观测 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/graphwar_obstacle_manager.rs` | 20 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
-| `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 128 | 观测 |
+| `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 134 | 观测 |
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/graphwar_plane_pos_manager.rs` | 20 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 97 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
@@ -134,7 +134,7 @@
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 12 | 观测 |
 | `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 31 | 观测 |
 | `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 37 | 逐位 |
-| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 103 | 逐位 |
+| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 110 | 逐位 |
 | `graphwar_video_writer.rs` | 3 | 4 | `src/graphwar_video_writer.rs` | 8 | 观测 |
 
 ### 2.2 非 `graphwar_` 前缀的游戏模块
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（120 个文件、4158 条 `fn`） | `fed2cc408c0c4ca6595168ecafb8dda5c450c6ddb68e0cd5e2dbcbab1c676745` |
+| `src/` 树（120 个文件、4174 条 `fn`） | `ab7b4831f6677997b0342a03d9f757d8d4d373d9a890e3b38d7f908c4fed4ad8` |
 

@@ -79,6 +79,18 @@ fn alive_at(alive: &VarArray, index: i64) -> bool {
     }
 }
 
+/// 把 `Variant` 数组读成 `Vec<i64>`（缺项/类型不对的项**跳过**，与旧 `.gd` 的
+/// `for x in arr: ids.append(int(x))` 在"元素都是 int"的正常输入下等价）。
+fn ids_of(arr: &VarArray) -> Vec<i64> {
+    let mut out = Vec::with_capacity(arr.len());
+    for i in 0..arr.len() {
+        if let Some(v) = arr.get(i) {
+            out.push(v.to::<i64>());
+        }
+    }
+    out
+}
+
 /// 把 `Vec<i64>` 塞进 `Variant` 数组（GDScript 侧看到的是 `Array`）。
 fn int_array(xs: &[i64]) -> VarArray {
     let mut arr = VarArray::new();
@@ -525,15 +537,62 @@ impl GwTurnDriver {
 
     /// 开一轮：`announced` = 本回合该交的玩家（公告顺序）。旧实现是
     /// `_shot_queue` + `_all_alive_players_shot()` 那套旁路判断。
+    ///
+    /// **不计时**（`deadline = None`）。要接"有人不交怎么办"的兜底，用
+    /// [`GwTurnDriver::round_open_with_deadline`]；见 `docs/06` §148 的 P1-*。
     #[func]
     fn round_open(&mut self, announced: VarArray) {
-        let mut ids: Vec<i64> = Vec::new();
-        for i in 0..announced.len() {
-            if let Some(v) = announced.get(i) {
-                ids.push(v.to::<i64>());
-            }
-        }
+        let ids = ids_of(&announced);
         self.round = Some(RoundCollection::new(ids, None));
+    }
+
+    /// 开一轮并**给一个截止**（`deadline_ticks` = 本回合能等多久，单位 tick；`< 0` = 不计时）。
+    ///
+    /// 判据出处（**逐位**，`docs/06` §148 P1-1）：`Match::handle_tick`（x86 **`0x470840`**）
+    /// 的 ②段 —— `0x4709dc cmp ebp,edx` / `0x4709de jb`（`jb` 是无符号"<"⇒ 跳过）⇒
+    /// **`now_tick >= end_of_turn_tick`** 才把"已提交的"打出去（`0x4709ec call 0x470eb0 fire_functions`）。
+    /// 我方 [`crate::graphwar_turn_manager::RoundCollection::expired`] 的边界与之一致（`>=`），
+    /// 所以这里**只接 deadline，不改边界**。
+    ///
+    /// `now_tick` 的轴：与 `deadline_ticks` **同一根**。本地局没有服务端 `EndOfTurnInfo`
+    /// （截止由 `GwTurnClock` 的 `TimeMode` 时长给），所以两边都用"本回合已过多少 tick"：
+    /// 原版的 `now − end` 与我方的 `已过 − 时长` 只差一个常量 ⇒ 比较结果逐位等价
+    /// （`docs/06` §148 P1-3）。
+    #[func]
+    fn round_open_with_deadline(&mut self, announced: VarArray, deadline_ticks: i64) {
+        let ids = ids_of(&announced);
+        let deadline = if deadline_ticks < 0 { None } else { Some(deadline_ticks) };
+        self.round = Some(RoundCollection::new(ids, deadline));
+    }
+
+    /// 现在这一轮有没有开（= 上一次 `round_open*` 之后还没 `round_reset()`）。
+    #[func]
+    fn round_is_open(&self) -> bool {
+        self.round.is_some()
+    }
+
+    /// 这一轮的截止 tick；`-1` = 不计时（`TimerInf` 那档，原版 `get_end_of_turn_tick` 给 `None`）。
+    #[func]
+    fn round_deadline(&self) -> i64 {
+        match self.round.as_ref() {
+            Some(r) => r.deadline().unwrap_or(-1),
+            None => -1,
+        }
+    }
+
+    /// **到点了没有**（`now_tick >= deadline`；`docs/06` §148 P1-2 的边界）。
+    #[func]
+    fn round_expired(&self, now_tick: i64) -> bool {
+        self.round.as_ref().map(|r| r.expired(now_tick)).unwrap_or(false)
+    }
+
+    /// **该不该结算**：攒齐 **或** 到点（原版 `0x4709dc`–`0x4709ec` 那条判据的收集阶段版本）。
+    ///
+    /// 这一条就是"有人不交"的兜底 —— 没有它，公告集合里只要有一个不交的玩家
+    /// （全灭 / 掉线 / P25 把公告改成"全部玩家"之后的死者）这一轮就**永远**结算不了。
+    #[func]
+    fn round_should_resolve(&self, now_tick: i64) -> bool {
+        self.round.as_ref().map(|r| r.should_resolve(now_tick)).unwrap_or(false)
     }
 
     /// 收一发：`{accepted, complete, reason, waiting}`。
