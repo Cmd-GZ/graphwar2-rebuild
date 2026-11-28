@@ -571,7 +571,11 @@ def addr_of(s):
 
 
 def load_targets():
-    """→ (527 全集, 179 无名, 331 具名 addr→(module,type,method))。"""
+    """→ (527 全集, 179 无名, 331 具名 addr→(module,type,method))。
+
+    ⚠️ **v1/v2 合并规则（2026-11-27 T92，`docs/06` §139）**：`name_to_addr.tsv`（v1，`name_bridge.py`
+    的产物）**只在 v2 没有落地该地址时**才参与 `allnames`。理由见下面 v1 循环处的注释。
+    """
     boundary = set()
     for l in open(os.path.join(ROOT, "fixtures/boundary_audit.tsv")):
         if l.startswith("#"):
@@ -601,11 +605,28 @@ def load_targets():
         named[a] = dict(module=rs[0]["module"], type=rs[0]["type"], method=rs[0]["method"],
                         src="name_to_addr_v2")
     _, na = load_tsv(os.path.join(ROOT, "fixtures/name_to_addr.tsv"))
+    # ⚠️ **v2 已落地的地址忽略 v1**（2026-11-27 T92，`docs/06` §139 ①；T89 在 §138.4 / §138.9-2 的建议）。
+    #
+    # 为什么：v2 经 T89 的同址裁决后是「**一个地址只有一条 `role=outer` 身份**」，该身份由
+    # android 2.0.60 / win 2.0.60 / win early2026 三份参照构建的 **size 得票** 选出（§138.1），
+    # 而 v1（`name_bridge.py` 的粗键规则）**不做同址裁决** —— 它在大函数地址上还留着被内联进去的
+    # 小函数名。把这类 v1 名字无条件并进 `allnames`，只会制造**跨表假冲突**：
+    #   * `0x4500c0` —— v1 写 `graphwar_game_server::::game_server_thread`、v2 写
+    #     `graphwar_game_server::_::game_server_thread`：**同一个函数的两种渲染**（自由函数的
+    #     `type` 一列 v1 空串、v2 写 `_`），根本不是两个名字；
+    #   * `0x3e2830` —— v1 额外认了 `set_color` / `report_fired_function`（被内联进 12505 字节
+    #     `handle_server_remote_event` 的两条小函数），v2 已把它们降为 `inline_alias`；
+    #   * `0x465780` / `0x4783f0` —— v2 各只有 1 个名字，v1 的粗键名与它不同（Android 侧首选
+    #     第三个名字 ⇒ 两条都不是"v2 内部冲突"，而是 v1 的旧规则产物）。
+    # ⇒ 修完后 B 区真冲突 4 → 0（§138.4 列的 4 条全部消失）；**v1 自身的冲突照样查得出来**
+    #   （v2 没落地的地址仍然并进 `allnames`）。
+    v2_landed = set(byaddr)
     for r in na:
         a = addr_of(r.get("x86_addr"))
         if a in boundary and r.get("method"):
-            allnames[a].append(dict(module=r["module"], type=r["type"], method=r["method"],
-                                    src="name_to_addr", join_kind=""))
+            if a not in v2_landed:
+                allnames[a].append(dict(module=r["module"], type=r["type"], method=r["method"],
+                                        src="name_to_addr", join_kind=""))
             if a not in named:
                 named[a] = dict(module=r["module"], type=r["type"], method=r["method"],
                                 src="name_to_addr")
@@ -1034,6 +1055,68 @@ def norm_name(n):
     return n
 
 
+def dup_name_addrs(allnames):
+    """B 区判据（**只看名字层面**，不需要 Android 轴）：同一地址出现 ≥2 个不同的源码级名字。
+
+    抽成函数是为了能做**正对照**（`verify --self-check`）：负结论「B 区 0 条」必须证明判据本身活着
+    （AGENTS.md 合并纪律 A.4「抽查负结论」）。
+    """
+    out = []
+    for va, lst in sorted(allnames.items()):
+        names = sorted({(x["module"], x["type"] or "", norm_name(x["method"] or "")) for x in lst})
+        if len(names) >= 2:
+            out.append((va, names))
+    return out
+
+
+def conflict_self_check():
+    """B 区「0 条」的正/负对照（2026-11-27 T92 加，`docs/06` §139 ①）。
+
+    * 负对照：真实夹具上 `dup_name_addrs()` 必须是 **0 条**（v2 内部已由 T89 裁决成一地址一身份；
+      v1 只在 v2 未落地的 19 个地址上并入 ⇒ 跨表假冲突消失）。
+    * 正对照：分别给 **(a) 一个 v1-only 地址** 与 **(b) 一个 v2 已落地地址** 注入一条假名字，
+      两者都必须被**同一条判据**抓到 ⇒ 证明「0 条」不是判据失灵。
+    """
+    boundary, unnamed, named, allnames = load_targets()
+    print("=== B 区冲突判据 正/负对照（tools/naming_android.py load_targets + dup_name_addrs）")
+    real = dup_name_addrs(allnames)
+    print("  负对照：真实夹具 B 区 = **%d 条**（要求 0）" % len(real))
+    for va, names in real:
+        print("     ✗ %s %s" % (hex(va), names))
+    ok = (len(real) == 0)
+
+    # 选两个地址：一个 v1-only（v2 没落地）、一个 v2 已落地
+    hdr2, v2 = load_tsv(os.path.join(ROOT, "fixtures/name_to_addr_v2.tsv"))
+    v2_landed = {addr_of(r.get("x86_addr")) for r in v2 if r.get("role") == "outer"}
+    v2_landed.discard(None)
+    hdr1, v1 = load_tsv(os.path.join(ROOT, "fixtures/name_to_addr.tsv"))
+    v1_addrs = {addr_of(r.get("x86_addr")) for r in v1 if r.get("method")}
+    v1_addrs.discard(None)
+    v1_only = sorted(a for a in v1_addrs if a in boundary and a not in v2_landed)
+    v2_any = sorted(a for a in v2_landed if a in boundary)
+    print("  参照集：v1 在 527 里落地的地址 %d 个，其中 **v2 未落地 %d 个**（这些仍从 v1 取名）"
+          % (len([a for a in v1_addrs if a in boundary]), len(v1_only)))
+    print("          v2 已落地 %d 个（这些**忽略 v1**）" % len(v2_any))
+
+    for tag, a in (("(a) v1-only 地址", v1_only[0] if v1_only else None),
+                   ("(b) v2 已落地地址", v2_any[0] if v2_any else None)):
+        if a is None:
+            print("  ✗ %s：参照集为空，正对照做不了" % tag)
+            ok = False
+            continue
+        inj = dict(allnames)
+        inj = {k: list(v) for k, v in inj.items()}
+        inj.setdefault(a, []).append(dict(module="__self_check__", type="Injected",
+                                          method="fake_conflict_name", src="self-check", join_kind=""))
+        got = dup_name_addrs(inj)
+        hit = any(x[0] == a for x in got)
+        print("  %-4s %s %s 注入假名字 ⇒ 判据报 %d 条，命中该地址 = %s"
+              % ("✓" if hit else "✗", tag, hex(a), len(got), hit))
+        ok = ok and hit
+    print("对照结论：%s" % ("通过（0 条是判据活着下的 0 条）" if ok else "**不通过** ⇒ 先修工具"))
+    return 0 if ok else 1
+
+
 def cmd_verify(args):
     """交叉核对已有真名：① 逐条判 V1/V2/V3/V4；② 夹具内同址多名的冲突裁决。"""
     data = load_cache()
@@ -1090,10 +1173,8 @@ def cmd_verify(args):
 
     # ---- ② 夹具内同址多名（名字层面的复原冲突） ----
     conflicts = []
-    for va, lst in sorted(allnames.items()):
-        names = sorted({(x["module"], x["type"] or "", norm_name(x["method"] or "")) for x in lst})
-        if len(names) < 2:
-            continue
+    for va, names in dup_name_addrs(allnames):
+        lst = allnames[va]
         L = ax.lin.get(va)
         if L is None:
             continue
@@ -1163,11 +1244,18 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("cmd", choices=["build", "control", "name", "verify", "all"])
     ap.add_argument("--rebuild", action="store_true", help="强制重建特征缓存")
+    ap.add_argument("--self-check", action="store_true",
+                    help="verify 专用的 B 区冲突判据 正/负对照（负结论必做，AGENTS.md A.4）")
     args = ap.parse_args(argv)
     if args.cmd == "build" or args.rebuild:
         build_cache()
         if args.cmd == "build":
             return 0
+    if args.self_check:
+        if args.cmd != "verify":
+            print("--self-check 只配 verify 用", file=sys.stderr)
+            return 2
+        return conflict_self_check()
     if args.cmd == "control":
         return 0 if cmd_control(args) else 2
     if args.cmd == "name":
