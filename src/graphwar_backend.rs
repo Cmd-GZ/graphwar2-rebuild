@@ -530,6 +530,17 @@ pub enum StopServerStep {
     DropServer,
 }
 
+/// `start_server`（arm64 `0x406c64` / 216 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartServerStep {
+    /// `GraphwarGameServer::new(w1, w2, 0)`（`0x406c8c bl 0x482cc4`），对象建在**栈上**。
+    NewServer,
+    /// `GraphwarGameServer::start`（`0x406c94 bl 0x483090`），也在栈上、**先**于搬移。
+    StartServer,
+    /// 旧槽非空 ⇒ `drop_in_place<GraphwarGameServer>`（`0x406cc8 bl 0x4178dc`）。
+    DropOldServer,
+}
+
 impl GraphwarBackend {
     /// 空后端。
     pub fn new() -> Self {
@@ -649,6 +660,45 @@ impl GraphwarBackend {
             steps.push(StopServerStep::DropServer); // 0x406c40
         }
         self.server = None; // 0x406c48
+        steps
+    }
+
+    /// `start_server` —— **原版 arm64 `0x406c64` / 216 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `0x406c64..0x406d00`，主路径）：
+    ///
+    /// ```text
+    /// 0x406c64..0x406c78  sub sp,#0x130 / 存 x29,x30,x28,x20,x19   ; 0x100 字节栈区留给 server 对象
+    /// 0x406c80  mov  w0,w1 / 0x406c84 mov w1,w2 / 0x406c88 mov w2,wzr
+    /// 0x406c8c  bl   0x482cc4            ; GraphwarGameServer::new(a, b, 0) → 写到 [sp]
+    /// 0x406c90  mov  x0,sp / 0x406c94 bl 0x483090   ; GraphwarGameServer::start(&mut on-stack)
+    /// 0x406c9c  ldr  x8,[x19,#0x60]!     ; x19 += 0x60；读旧槽判别字（**在 new+start 之后**）
+    /// 0x406ca8  cmp  x8,#0x4
+    /// 0x406ca8..0x406cc0 四组 ldp/stp 把栈上 0x80 字节重排到 [sp+0x80..0x100]
+    /// 0x406cc0  b.eq 0x406ccc            ; 旧槽空 ⇒ 不 drop
+    /// 0x406cc8  bl   0x4178dc            ; drop_in_place<GraphwarGameServer>(self+0x60)
+    /// 0x406ccc..0x406ce8 四组 ldp/stp 把 0x80 字节写进 self+0x60..0xe0（含判别字）
+    /// ```
+    ///
+    /// ⇒ 语义：**先在栈上 `new` + `start`，再（必要时）拆旧槽，最后整块 0x80 字节装进去**。
+    /// 顺序是证据：`0x406c94`（start）**先于** `0x406c9c`（读旧判别字）与 `0x406cc8`（drop 旧槽）
+    /// ⇒ 新 server 建好之后才动旧的（`start` 失败/panic 时旧槽仍完好）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。对象 0x80 字节我方只建模 `new` 的两个实参 + `started` 标志；
+    /// 其余字节没读出来。
+    pub fn start_server(&mut self, arg0: u32, arg1: u32) -> Vec<StartServerStep> {
+        let mut steps = Vec::new();
+        steps.push(StartServerStep::NewServer); // 0x406c8c
+        steps.push(StartServerStep::StartServer); // 0x406c94
+        if self.server.is_some() {
+            // 0x406ca8：cmp x8,#4 —— 旧槽非空才 drop（顺序在 new+start 之后）
+            steps.push(StartServerStep::DropOldServer); // 0x406cc8
+        }
+        self.server = Some(ServerSlot {
+            arg0,
+            arg1,
+            started: true,
+        }); // 0x406ccc..0x406ce8
         steps
     }
 
@@ -854,6 +904,51 @@ mod lifecycle_tests {
         // 需要 `GraphwarGameServer::stop` 的函数体，本轮**未读** ⇒ 不写断言（plan L3）。
     }
 
+    /// `start_server`：`new` + `start` **先于**"拆旧槽"，这条顺序是不显然之处。
+    #[test]
+    fn start_server_builds_then_replaces() {
+        // ① 首次装：只有 new + start
+        let mut b = GraphwarBackend::new();
+        assert_eq!(
+            b.start_server(35245, 1),
+            vec![StartServerStep::NewServer, StartServerStep::StartServer],
+            "0x406c8c → 0x406c94，此时 0x406ca8 判据为 **空**"
+        );
+        assert_eq!(
+            b.server,
+            Some(ServerSlot { arg0: 35245, arg1: 1, started: true }),
+            "0x406ccc..0x406ce8 把栈上对象整块搬进 self+0x60"
+        );
+
+        // ② 再装一次：旧槽非空 ⇒ 多一步 DropOldServer，且它排在 new/start **之后**
+        let steps = b.start_server(35246, 2);
+        assert_eq!(
+            steps,
+            vec![
+                StartServerStep::NewServer,
+                StartServerStep::StartServer,
+                StartServerStep::DropOldServer
+            ],
+            "顺序证据：0x406c94(start) < 0x406c9c(读旧判别字) < 0x406cc8(drop 旧)"
+        );
+        assert_eq!(b.server.unwrap().arg0, 35246, "新对象覆盖旧槽");
+    }
+
+    /// 四条函数都不碰 `+0x1d8` 订阅表与 `+0x1d0` 共享计数（反汇编里 0 条相关指令）——
+    /// 反面对照：`resubscribe_to_events` 会碰，说明"不动"是我方实现的可测差异面。
+    #[test]
+    fn lifecycle_functions_do_not_touch_subscription_state() {
+        let mut b = GraphwarBackend::new();
+        b.subscriptions.insert(30, "game_state_info_event".into());
+        b.client = Some(ReplayClientSlot::default());
+        b.replay_slot_tag = 0;
+        let _ = b.setup_level(0, 0);
+        let _ = b.stop_client();
+        let _ = b.stop_server();
+        let _ = b.start_server(1, 2);
+        assert_eq!(b.subscriptions.len(), 1, "四条函数体内没有访问 +0x1d8 的指令");
+        assert_eq!(b.shared_refs, 0, "也没有 inc/dec [self+0x1d0]");
+    }
 }
 
 #[cfg(test)]
