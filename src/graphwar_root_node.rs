@@ -3337,3 +3337,160 @@ mod tests {
 
 #[cfg(feature = "gdext-bindings")]
 pub use node_class::*;
+
+// ---------------------------------------------------------------------------
+// 10. `show_pop_up` 与 `print_help_and_exit_if_requested`（2026-11-28 T109 落码）
+//
+// 这两条与 `user_args` 一起是 T97/T105 挂在「分母外真缺」里的 3 条（`fixtures/gap_rootnode.tsv`、
+// `fixtures/denom_outside.tsv`）。三条体内都**没有** `panic::Location` ⇒ 527 分母看不见。
+// 本轮落 2 条；`user_args` 见本节末尾的「未落」说明（依赖 5752 B 的 clap derive 展开）。
+// ---------------------------------------------------------------------------
+
+/// 弹窗节点表在根节点里的字段偏移：`+0x18` 的 `items`、`+0x20` 的 hasher（hashbrown 形状）。
+///
+/// 档位：**观测**（`0x3a5d80 ldr x8,[x0,#0x18]` + `cbz` 空表短路；`0x3a5d98 bl hash_one`
+/// 的 hasher 来自 `x0..`（对应 `+0x20`））。
+pub const POPUP_TABLE_ITEMS_OFFSET: usize = 0x18;
+
+/// 弹窗节点表的**槽位步长**：`0x28`（40 字节）。
+///
+/// 档位：**观测**（`0x3a5dac mov w24,#0x28` + `mneg` 算偏移）。
+pub const POPUP_TABLE_STRIDE: usize = 0x28;
+
+/// `show_pop_up` 里那次置可见的实参：**`true`**。
+///
+/// 档位：**观测**（`0x3a5e80 mov x0, x19` + `0x3a5e84 mov w1,#0x1` + `0x3a5ea4 b 0x7e68e0`
+/// = **尾调用** `CanvasItem::set_visible`，见符号名）。
+pub const SHOW_POP_UP_VISIBLE: bool = true;
+
+/// `show_pop_up` 需要的宿主能力：按名字在**根节点的弹窗表**里取节点，并置可见。
+pub trait PopUpHost {
+    /// 节点句柄（原版是 `Gd<CanvasItem>`）。
+    type Node: Copy;
+
+    /// `+0x18` 那张表按**字节串键**查（`0x3a5dfc bl memcmp` 比内容、`0x3a5de8` 比长度）。
+    fn popup_by_name(&mut self, name: &str) -> Option<Self::Node>;
+
+    /// `0x3a5e7c` 的 `check_rtti`（诊断名 `"upcast_ref"`，10 字节）。
+    fn upcast_canvas_item(&mut self, node: Self::Node) -> Self::Node;
+
+    /// `CanvasItem::set_visible`（`0x7e68e0`，**尾调用**）。
+    fn set_visible(&mut self, node: Self::Node, visible: bool);
+}
+
+/// `GraphwarRootNode::show_pop_up`（arm64 **`0x3a5d60`** / **328** B）：
+    /// `show_pop_up(name)` —— 按名字找到弹窗节点并 `set_visible(true)`。
+    ///
+    /// 逐条指令：
+    ///
+    /// ```text
+    /// 0x3a5d80  ldr x8,[x0,#0x18] ; cbz → 0x3a5e48(ret)   ; 表空 ⇒ 什么都不做
+    /// 0x3a5d98  bl BuildHasher::hash_one(&name)           ; 键 = 字节串（x1=ptr, x2=len）
+    /// 0x3a5dac  mov w24,#0x28                             ; 槽位步长 40
+    /// 0x3a5de8  cmp x19, x8                               ; 先比长度
+    /// 0x3a5dfc  bl memcmp                                 ; 再比内容
+    /// 0x3a5e68  sub x19, x27, #0x10                       ; 命中 ⇒ 值指针（节点）
+    /// 0x3a5e7c  bl RawGd::check_rtti("upcast_ref")        ; 0x3a5e70/0x3a5e78
+    /// 0x3a5e84  mov w1,#0x1                               ; 参数 = true
+    /// 0x3a5ea4  b CanvasItem::set_visible (0x7e68e0)      ; **尾调用**
+    /// ```
+    ///
+    /// ⇒ 语义 = **"按名字显示一个弹窗"**（表里没有该名字 ⇒ 静默返回，不 panic —— 未命中臂
+    /// `0x3a5e48` 只有恢复寄存器 + `ret`）。
+    ///
+/// 档位：**观测**。返回值：原版无返回值，本层返回"是否命中并置了可见"。
+///
+/// ⚠️ 承载说明：原版这是 `GraphwarRootNode` 的方法，而本仓库的 `GraphwarRootNode` 类型定义在
+/// `#[cfg(feature = "gdext-bindings")] mod node_class` 里（不带 gdext 特性就没有这个类型）
+/// ⇒ 本层把它落成**同模块的自由函数**，第 1 个参数 `host` 就是原版的 `self`。
+pub fn show_pop_up<H: PopUpHost + ?Sized>(host: &mut H, name: &str) -> bool {
+    // 0x3a5d80 的空表/未命中短路
+    let Some(node) = host.popup_by_name(name) else {
+        return false;
+    };
+    // 0x3a5e7c
+    let node = host.upcast_canvas_item(node);
+    // 0x3a5e84 + 0x3a5ea4
+    host.set_visible(node, SHOW_POP_UP_VISIBLE);
+    true
+}
+
+/// clap 的 `ErrorKind` 字节在 `clap_builder::error::ErrorInner` 里的偏移：`+0xdd`。
+///
+/// 档位：**观测**（`0x3ab1d4 ldrb w8,[x19,#0xdd]`）。
+pub const CLAP_ERROR_KIND_OFFSET: usize = 0xdd;
+
+/// 判定"这是 help/version 请求"的位掩码：`0x2`。
+///
+/// 档位：**观测**（`0x3ab1dc orr w8, w8, #0x2`）。
+pub const CLAP_PRINT_KINDS_MASK: u8 = 0x2;
+
+/// 掩码后的比较值：`0xe`（= 14）。
+///
+/// 档位：**观测**（`0x3ab1e0 cmp w8, #0xe`）。
+///
+/// ⇒ 判据是 **`(kind | 0x2) == 0xe`**，即 `kind ∈ {0xc, 0xe}` 两个取值走"打印并退出"臂
+/// （clap 4 的 `DisplayHelp` / `DisplayVersion` 两个 kind 恰好落在这两个值上 ——
+/// "哪两个枚举变体"这一步是**推断**，二进制只给出这两个数）。
+pub const CLAP_PRINT_KINDS_EQ: u8 = 0x0e;
+
+/// `clap_builder::error::ErrorInner` 的大小：**224 字节**（`0xe0`）、对齐 8。
+///
+/// 档位：**观测**（`0x3ab1f4 mov w1,#0xe0` + `0x3ab1f8 mov w2,#0x8` 传给 `__rust_dealloc`）。
+pub const CLAP_ERROR_INNER_SIZE: usize = 0xe0;
+
+/// [`GraphwarRootNode::print_help_and_exit_if_requested`] 的两种结局。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpOutcome {
+    /// 不是 help/version 请求 ⇒ **继续**（原版接着走别的分支）。
+    Proceed,
+    /// 是 ⇒ `Error::print(..)` + `stdout().flush()` + `fflush(0)` + `_exit(0)`。
+    PrintedAndExited,
+}
+
+/// `GraphwarRootNode::print_help_and_exit_if_requested`（arm64 **`0x3ab19c`** / **288** B）：
+    /// 命令行解析的"**`--help` / `--version` 就打印并退出**"那一支。
+    ///
+    /// 逐条指令：
+    ///
+    /// ```text
+    /// 0x3ab1b0  bl GraphwarRootNode::user_args            ; 取 argv（见「未落」）
+    /// 0x3ab1bc  bl clap_builder::derive::Parser::try_parse_from
+    /// 0x3ab1c8  cmp x1, -0x7fff…ffff                      ; Result 判别字 ⇒ 只看 Err 臂
+    /// 0x3ab1d4  ldrb w8, [error + 0xdd]                    ; ErrorKind
+    /// 0x3ab1dc  orr  w8, w8, #0x2
+    /// 0x3ab1e0  cmp  w8, #0xe  ; b.eq 0x3ab258             ; (kind|2)==14 ⇒ 是 help/version
+    /// 0x3ab258  bl clap_builder::error::Error::print       ; 打印用法/版本
+    /// 0x3ab264  bl std::io::stdio::stdout
+    /// 0x3ab270  bl std::io::Stdout::flush
+    /// 0x3ab27c  bl fflush@plt ; 0x3ab284 bl _exit@plt      ; **进程退出码 0**
+    /// ```
+    ///
+    /// 不是那一支时：`0x3ab1e8` 起依次 `drop_in_place<ErrorInner>` + `dealloc(0xe0, 8)` 并返回。
+    ///
+    /// 档位：**观测**（判定式、打印、flush、`_exit(0)` 全部指到指令）。
+    /// 参数：本层收 `Err` 臂的 `ErrorKind` 字节（`None` = 解析成功、没有 error）。
+pub fn print_help_and_exit_if_requested(error_kind: Option<u8>) -> HelpOutcome {
+    let Some(kind) = error_kind else {
+        return HelpOutcome::Proceed; // 0x3ab1c8 的非 Err 臂
+    };
+    // 0x3ab1dc + 0x3ab1e0 的判据：**或上 0x2 再比 0xe**
+    if (kind | CLAP_PRINT_KINDS_MASK) == CLAP_PRINT_KINDS_EQ {
+        // 0x3ab258 → 0x3ab284：打印后 _exit(0)；本层只描述"打印并退出"这件事，
+        // 真正的 `_exit` 由进程入口做（测试里不能真的退出）。
+        HelpOutcome::PrintedAndExited
+    } else {
+        HelpOutcome::Proceed
+    }
+}
+
+// ## 未落：`user_args`
+//
+// `GraphwarRootNode::user_args`（arm64 **`0x3ab2bc`** / **672** B）**本轮没有落码**，缺的东西是
+// 明确的：它把 `Args::augment_args` 的 **5752 字节** derive 展开（clap derive）逐个注册到
+// `clap_builder::Command` 上，而本仓库**不依赖 clap**（`Cargo.toml` 里没有），
+// 且那 5752 字节是 clap 内部的 builder 调用序列（`Command::new` / `.arg` / `.about` …），
+// 不是业务逻辑。要落它需要：① 引入 clap 同版本依赖，或 ② 把这 5752 B 逐个翻译成一系列
+// `(短名, 长名, 类型, 默认值, 帮助串)` 的**参数表**并在本模块里校验条数。
+// ②是可行的下一步，但需要先把 5752 B 每条 `adrp/add` 的串全部解析出来（约 1–2 小时），
+// 本轮时间不够 —— 按 `AGENTS.md` §0.3 只登记，**不猜**参数表内容。
