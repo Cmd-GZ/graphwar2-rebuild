@@ -1,0 +1,22 @@
+# user_args_table.tsv —— T113：`graphwar_root_node::Args` 的 5 条命令行参数（真二进制实测）
+# 复算：见 docs/06 §157 与 fixtures/denom_rest2_plan.txt §1/P3
+# 口径：arm64 = Android 2.0.60 未 strip 版（.reference/steam/android-2.0.60/libgraphwarrust.so，地址 = ELF vaddr）
+#   slot_* = 该串在 .rodata 的槽地址；len_* = 该槽的字节长度（从调用点的 (ptr,len) 实参直接读出）
+#   类型依据：`_<u16 as clap_builder::builder::value_parser::ValueParserFactory>::value_parser` 在
+#   augment_args 里出现 3 次（arm64 0x3b1178 / 0x3b1518 / 0x3b1890）；String 的 Arg::value_parser 单态 2 次
+#   required 依据：from_arg_matches_mut（0x3b2250）里 5 次 try_remove_one 的长度 = 14/14/11/11/20，
+#   之后 2 次 clap_builder::error::Error::raw（长度 64 / 61 = "The following required argument was not
+#   provided: broadcast_port" / 同句 + "logger_port") ⇒ 只有这两个必填，其余是 Option<..>
+# 证据档：观测（id/long/value_name/help/类型/必填都有指令或槽）；value_name 与参数的**逐条配对**是推断
+#   （5 次 Arg::value_names + 5 条大写串，命名与 id 一一对应，但没有把每次调的实参逐个配对）
+id	long	value_name	rust_type	required	is_port	slot_id	slot_value_name	slot_help	slot_long	len_id	len_value_name	len_help	len_long	help
+broker_address	broker-address	BROKER_ADDRESS	Option<String>	no	no	0x19ad2b	0x19ad71	0x19ad7f	0x19ae14	14	14	149	14	Address of the broker server to connect (e.g. 127.0.0.1:42970). If not specified, the address is fetched from https://graphwar.com/graphwar_II_ip.txt
+broadcast_port	broadcast-port	BROADCAST_PORT	u16	yes	yes	0x19ad39	0x19ae22	0x19ae30	0x19ae5b	14	14	43	14	Port used for LAN game discovery broadcasts
+logger_port	logger-port	LOGGER_PORT	u16	yes	yes	0x19ad47	0x19ae69	0x19ae74	0x19ae92	11	11	30	11	Port used for the debug logger
+server_port	server-port	SERVER_PORT	Option<u16>	no	yes	0x19ad52	0x19ae9d	0x19aea8	0x19af07	11	11	95	11	Port the game server listens on when hosting a game. If not specified, the OS picks a free port
+crash_report_address	crash-report-address	CRASH_REPORT_ADDRESS	Option<String>	no	no	0x19ad5d	0x19af12	0x19af26	0x19afbe	20	20	152	20	Address of the crash report collector server (e.g. 127.0.0.1:42972). If not specified, the game's global server address is reused with CRASH_REPORT_PORT
+# 命令名 / 版本（Command::new / .version，不是游戏版本 2.0.60）：
+#   "Graphwar II" @ slot 0x19afd2 / 11 字节；"0.1.0" @ slot 0x19afdd / 5 字节
+# 落码位置：src/graphwar_root_node.rs 的 CLI_ARG_TABLE（5 条，含 slots 数组）+ user_args*（取参语义）
+# 仍未落：clap builder 链本身（augment_args 0x3b0bd8 / 5752 B）—— 属 clap_builder，非游戏业务逻辑；
+#   本仓库不引 clap 依赖 ⇒ 只登记，不硬翻译（见 fixtures/denom_rest2_plan.txt §1/P3）

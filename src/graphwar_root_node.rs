@@ -3484,13 +3484,283 @@ pub fn print_help_and_exit_if_requested(error_kind: Option<u8>) -> HelpOutcome {
     }
 }
 
-// ## 未落：`user_args`
+
+// ---------------------------------------------------------------------------
+// 11. `user_args` 与命令行参数表（2026-11-28 T113 落码）
+// ---------------------------------------------------------------------------
 //
-// `GraphwarRootNode::user_args`（arm64 **`0x3ab2bc`** / **672** B）**本轮没有落码**，缺的东西是
-// 明确的：它把 `Args::augment_args` 的 **5752 字节** derive 展开（clap derive）逐个注册到
-// `clap_builder::Command` 上，而本仓库**不依赖 clap**（`Cargo.toml` 里没有），
-// 且那 5752 字节是 clap 内部的 builder 调用序列（`Command::new` / `.arg` / `.about` …），
-// 不是业务逻辑。要落它需要：① 引入 clap 同版本依赖，或 ② 把这 5752 B 逐个翻译成一系列
-// `(短名, 长名, 类型, 默认值, 帮助串)` 的**参数表**并在本模块里校验条数。
-// ②是可行的下一步，但需要先把 5752 B 每条 `adrp/add` 的串全部解析出来（约 1–2 小时），
-// 本轮时间不够 —— 按 `AGENTS.md` §0.3 只登记，**不猜**参数表内容。
+// §10 末尾那条「**未落**：`user_args`」是 T109 的登记（缺 clap 依赖 + 5752 B derive 展开
+// 读不通）。本轮把这条前提**证伪**并落掉：
+//
+// * `_<graphwar_root_node::Args as clap_builder::derive::Args>::augment_args` 在 arm64
+//   `.symtab` 里是**独立符号**（`0x3b0bd8` / **5752** B，正好是 T109 记的那个字节数）；
+// * `user_args`（`0x3ab2bc` / **672** B）里**一条 clap builder 调用都没有** —— 它只做
+//   「取命令行」这一件事，用的全是 `std`（`std::env::args` / `Vec<String>` / `String::clone`）；
+// * 那 5752 B 的 builder 链属 `clap_builder`，**不是**游戏业务逻辑 ⇒ 按 §0.3 只登记
+//   （不引 clap 依赖硬翻译），登记结果见 [`CLI_ARG_TABLE`] 与
+//   `fixtures/user_args_table.tsv`（每条的 `.rodata` 槽地址 + 长度）。
+//
+// # `user_args` 逐条指令（arm64 `0x3ab2bc`）
+//
+// ```text
+// 0x3ab2e4  bl std::env::args()                  ; 进程 argv
+// 0x3ab2f0  bl Vec<String>::from_iter            ; 收集成 Vec<String>
+// 0x3ab334  ldr x12,[elem,#0x10] ; 0x3ab338 cmp x12,#2     ; 只认长度 == 2 的元素
+// 0x3ab344  ldrh w11,[ptr] ; 0x3ab348 cmp w11,w10          ; w10 = 0x2d2d = "--"
+// 0x3ab350  ...                                  ; 命中 ⇒ 算「后面还有几个」（x25 = len-1-index）
+// 0x3ab3a0  mov x8,#0x7267 / movk #0x7061,lsl16 / movk #0x7768,lsl32 / movk #0x7261,lsl48
+// 0x3ab3c0  str x8,[x0]                          ; 首元素 = "graphwar"（8 字节）
+// 0x3ab490  add x23, x8, #0x18                   ; 从命中项**下一个**开始
+// 0x3ab4ac  bl String::clone                     ; 逐条克隆
+// 0x3ab328  cmp x8,x26 ; b.eq 0x3ab380           ; 扫完没命中 ⇒ 只造 ["graphwar"]
+// ```
+//
+// ⇒ **`user_args()` = `["graphwar"] ++ argv[pos("--")+1..]`**，`pos` 取**第一个** `"--"`
+// （命中即跳进构造臂，不再扫）。
+//
+// ⚠️ 这条解释了一个挂着的观测：`docs/09-network.md` §9.3 记「`--broker_address` 在这个
+// 构建里完全不生效（6 组受控实验全无效）」。原因是**参数只在 `--` 之后才被读**：
+// 直接传 `--broker-address …`（没有 `--` 分隔符）时 `user_args()` 只返回 `["graphwar"]`，
+// clap 拿到的是空参数表 ⇒ 既不报错也不生效。**这一条是推断**（6 组实验的 argv 原文没留档，
+// 无法确认它们是否试过 `-- --broker-address …`）；确定性来自上面那段指令。
+
+/// 合成 argv[0]：**`"graphwar"`**（8 字节，`0x3ab3a0`–`0x3ab3b8` 的四条 `movk` 拼出
+/// `0x7261_7768_7061_7267`，`0x3ab3c0 str x8,[x0]` 写进新分配的首元素）。
+///
+/// 档位：**观测**。
+pub const USER_ARGS_PROGRAM_NAME: &str = "graphwar";
+
+/// 分隔符：**`"--"`**（长度 2 + 前两字节 `0x2d2d`）。
+///
+/// 档位：**观测**（`0x3ab310 mov w10,#0x2d2d` + `0x3ab338 cmp x12,#2` + `0x3ab348 cmp w11,w10`）。
+pub const USER_ARGS_SEPARATOR: &str = "--";
+
+/// `user_args` 的**纯函数内核**：给定完整 argv（含 argv[0]），返回 clap 实际看到的参数表。
+///
+/// 规则（与 `0x3ab2bc` 逐条对应）：
+/// 1. 首元素固定是 [`USER_ARGS_PROGRAM_NAME`]（**原版合成的**，不是进程真实 argv[0]）；
+/// 2. 从 argv 里找**第一个** [`USER_ARGS_SEPARATOR`]，把它**之后**的元素按原样接上；
+/// 3. 没有分隔符 ⇒ **只剩** `["graphwar"]`（分隔符之前的参数**全部丢弃**）。
+pub fn user_args_from<I>(argv: I) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    // 0x3ab2f0：收集成 Vec<String>（原版是 std::env::args().collect()）
+    let all: Vec<String> = argv.into_iter().collect();
+    // 0x3ab380 / 0x3ab3a0：先造出只有 "graphwar" 的那个 Vec
+    let mut out: Vec<String> = Vec::with_capacity(1 + all.len());
+    out.push(USER_ARGS_PROGRAM_NAME.to_string());
+    // 0x3ab330–0x3ab34c：找第一个 len==2 且字节为 "--" 的元素
+    if let Some(pos) = all.iter().position(|a| a == USER_ARGS_SEPARATOR) {
+        // 0x3ab490：从 pos+1 开始逐条 clone（等价于 all[pos+1..].iter().cloned()）
+        out.extend(all[pos + 1..].iter().cloned());
+    }
+    out
+}
+
+/// `GraphwarRootNode::user_args`（arm64 **`0x3ab2bc`** / **672** B）：取进程命令行。
+///
+/// 逐条指令见本节开头。档位：**观测**（取值来源 `std::env::args`、分隔符与合成 argv[0] 都指到指令）。
+///
+/// ⚠️ 原版是 `GraphwarRootNode` 的方法但**不碰 `self`**（`0x3ab2e0 mov x20,x0` 存了 self 之后
+/// 再没读过）⇒ 本层落成**无参自由函数**，语义不变。
+pub fn user_args() -> Vec<String> {
+    // 0x3ab2e4 bl std::env::args
+    user_args_from(std::env::args())
+}
+
+/// 一条 CLI 参数的实测规格。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CliArgSpec {
+    /// `Arg::new(<id>)` 的 id（= 原版 `Args` 的字段名）。
+    pub id: &'static str,
+    /// `.long(...)` 的长名（kebab-case）。
+    pub long: &'static str,
+    /// `.value_names([...])` 的显示名（= id 的大写形式）。
+    pub value_name: &'static str,
+    /// `help` 原文。
+    pub help: &'static str,
+    /// 值类型：`true` = `u16`（端口），`false` = `String`（地址）。
+    pub is_port: bool,
+    /// 是否**必填**（`from_arg_matches_mut` 里 `try_remove_one` + `Error::raw`）。
+    pub required: bool,
+    /// id / value_name / help / long 四个串在 `.rodata` 的槽地址（arm64）。
+    pub slots: [u64; 4],
+}
+
+/// `#[derive(Args)]` 生成的 5 条命令行参数（= `Args` 结构体的 5 个字段）。
+///
+/// 档位：**观测**（id / long / value_name / help 四条串各有 `.rodata` 槽地址与长度，
+/// `from_arg_matches_mut` 的 `try_remove_one` 长度、`Error::raw` 次数、`Arg::value_parser`
+/// 的 `ValueParserFactory` 单态类型都互相对上）；只有 `required` 与 `value_name` 的**逐条配对**
+/// 是**推断**（见下）。
+///
+/// 取证链（arm64）：
+/// * `augment_args` **`0x3b0bd8`** / 5752 B：5 次 `Arg::value_names`、3 次
+///   `_<u16 as ValueParserFactory>::value_parser`（`0x3b1178`/`0x3b1518`/`0x3b1890`）、
+///   2 次 String 的 `Arg::value_parser`，5 次 `StyledStr::from`（help 串，长度 149/43/30/95/152）；
+/// * `FromArgMatches::from_arg_matches_mut` **`0x3b2250`** / 860 B：5 次 `try_remove_one`，
+///   长度依次 **14 / 14 / 11 / 11 / 20**（= 5 个 id 的字节数），其中 u16 那份单态被
+///   **14/11/11** 三处用（⇒ 3 个端口），String 那份被 **14/20** 两处用（⇒ 2 个地址）；
+///   随后 2 次 `clap_builder::error::Error::raw`（长度 **64** = `"The following required
+///   argument was not provided: broadcast_port"`、**61** = 同句 + `logger_port`）
+///   ⇒ **只有这两个是必填**；
+/// * 命令名/版本：`Command::new("Graphwar II")` + 版本 `"0.1.0"`（`.rodata 0x19afd2` / `0x19afdd`）。
+pub const CLI_ARG_TABLE: [CliArgSpec; 5] = [
+    CliArgSpec {
+        id: "broker_address",
+        long: "broker-address",
+        value_name: "BROKER_ADDRESS",
+        help: "Address of the broker server to connect (e.g. 127.0.0.1:42970). If not specified, the address is fetched from https://graphwar.com/graphwar_II_ip.txt",
+        is_port: false,
+        required: false,
+        slots: [0x19_ad2b, 0x19_ad71, 0x19_ad7f, 0x19_ae14],
+    },
+    CliArgSpec {
+        id: "broadcast_port",
+        long: "broadcast-port",
+        value_name: "BROADCAST_PORT",
+        help: "Port used for LAN game discovery broadcasts",
+        is_port: true,
+        required: true,
+        slots: [0x19_ad39, 0x19_ae22, 0x19_ae30, 0x19_ae5b],
+    },
+    CliArgSpec {
+        id: "logger_port",
+        long: "logger-port",
+        value_name: "LOGGER_PORT",
+        help: "Port used for the debug logger",
+        is_port: true,
+        required: true,
+        slots: [0x19_ad47, 0x19_ae69, 0x19_ae74, 0x19_ae92],
+    },
+    CliArgSpec {
+        id: "server_port",
+        long: "server-port",
+        value_name: "SERVER_PORT",
+        help: "Port the game server listens on when hosting a game. If not specified, the OS picks a free port",
+        is_port: true,
+        required: false,
+        slots: [0x19_ad52, 0x19_ae9d, 0x19_aea8, 0x19_af07],
+    },
+    CliArgSpec {
+        id: "crash_report_address",
+        long: "crash-report-address",
+        value_name: "CRASH_REPORT_ADDRESS",
+        help: "Address of the crash report collector server (e.g. 127.0.0.1:42972). If not specified, the game's global server address is reused with CRASH_REPORT_PORT",
+        is_port: false,
+        required: false,
+        slots: [0x19_ad5d, 0x19_af12, 0x19_af26, 0x19_afbe],
+    },
+];
+
+/// `Command::new(...)` 的命令名：**`"Graphwar II"`**（`.rodata 0x19afd2`，11 字节）。
+///
+/// 档位：**观测**（`augment_args` 里唯一一次 `StyledStr::from` 长度 11 的调用）。
+pub const CLI_COMMAND_NAME: &str = "Graphwar II";
+
+/// clap 报的版本号：**`"0.1.0"`**（`.rodata 0x19afdd`，5 字节）。
+///
+/// 档位：**观测**（紧跟命令名之后的 5 字节，与 `Command::version` 的取用点相邻）。
+///
+/// ⚠️ 与游戏版本 `2.0.60`（`graphwar_version_get_full_version`）**不是同一个东西**。
+pub const CLI_VERSION: &str = "0.1.0";
+
+#[cfg(test)]
+mod user_args_tests {
+    use super::*;
+
+    fn argv(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 合成 argv[0] 是 `"graphwar"`（8 字节），且**真实 argv[0] 被丢弃**。
+    #[test]
+    fn first_element_is_the_synthesized_program_name() {
+        assert_eq!(USER_ARGS_PROGRAM_NAME, "graphwar");
+        assert_eq!(USER_ARGS_PROGRAM_NAME.len(), 8); // str x8,[x0] 写 8 字节
+        let got = user_args_from(argv(&["/opt/Graphwar.x86_64", "--", "a"]));
+        assert_eq!(got, argv(&["graphwar", "a"]));
+    }
+
+    /// 只取 `--` **之后**的参数；`--` 本身不进结果。
+    #[test]
+    fn only_arguments_after_the_separator_survive() {
+        let got = user_args_from(argv(&["exe", "--broadcast_port", "1", "--", "--logger_port", "2"]));
+        assert_eq!(got, argv(&["graphwar", "--logger_port", "2"]));
+    }
+
+    /// 没有 `--` ⇒ 只剩 `["graphwar"]`（这是 `--broker_address` 不生效的机制）。
+    #[test]
+    fn without_separator_everything_is_dropped() {
+        assert_eq!(
+            user_args_from(argv(&["exe", "--broker-address", "127.0.0.1:42970"])),
+            argv(&["graphwar"])
+        );
+        assert_eq!(user_args_from(Vec::new()), argv(&["graphwar"]));
+    }
+
+    /// 取**第一个** `--`（命中即跳进构造臂，不再扫）。
+    #[test]
+    fn the_first_separator_wins() {
+        let got = user_args_from(argv(&["exe", "--", "a", "--", "b"]));
+        assert_eq!(got, argv(&["graphwar", "a", "--", "b"]));
+    }
+
+    /// 判据是「长度 == 2 且两字节 == `--`」：不是 `--` 的 2 字节串不命中，
+    /// 更长的 `--xxx` 也不命中（`0x3ab338 cmp x12,#2` + `0x3ab348 cmp w11,w10`）。
+    #[test]
+    fn only_the_exact_two_byte_separator_matches() {
+        for other in ["--", "-x", "-", "---", "--x", ""] {
+            let got = user_args_from(argv(&["exe", other, "tail"]));
+            let expected: Vec<String> = if other == "--" {
+                argv(&["graphwar", "tail"])
+            } else {
+                argv(&["graphwar"])
+            };
+            assert_eq!(got, expected, "case {:?}", other);
+        }
+    }
+
+    /// 真进程 argv 也必须走同一条规则（本测试跑在 `cargo test` 里，argv 里没有 `--`）。
+    #[test]
+    fn real_argv_starts_with_the_synthesized_name() {
+        let got = user_args();
+        assert_eq!(got.first().map(String::as_str), Some("graphwar"));
+        assert!(!got.is_empty());
+    }
+
+    /// 参数表：5 条、3 个端口、2 个必填，且每条串的字节数必须等于反汇编里读出的长度。
+    #[test]
+    fn cli_arg_table_matches_the_binary_lengths() {
+        assert_eq!(CLI_ARG_TABLE.len(), 5);
+        assert_eq!(CLI_ARG_TABLE.iter().filter(|a| a.is_port).count(), 3);
+        assert_eq!(CLI_ARG_TABLE.iter().filter(|a| a.required).count(), 2);
+        // 必填的正好是两个端口（Error::raw 的两条消息只点名这两个）
+        let required: Vec<&str> = CLI_ARG_TABLE.iter().filter(|a| a.required).map(|a| a.id).collect();
+        assert_eq!(required, vec!["broadcast_port", "logger_port"]);
+        // 长度（= .rodata 里紧邻槽之间的差，全部由反汇编的 (ptr,len) 实参读出）
+        let lens: Vec<(usize, usize, usize, usize)> = CLI_ARG_TABLE
+            .iter()
+            .map(|a| (a.id.len(), a.value_name.len(), a.help.len(), a.long.len()))
+            .collect();
+        assert_eq!(
+            lens,
+            vec![
+                (14, 14, 149, 14),
+                (14, 14, 43, 14),
+                (11, 11, 30, 11),
+                (11, 11, 95, 11),
+                (20, 20, 152, 20),
+            ]
+        );
+        // value_name 必须就是 id 的大写
+        for a in CLI_ARG_TABLE {
+            assert_eq!(a.value_name, a.id.to_uppercase());
+        }
+        assert_eq!(CLI_COMMAND_NAME, "Graphwar II");
+        assert_eq!(CLI_COMMAND_NAME.len(), 11);
+        assert_eq!(CLI_VERSION, "0.1.0");
+        assert_eq!(CLI_VERSION.len(), 5);
+    }
+}
