@@ -30913,3 +30913,291 @@ cargo run --release --offline -q --example batch_conv   -- --dir .reference/repl
 ⚠️ 更严的口径要求：`global_triage` 的 `implemented` 判据只是"同名 fn + 模块级文件映射"，
 **不是**逐位证据 —— 本批 7 条里 3 条有值级对拍（S1/S2/S3）、4 条是"指令级 + 单测"（M1/E1/E2/F1），
 这与 §156.1 的档位列一致，别把整批都当成逐位。
+
+## 157. T111 **527 分母内 F3「确证缺函数边界」33 条全量取证**：**落 5 条**（4 条真落码 + 1 条修扫描器假阴性）、28 条逐条写清缺什么；F3 **119 → 114**、口径 B **336/438 = 76.7% → 341/438 = 77.9%**（2026-11-28，任务 `task-104` / 分支 `agent/f3-boundary`）
+
+> 本节对应任务书：527 分母内 F3 的 ① 组（`skel`/`register-only`/`named-miss`/`parent-missing`）= **33 条**。
+> 预注册 = `fixtures/f3_boundary_plan.txt`（**先提交，后落码**）；全量清单 = `fixtures/f3_boundary_list.tsv`。
+> 地址一律 **ELF vaddr**（Ghidra/REA = +`0x100000`，只加一次）。
+
+### 157.0 一页结论
+
+| 项 | 改前 | 改后 | 依据 |
+|---|---|---|---|
+| ① 组「确证缺函数边界」条数 | **33** | **28** | `function_coverage.py --stats` 的 `F3 三组` 行 |
+| F3 总数（527 分母内） | **119** | **114** | 同上 |
+| F1 有实现+有物证 | **336** | **341** | 同上 |
+| F2 有实现+无物证 | **72** | **72** | 同上（一条没动） |
+| **口径 A**（含 na，分母 527） | 336/527 = 63.8% | **341/527 = 64.7%** | 同上 |
+| **口径 B**（剔 na，分母 438）——**招牌数** | 336/438 = 76.7% | **341/438 = 77.9%** | 同上 |
+| 口径 D_A（分母外加 X=132，659） | 336/659 = 51.0% | **341/659 = 51.7%** | 同上（X 本轮未复核，见 §157.9） |
+| 严格 1:1（R6 敏感度） | 264/527 = 50.1% | 264/527 = 50.1% | 本轮 5 条全是 `name`/`name-soft` 指认，**没有提高 1:1 上限** |
+
+**落了 5 条**（4 条真落码 + 1 条是修扫描器假阴性，见 §157.6）：
+
+| # | vaddr | FDE | 真名 | 落点 | 档位 |
+|---|---|---|---|---|---|
+| 1 | `0x4737a0` | `0x214` | `GraphwarGameStateManager::remove_all_players` | `src/graphwar_game_state_manager.rs:722` | 逐位（tag/偏移）+ 观测（语义） |
+| 2 | `0x476830` | `0x1e7` | `GraphwarGameStateManager::remove_soldier_from_player` | `src/graphwar_game_state_manager.rs:764` | 逐位 + 观测 |
+| 3 | `0x476320` | `0x18e` | `GraphwarGameStateManager::set_player_num_soldiers` | `src/graphwar_game_state_manager.rs:807` | 逐位 |
+| 4 | `0x475590` | `0x316` | `GraphwarGameStateManager::request_remove_player` | `src/graphwar_game_state_manager.rs:862` | 逐位 + 观测 |
+| 5 | `0x5185a0` | `0xfd` | `GraphwarModeManager::send_all_info_events` | `src/graphwar_mode_manager.rs:353` | 观测（**函数体本来就在**，被扫描器误判成 F3，见 §157.6） |
+
+**没落 28 条**：逐条理由在 §157.4，没有一条写"没时间"——都指名缺哪一样证据。
+
+### 157.1 33 条是怎么来的（可复算）
+
+```bash
+awk -F'\t' 'NR>=30 && $7=="F3" && ($8=="skel"||$8=="register-only"||$8=="named-miss"||$8=="parent-missing")' \
+  fixtures/function_coverage.tsv | wc -l      # 改前 33 / 改后 28
+```
+子类实测分布：`register-only 20 / named-miss 10 / parent-missing 3 / **skel 0**`
+（`skel` = 整份文件没有一个实现函数，本批没有这种）。
+`fixtures/f3_boundary_list.tsv` 逐行给：vaddr｜名字｜原版模块｜子类｜**现在缺什么**｜FDE 字节数｜
+优先级｜本轮判定｜**全部 panic::Location 锚点（file:line:col）**｜`call rel32` 被调者（GOT 槽由
+`addr_probe.py dis` 就地解）。
+
+### 157.2 取证口径（与预注册 §2 一致，本轮一条没改）
+
+```
+PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+$PY tools/addr_probe.py fde     <vaddr>   # .eh_frame FDE 真实范围（**不读** Ghidra 表）
+$PY tools/addr_probe.py dis     <vaddr>   # 逐指令；工具就地注解 .rodata 串 / GOT 槽 → addend / Location
+$PY tools/addr_probe.py locs    <vaddr>   # panic::Location → 源码行
+$PY tools/addr_probe.py callers <vaddr>   # call rel32 + 函数指针三形态
+```
+被调者类型名一律从 `docs/02` §22.3 的六入口表反查（`add`/`get`/`wk` 三列 × 25 个模块）。
+本轮用到的四条：`0x46d8c0` = `GraphwarPlayerManager` 的 **wk**、`0x46e580` = `GraphwarSoldierManager` 的 **wk**、
+`0x46e7a0` = `GraphwarTeamManager` 的 **wk**、`0x46dd00` = `GraphwarColorManager` 的 **wk**。
+
+**一条正对照（证明这套读法有效）**：`0x476830` 里的 `0x4768b7 lea rax,[rsp+0xc]` 把
+**`&player_id`（入参 esi）** 当 key 指针交给 `0x3bf230` ⇒ 那个收集器是"按 **value** 过滤"。
+它读的 entry 布局是**步长 8、比较字段在 +4** —— 与 `docs/02`/`src/graphwar_soldier_manager.rs`
+早就写死的 `HashMap<u32 /*soldier*/, u32 /*owner*/>`（value = owner）**逐字段对上**，
+所以"收 owner == player 的士兵"这条不是猜的。
+
+### 157.3 落了的 4 条：逐条关键指令
+
+**① `remove_all_players`（`0x4737a0`，532 B）**
+
+```text
+0x4737bb  call 0x46d8c0                 ; get_module_wk::<GraphwarPlayerManager>()
+0x4737c0  test rax,rax / je panic       ; loc 554:26（`Option::unwrap`）
+0x4737db  cmp rax, i64::MAX / jae       ; loc 486:56（引用计数 overflow）
+0x4737ef  rax=[rbx+0x30]/rcx=[rbx+0x38]/rsi=[rbx+0x48]   ; hashbrown: ctrl/bucket_mask/items
+0x473832  call 0x3bea40                 ; **全收**（不带 key）→ Vec<u32>
+0x473864  add rbp, 0xf                  ; rbp=0x7fff…ff ⇒ tag 0x800000000000000e = 14 EntityRemoved
+0x473870  loop: push id 到 [self+0x90]  ; 0x473879..0x4738a4（cap/ptr/len = +0x90/+0x98/+0xa0）
+0x4738d4  call [slot 0x9bac80]          ; add_event，**每人一条**
+0x4738e2  cmp rbx,r12 / jne 0x473870    ; 循环步长 4 = u32
+```
+
+**② `remove_soldier_from_player`（`0x476830`，487 B）**
+
+```text
+0x476848  call 0x46e580                 ; get_module_wk::<GraphwarSoldierManager>()
+0x4768b7  lea rax,[rsp+0xc] = &player_id ; ★ key 指针 ⇒ 按 **value（owner）** 过滤
+0x4768cb  call 0x3bf230                 ; 收集 owner == player_id 的士兵 → Vec<u32>
+0x4768d4  rax=[rsp+0x20] = 收集条数；0x4768d9 je 0x476958（空则整段跳过）
+0x4768e3  ebp=[r14+rax*4-4]             ; ★ 只取**末**元素
+0x4768e8..0x476913 push 到 [self+0x90]
+0x476936  tag = 0x800000000000000e = 14
+0x47694d  call [slot 0x9bac80]          ; add_event **只一处**（中间无循环）
+```
+
+⚠️ **"只播最后一条、不是每条"是逐指令读出来的形状**（`0x4768d0`–`0x476953` 是直线代码，
+`0x4768e3` 一步就把 `ebp` 定成末元素），不是笔误也不是我漏看循环。
+**未证**：`0x3bf230` 的返回在实际样本里是否真能 >1 元素（它在 `0x3bf2de` 之后确实会继续扫，
+但本轮没有跑样本）⇒ "收集到多个时游戏里的后果"是**未知**，代码按指令照写并注明了。
+
+**③ `set_player_num_soldiers`（`0x476320`，398 B）**
+
+```text
+0x47632e  cmpb $0x1,[rdi+0x120]         ; 闸门 = GameState::Setup（判别值 1）
+0x47633b  ebp = edx（想要的数）/ ebx = esi（player id）
+0x476349  call 0x46e580                 ; get_module_wk::<GraphwarSoldierManager>()
+0x4763c2  call 0x3bf230                 ; 现有士兵 → Vec<u32>
+0x4763d6  r12 = [rsp+0x20] = **现有数**
+0x4763fb  cmp r12,r15 / jae 0x476421    ; have < want ⇒ 加
+0x476403  r13 = want - have ; inc r13   ; 加循环次数 = want − have
+0x47641a  call 0x474a10                 ; add_soldier_to_player（我方 = `Match::register_player` 那条接线）
+0x476421  sub r12,r15 / jbe 0x476441    ; have > want ⇒ 删
+0x47643a  call 0x476830                 ; 就是上面②
+```
+
+⚠️ **"加"的一半本函数不执行**：原版加兵是调 `0x474a10`（已 F1），而我方**发号在接线层**
+（`Match::new` / `_scaffold` 的生成器），所以本函数把 `add` 次数**返回**给调用方
+（`SoldierCountPlan`），只亲自执行"删"。这是**架构差异，不是证据缺口**。
+
+**④ `request_remove_player`（`0x475590`，790 B）**
+
+```text
+0x47559e  cmpb $0x1,[rdi+0x120]         ; 闸门 = Setup
+0x4755b7  call 0x46d8c0                 ; get_module_wk::<GraphwarPlayerManager>()
+0x4755f0  rbp=[r15+0x48]（items）；0x4755f7 je 0x47569e  ; 表空 ⇒ 跳过 ③④
+0x475609  call 0x47dec0                 ; hash(player_id)
+0x475666  cmp ebx,[r10-8]               ; SwissTable 查 key ⇒ eax = 该玩家的 conn id
+0x47572c  cmovb r8d,edi                 ; ★ r8d = 全表 value 的**最小值**
+0x475764  test dl,cl / je 0x4757a8      ; 72 号**条件**发：找到 ∧ conn ≠ min
+0x47578f  lea rax,[r12+0x49]            ; tag = 0x8000000000000048 = **72 BanConnectionRequest**
+0x475786  [rsp+0x18]=eax / 0x47578a [rsp+0x1c]=r8d   ; 载荷 **两个 u32**：(自己的 conn, 最小的 conn)
+0x4757a8..0x4757d3  push ebx 到 [self+0x90]  ; **无条件**
+0x4757f8  r12 += 0xf ⇒ tag 14          ; **无条件**再发 EntityRemoved{player_id}
+```
+⇒ **"leader = 连接 id 最小的玩家"**：这条结论由**两条独立证据**钉住 ——
+(a) `0x47572c` 的 min 扫描；(b) 线上 tag 72 的字段名就叫 `leader_connection_id`
+（`docs/07` §3.3 / `src/_scaffold/protocol.rs` 的 `WIRE_SPEC`）。
+
+### 157.4 没落的 28 条：逐条缺什么（**不是"没时间"**）
+
+分四类。逐条的 vaddr / FDE 字节 / Location 数 / 被调者见 `fixtures/f3_boundary_list.tsv`。
+
+**(a) 工作量超本轮（7 条，`P3`）** —— FDE ≥ 1 800 B 或 Location ≥ 7 条或指令 > 300：
+
+| vaddr | FDE | Location | 为什么本轮没读全 |
+|---|---|---|---|
+| `0x3c2bc0` `calculate_shot_results` | `0x308d`（12 429 B） | 12 条（跨到 `graphwar_obstacle_manager.rs:89`） | 124 条指令、20+ 被调者；这是整个弹道结算体，历史上分过三轮才把**外面**那层做完 |
+| `0x467530` `calculate_paths` | `0x1517`（5 399 B） | 9 条 | 同上量级 |
+| `0x51d080` `calculate_functions_old` | `0x1b06`（6 918 B） | 4 条 | 体内是整代进化循环（`score_function`/`mutate_fine_tune`/`simplify_recursive` 全在） |
+| `0x4eccb3` `to_string_recursive` | `0x150e` | 1 条 | **内联**在 `0x4ec160` 里；递归打印整棵树，分支 30+ |
+| `0x44e8f0` 房间信息闭包 | `0x8f9`（2 297 B） | **19 条**（`264:46`–`290:63`） | 19 条 Location = 19 个 panic 点，语义面最宽 |
+| `0x44f990` `GraphwarGameServer::start` | `0x72c`（1 836 B） | 1 条 | 线程启动 + 12 个被调者（`0x402820`/`0x403550`/`0x403bc0`… 全在 `std::thread`/`mio` 一侧） |
+| `0x465a70` `place_entity` | `0x72c`（1 836 B） | 9 条 | 6 个 manager 调用（team/plane_pos/obstacle） |
+
+**(b) `parent-missing`（3 条，`P2`）** —— 闭包没有独立符号名，**必须先有父函数**：
+
+| vaddr | 父函数 | 缺什么 |
+|---|---|---|
+| `0x3d4fa0` | `GraphwarGameRecorder::subscribe_to_events` | 父函数在 527 里没有自己的行（`0x3d5740` 是 `save_game`；订阅那段是**内联**的）⇒ 父边界本身无证据 |
+| `0x44e8f0` | `GameServerData::subscribe_to_room_info_updates` | 同上（父函数也不在 527 里） |
+| `0x4661a0` | `GraphwarLevelGenerator::generate_level` | 父函数不在 527 的 33 行里（可能落在 `0x466d20 generate_level_custom`，但两者是不是同一个待证） |
+
+**(c) 名字只有 `hyb:*`（5 条，`P2`）** —— 预注册 §1 第 2 条禁止把预测名当结论：
+
+| vaddr | FDE | Location | 缺什么 |
+|---|---|---|---|
+| `0x4c1ae0` `setup_control::clear_state`（hyb:高置信） | `0x35b` | 1 条（`texture_loader.rs:145:47`） | **名字与归属打架**：名字预测 setup_control，Location 却落 texture_loader ⇒ 需要 Android 符号表那一侧的独立名字（`fixtures/naming_android.tsv` 里没有这一条） |
+| `0x4e8f80` / `0x4e9380` / `0x4e9590`（预测 `graphwar_root_node::?::_`） | `0x245`/`0x20f`/`0x19c` | `lan_vbox.rs:145:1`/`30:10`/`54:1` | 同上：名字预测 root_node，Location 落 lan_vbox。三条的被调者只有 `0x4ff96b`/`0x501080`/`0x501230`（gdext 侧），**看不出语义** |
+| `0x4e91d0`（预测 `axis_drawer::?::_`） | `0x1aa` | `lan_vbox.rs:54:1` | 同上 |
+
+**(d) 缺一个架构面**（8 条）：
+
+| vaddr | 真名 | 缺什么（**不是搬移缺口，是行为缺口**） |
+|---|---|---|
+| `0x477140` `handle_new_connection_event` | v2 唯一锚 | 语义 = **把当前整局面重播给新连接**（4 处 `add_event`，其中 1 处 tag 30 `GameStateInfo{1}`）。我方 `Match` **没有"整局面重播"入口**，也没有它读的两个状态位（`[self+0x120]==1` / `[self+0x11e]`）的对应物 ⇒ 写它就是**新行为**（`docs/161` §2.4 已登记，`dispatch/95` 红线：不许顺手加） |
+| `0x477540` `handle_connection_removed_event` | v2 唯一锚 | 需要"**连接 → 实体**"的映射（我方连接是 `_scaffold` 的概念，`Match` 里没有）＋调 `execute_results`（`0x472470`，F1 已落）。同上：是行为缺口 |
+| `0x4754c0` `request_fire_function` | v2 唯一锚 | 只剩**两格语义**没证：`0x475519 cmp qword [rbx+0x58],0` 那个 `Vec`（data **+0x48**）与 `0x475520 cmp byte [rbx+0x11c],0` 那个字节。**这两格在全 `.text` 里没有找到写点**（本轮没做穷举扫描，只做了 `addr_probe dis`）⇒ 不敢把 `Match::functions` 硬对上去。中间那一步 `0x475514 call 0x3caa20` 是 `request_update_function`（**名字是 `hyb:未知`**，不是真名） |
+| `0x473e50` `request_change_team` | v2 唯一锚 | 8 条 Location、5 个 manager 调用（team `get_team`/`add_to_team`、color `add_team_color`、`0x3bf230` 收集、`0x3bf230` 再收集）。**能读通但要逐条对 8 行源码**，本轮预算不够；不缺证据 |
+| `0x474490` `setup_and_start_game` | v2 唯一锚 | 7 条 Location、8 个被调者（含 `generate_level_custom 0x466d20`、`0x47d650`）；T94 §140.5 已登记"先解三条被调者" |
+| `0x4c5c00` / `0x4c5cb0` / `0x4c5d60` `connect_entry_buttons::{{closure}}` | v2 唯一锚 | 三条各 169 B，Location = `setup_control.rs:270/277/284:72` + `game_client.rs:194/198/202:26` ⇒ 闭包体 = **调 game_client 的三个入口**。缺：那三个入口在我们 `graphwar_game_client.rs` 里的对应 fn（要先把 `0x4c5c00` 这族挂到**哪个** `GraphwarSetupControl::connect_entry_buttons` 上钉死；我方 `connect_entry_buttons` 现在是 `SetupControlIntent` 上的同名方法，impl 类型不同） |
+| `0x522070` | **无名** | 5 条 Location 全在 `graphwar_play_screen_control.rs:79–84`，被调者是 `GraphwarNodes::get_node_by_name`（`0x3ab290`/`0x3ab390`）+ 5 个 `.rodata` 串（`TimerLabelView`/`FunctionButton`/`ShowNamesPla…`）⇒ 语义接近"按名字取一批节点"。**但 `graphwar_play_screen_control.rs` 是 t113 的写入范围 ⇒ 本轮不动**（预注册 §6） |
+| `0x5238c0` | **无名** | Location 落 `audio_control.rs:255:90`，被调者含 `0x520860`/`0x520df0`/`0x41d2e0`×5 + 串 `MuteButton`/`ExplosionEffect`/`DeathEffect`/`Spar…`。**无名 ⇒ 只能按 vaddr 指认**（预注册 §1 第 2 条允许，但可读性差）；本轮登记不落 |
+
+### 157.5 我写错了什么（**必读**）
+
+1. **P2 假命中，自己造了一条 F2**：第一版 `request_remove_player` 的注释里写了
+   "这与 `is_leader`（`0x3e5910`）同源"，结果 `function_coverage.py` 的 **P2 地址指认**规则
+   把那条**我根本没实现**的函数判成了 `F2 / grade-inferred`（指针落在我的函数上）。
+   已删掉该地址、改成"故意不写地址"的说明；再跑 F2 回到 **72**（一条没多）。
+   ⇒ **教训**：`src/` 注释里出现的每一个 vaddr 都是**证据声明**，写之前先想清楚它会不会被
+   当成"指认"。这条已写进 `fixtures/f3_boundary_plan.txt` 之外的新增说明（本节即处）。
+2. **预注册 §3 的"档位闸门"在本轮**没有额外影响**：我落的 4 条所在模块档位都 ≥ 观测
+   （`game_state_manager` 逐位 / `mode_manager` 观测）⇒ 都是 F1；而 `0x3e5910 is_leader`
+   （`remote_event_handler` 档位 = **推断**）我**没落**，正是因为它落了也只能到 F2
+   —— 这条口径在预注册里就写死了，不是事后找理由。
+3. **`removed_entities` 的消费方未知**：`[self+0x90]` 那个 `Vec<u32>` 我只找到**三个写点**
+   （全部逐条抄在 `src/game.rs` 的字段文档里），**没找到读点**。所以它只被如实记录，
+   不参与任何判决。
+
+### 157.6 扫描器假阴性：`send_all_info_events` 早就落码了，被判成 F3（**工具 bug，交 t110**）
+
+`fixtures/f3_boundary_list.tsv` 里 `0x5185a0` 原来是 `F3 / register-only`，
+但函数体**就在** `src/graphwar_mode_manager.rs`，且与反汇编逐条对得上：
+3 条 `add_event`，tag 45/46/48 的载荷分别取自 `+0x19`（axis）/`+0x1a`（function）/`+0x18`（time），
+`0x5185bd movabs r12,0x800000000000002d` 加两次 `add` 就是那三个 tag word。
+
+**根因**（`tools/function_coverage.py::scan_file`）：
+
+```python
+nob = stripped.find("{", j)      # 函数名之后第一个 '{'
+nsc = stripped.find(";", j)      # 函数名之后第一个 ';'
+has_body = (nsc < 0) or (nob < nsc)
+```
+返回类型写成**数组** `[T; N]` 时，那个 `;` 出现在 `{` 之前 ⇒ `has_body = False`
+⇒ 该函数被当成"只有声明没有体"，行被判 F3。**任何 `-> [T; N]`（或参数里带 `[T; N]`）
+的我方函数都会中招。**
+
+**本轮的处理**（按预注册 §6，**不改工具**——它归 t110）：在 `src/graphwar_mode_manager.rs`
+加了一层别名 `pub type ModeInfoEvents = [ModeInfoEvent; 3];`，把 `;` 挪出签名。
+**函数体一个字都没动** ⇒ 这不是"新增复原"，是**让机判看见已经在的东西**。
+⇒ **要给 t110 的建议**：`nsc` 的查找应当**跳过 `[...]` / `<...>` / `(...)` 里的 `;`**，
+修好后本条的 F1 就不再依赖签名写法（同类假阴性可能还有别的模块，本轮只碰到这一处）。
+
+### 157.7 门槛读数（本分支 `agent/f3-boundary`，基于 master `696e513`，**未 rebase**）
+
+| 门槛 | 要求 | 读数 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | 1765/0/1ignored | **1769 / 0 failed / 1 ignored** | ✓（+4 = 本轮新增的 4 条 `f3_boundary_tests`） |
+| `cargo test --offline --features gdext-bindings` | 1925/0/1 | **1929 / 0 failed / 1 ignored** | ✓ |
+| `coverage_matrix.py --check` | OK | **OK**（`COVERAGE_MATRIX_UPSTREAM=<MAIN>/.reference/upstream`） | ✓（改了 `src/` ⇒ 已重跑生成物，`docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md` 一起提交；`src_fns` 4290→4300、`game_state_manager` 的 `ours_funcs` 189→199） |
+| `check_doc_refs.py` | rc=0 | **rc=0**（无死链） | ✓ |
+| `docsec.py check docs/06-verification.md` | 过 | **无重复号/无冲突标记/无空心节**（断号仅历史 43/89） | ✓ |
+| 三轴 `fire` | 647 | **647**（文件 286 / 批发 1080） | ✓ 一位未退 |
+| 三轴 `batch` | 647 | **647** | ✓ |
+| 三轴 `batch_conv` | 637 | **637**（种类 1075/1080） | ✓ |
+| `boundary_audit.py --check` | mismatch 0 | **match 441 / mismatch 0 / multi 86** | ✓ |
+
+### 157.8 遗留 / 建议下一步（下一任直接接）
+
+1. **`0x477140` / `0x477540` 是"整局面重播"的两条**——要落它们，先决定我方要不要有
+   "局面快照 → 事件流"的入口（这是架构决策，不是读代码）。它们各自的 4 处 / 2 处 `add_event`
+   要一条条解载荷形状（`docs/06` 模块头注释已记"另 3 处载荷形状未解"）。
+2. **`0x4754c0 request_fire_function` 只差两格**：`data+0x48` 那个 `Vec` 与 `data+0x11c` 那个字节。
+   **下一步手段**：全 `.text` 扫 `mov [r*+0x48]` / `mov [r*+0x11c]` 的**写点**
+   （本轮只做了 `addr_probe dis`，没做全段 xref 扫描）。
+3. **`0x466c40 generate_terrain`（220 B）是最便宜的一条**，本轮只做了取证没落码：
+   语义 = `get_module_wk::<GraphwarObstacleManager>`（`0x46ebe0`）→ `0x3f1e50(&mut data+0x18, esi)`。
+   `0x3f1e50` **不在 527**（分母外），`docs/08` §12 已写它是"按列表逐条 `add_obstacle` + 光栅化、
+   **不先清零**"。缺的只是"`esi` 是什么"（疑似地形表下标）＋我方没有 `GraphwarLevelGenerator` 这个类型
+   （我方 `src/graphwar_level_generator.rs` 只有自由函数）⇒ 落码要先决定类型归属。
+4. **`0x4eb86a remove_offset` 是内联的**（`0x4eb86a` **不是** FDE 起点，在 `0x4eb830..0x4eb920` 中间）：
+   父函数 `0x4eb830` 是"反复折叠 token 列表"的规范化器（`kind-3 ∈ {0,1}` + 末 token `0x11`），
+   `remove_offset` 的 Location 是 `math_function.rs:52:43`/`53:43`（两处 panic 点）。
+   ⇒ 要落它得先有 token kind 表（`0x11` = 17 是什么），这是另一轮的活。
+5. **`0x5185a0` 那种假阴性要系统性排查**：把 `scan_file` 的 `nsc` 查找修好后重跑一遍全表，
+   看还有多少行是"其实有函数体但被判 F3"（本轮只手工碰到 1 处）。
+
+### 157.9 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t111     # 换你自己的树
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+export CARGO_HOME=$WT/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+
+cd $WT
+# ① 33 条清单（改前）/ 28 条（改后）
+awk -F'\t' 'NR>=30 && $7=="F3" && ($8=="skel"||$8=="register-only"||$8=="named-miss"||$8=="parent-missing")' \
+  fixtures/function_coverage.tsv | wc -l
+# ② 函数级四口径（**只跑不改**：生成物归 t110）
+python3 tools/function_coverage.py --stats | head -30
+# ③ 逐条取证
+$PY tools/addr_probe.py fde  0x476830
+$PY tools/addr_probe.py dis  0x476830
+$PY tools/addr_probe.py locs 0x476830
+# ④ 门槛
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py
+python3 tools/docsec.py check docs/06-verification.md
+$PY tools/boundary_audit.py --check
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```
+
+⚠️ **口径 D 的 X 本轮没有复核**（`tools/global_triage.py --denom-outside` 重跑 > 40 min，
+与 §156.9 同一情况）：`D_A = 341/659 = 51.7%` 里的 `659 = 527 + 132` 用的是 T105 的 X，
+只有分子（341）是本轮实跑。
