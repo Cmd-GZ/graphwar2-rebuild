@@ -305,6 +305,44 @@ MANUAL = {
                  "size 0x574 真实函数体（正规 prologue + 分支），Location math_function.rs:184:24；"
                  "机器 G4 是因为它与上面两条无名地址共享同一 Location 才判 unknown，但它自己有名字（hyb:高置信 "
                  "simplify_recursive）⇒ 语义档位仍是推断（名字只是结构指纹），缺口是实的"),
+    # === 2026-11-27 T92（`docs/06` §139 ② 硬前置）：把 T89 在 §138.5 的 6 条裁决**补进生成器** ===
+    # 为什么必须补：`fixtures/f3_triage.tsv` 是**历史裁决记录**，但重跑本工具会整表重写 ⇒ 这 6 条
+    # 之前只活在 tsv 里，一重跑就全被冲掉（§138.9 第 1 条实测：5 条回 real-missing、
+    # `0x523410` 整行消失）。下面 6 条的 `依据` 与 §138.5 的表逐条一致，**判据没有放宽**：
+    # 每一条都有 Android `.symtab` 的**正向**指名（标准库泛型本体名 + size）+ 调用形态 `call rel32=1/slot=0`。
+    # 机器规则判不了它们的原因：内层循环被 LTO 摊平后 A/B/C 三组结构特征不命中（R-STD 是**结构**判据，
+    # 这 6 条的结构已经被优化掉，只剩 Android 符号这条**正向**证据）。
+    "0x3b6c70": ("na:std-mono",
+                 "**人工改判**(T89 §138.5 采纳，2026-11-27；T92 补进 MANUAL)：Android 侧该 Location 键集"
+                 "唯一具名命中 `std::thread::local::LocalKey<T>::with`（std，size 0x10c / Linux 0xd0）；"
+                 "调用形态 **call rel32=1 / slot=0**（被直接调用、地址不被取走）= 泛型单态化的形态 "
+                 "⇒ std 实例，不是游戏缺口；机器 R-STD 未命中是因为内层循环被 LTO 摊平"),
+    "0x3bfdd0": ("na:std-mono",
+                 "**人工改判**(T89 §138.5 采纳)：Android 命中 `<Vec<T> as SpecFromIterNested<T,I>>::from_iter`"
+                 "（alloc，size 0x23c / Linux 0x25b）；call rel32=1 / slot=0 ⇒ alloc 泛型实例"),
+    "0x3caa20": ("na:std-mono",
+                 "**人工改判**(T89 §138.5 采纳)：Android 命中 `Vec<T,A>::retain`（alloc，0x388 / 0x426）；"
+                 "call rel32=1 / slot=0 ⇒ alloc 泛型实例（其 hyb 预测名 request_update_function 是**假预测**）"),
+    "0x522070": ("na:std-mono",
+                 "**人工改判**(T89 §138.5 采纳)：Android 命中 `Rc<T,A>::new_cyclic_in`（alloc，0x3ec / 0x477）；"
+                 "call rel32=1 / slot=0 ⇒ alloc 泛型实例"),
+    "0x5238c0": ("na:std-mono",
+                 "**人工改判**(T89 §138.5 采纳)：Android 命中 `Rc<T,A>::new_cyclic_in`（alloc，0x2c4 / 0x358）；"
+                 "call rel32=1 / slot=0 ⇒ alloc 泛型实例"),
+    "0x523410": ("na:std-mono",
+                 "**人工改判**(T89 §138.5 **新增行**)：Android 命中 `Rc<T,A>::new_cyclic_in`（alloc，0x208 / 0x2c1）；"
+                 "call rel32=1（调用点 0x4c6c50，落在 0x4c6b40 内）/ slot=0 ⇒ alloc 泛型实例。"
+                 "机器规则判 na:gdext-glue 只因为**唯一调用者不引用 Location**（CALLER_LOC=0），"
+                 "但那不等于 gdext 产物（§138.3 第 1 条：这条陪判据精度极低）。"
+                 "⚠️ 顺带纠正 `src/graphwar_replay_control.rs:142-145` 把它注释成 update_replay_list 的后台半边 —— "
+                 "注释错，`src/` 不在本工具写范围，只登记"),
+    # ---- 下面 5 条 T89 §138.3 的裁决（`na:gdext-glue` → `real-missing`）**不进 MANUAL**，原因可复跑： ----
+    #   `0x3aae60 0x3b70b0` 已被 T87 的 Android 定名（`ButtonManager::new::{{closure}}`）抬进 **F2**；
+    #   `0x3b6e00 0x3b6ed0 0x3b7020` 被抬进 **F1**（`GraphwarRootNode::ready::{{closure}}`）。
+    #   ⇒ 它们**已不在 F3 集合**里，重跑时 `final_class()` 根本查不到它们，写进 MANUAL 也不会有任何效果；
+    #     它们的类别仍以 tsv 的历史行为准（重跑时由 `write()` 的「归档」块登记，见 §139 ②）。
+    #   复跑核对（5 条都必须是 F1/F2 而非 F3）：
+    #     .reference/venv/bin/python tools/f3_triage.py --features 0x3aae60 0x3b6ed0  # 只看特征，不改台账
 }
 
 # ---------------------------------------------------------------------------
