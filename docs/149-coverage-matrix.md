@@ -210,7 +210,7 @@
 | `src/_scaffold/diffconv.rs` | 上一条的收敛层；同上 |
 | `src/_scaffold/replay_inflate.rs` | 手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块 |
 | `src/_scaffold/rng.rs` | ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块 |
-| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 78 个模块里） |
+| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 82 个模块里） |
 | `src/_scaffold/gdext_class.rs` | 同上：classdb_register_extension_class4 的封装 |
 | `src/_scaffold/broker.rs` | **我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端 |
 | `src/_scaffold/protocol.rs` | 报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里 |
