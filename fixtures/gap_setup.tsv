@@ -4,7 +4,10 @@
 # 口径：arm64 = Android 2.0.60 .symtab（观测）；linux_527 = fixtures/function_coverage.tsv 的 F1/F2/F3 行；
 #       `—` = 该函数在 Linux 527 分母里没有行（R4 §4.2 给三种解释）
 # 计数（本表 52 行，现算）：implemented 11 / real-missing 3 / na:gdext-glue 18 / na:other 20（drop-glue 8 + closure-in-fn 12）
-#   与 Linux 527 的 21 行对不上是**正常**的：21 只是本模块 37 个 Location 锚函数里被多数投票留在本模块的那部分。
+#   与 Linux 527 的 21 行对不上是**正常**的：本模块自己的 Location 锚函数是 **37** 个
+#   （fixtures/module_funcs.tsv），527 台账只收其中多数投票留在本模块的 **21** 个；另外 **16** 个的
+#   多数投票落到了 `src/graphwar_game_client.rs`（= 4 个 connect 闭包 + 4 个 ready 闭包 + 8 条成对薄壳，
+#   全部能在 function_coverage.tsv 里按地址查到，不是"丢了"）。
 # 正/负对照读数见文件末尾 §CTRL。
 arm64_vaddr	arm64_size	demangled	class	subclass	linux_527	rule	call_shape	evidence	landing	note	-
 0x3943d0	156	core::ptr::drop_in_place<godot_core::storage::single_threaded::InstanceStorage<GraphwarSetupControl>>::h87be37e5a9832bb2	na:other	drop-glue	—	R-G2	bl=2 slot=0	名即判：`core::ptr::drop_in_place<godot_core…InstanceStorage<GraphwarSetupControl>>`；size 156；bl=2 slot=0	—（不落码：编译器 drop glue）		

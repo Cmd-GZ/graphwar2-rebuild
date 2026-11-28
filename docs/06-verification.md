@@ -27219,3 +27219,213 @@ PY
 **逐行改判台账的 7 类计数**（`fixtures/global_triage_refresh_diff.tsv`，共 **190 行**）：
 `manual-t93` **49** / `ledger-lost` **34** / `ledger-gain` **15** / `sub-refresh` **28** / `t82-label` **5** / `cascade` **19** / `name-refresh` **40**。
 （`name` 列另有 18 行的名字也变了，但它们同时改了类/子类，按"主因"归到上面 6 类里，不重复计数；全表 58 行名字变化可用 `old_name` 列逐行比。）
+
+## 144. T98 `graphwar_setup_control`（52 vs 21）与 `graphwar_event`（31 vs 0）两块"缺口"的定性：**都不是 33 / 31 条工作量** —— 前者真缺 **3** 个源码函数（本轮落 2），后者是**纯类型文件**（31 条里只有 3 个手写方法，且都在 527 分母**外**）（2026-11-28，任务 T98 / 分支 `agent/gap-setupevent`）
+
+`docs/06` §143 刷新后的 `fixtures/global_triage_modules.tsv` 把这两行排进了 `gap_proxy` 前 5：
+
+| 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `graphwar_setup_control.rs` | **52** | 21 | 19 | 2 | **0** | 33 |
+| `graphwar_event.rs` | **31** | **0** | 0 | 0 | **0** | 31 |
+
+本节回答一个问题：**这两个数是不是"要手写 33 / 31 个函数"**。答案分别是：
+`setup_control` = **3 个源码函数**（本轮落 2、登记 2 中的另 1 个证据不足不落）；`graphwar_event` = **3 个源码函数**（全在 527 分母之外 ⇒ 台账里的 `real-missing 0` 与"源码级缺 3"**两者都对，但说的是不同口径**）。
+
+### 144.0 一页结论
+
+| # | 交付 | 结果 |
+|---|---|---|
+| ① | `graphwar_setup_control` 52 条逐条定性 → `fixtures/gap_setup.tsv` | implemented **11** / real-missing **3** / `na:gdext-glue` **18** / `na:other` **20**（drop-glue 8 + closure-in-fn 12）。**那"31 条差" = 12 gdext 胶水 + 8 drop glue + 7 父函数体内闭包 + 4 手写方法**（`init` / `on_visibility_change` 已实现；`clear_state` / `enable_play_chat_button` 缺）。 ⇒ **真缺口 2 条（`clear_state` / `enable_play_chat_button`）+ 1 条被我方"有函数名没函数体"掩盖的 `process`**，合计 **3**，不是 33。 |
+| ② | `graphwar_event` 31 条逐条定性 → `fixtures/gap_event.tsv` | 3 手写方法（`serialize` / `deserialize` / `make_new_connection_request_event`）+ 3 个 `#[derive(Clone)]` + 3 个 serde derive impl + 22 个 drop glue。**没有"业务函数群"**。 |
+| ③ | `graphwar_event` 形态结论 + 为什么 `lin527 = 0` | 一句话：**它是一个 ≥1154 行的纯类型/枚举定义文件（72 个 `*Event` 结构体 + 主枚举 `GraphwarEvent`），机器码里只有 3 个手写方法**；`lin527 = 0` 是**正常**的 —— 该模块的函数体里一个 `panic::Location` 都没有（Linux 5301 个 Location 里 0 个指向它），手写方法用的是**把 `file:line` 直接写进消息文本**的 `format!`，不是 `panic!`。见 §144.3。 |
+| ④ | 落码 | **2 条**：`enable_play_chat_button`（arm64 `0x4ca2f4`，76 B）+ `on_visibility_change` 按证据补实（arm64 `0x4c91e4`，140 B）。各一个 commit + 各带单测。 |
+| ⑤ | 只登记不落码的 | `clear_state`（arm64 `0x4c6878`，804 B）：**缺 4 个 `onready` 字段的节点名与一张 `bool → Texture2D` 表的类型** ⇒ 按 T45 纪律不编语义；`process`（arm64 `0x4d00a8`，13564 B）：我方没有 `fn process`（详见 §144.5/§144.6）。 |
+
+> **招牌三口径一位未动**：A `332/527 = 63.0 %` · B `332/438 = 75.8 %` · 1:1 `260/527 = 49.3 %`（本轮 `src/` 只新增 2 个函数体 + 4 条常量/单测，没有任何原版函数获得 Linux 地址锚 ⇒ 不会抬机器码口径）。**本轮落码抬的是"源码级"**，见 §144.7 的三口径表。
+
+### 144.1 预注册与勘误（`fixtures/gap_setupevent_plan.txt`，单独 commit `ea80200`）
+
+判据**原样继承** T82 `fixtures/f3_triage_plan.txt` §1–§3 / T86 §134.3 的五类 + `VOL_CAP = 0x800` + T89 的调用形态闸；
+本轮**新增只有一条**（R4）：**"Linux 侧没有"不等于"原版没有"**，必须先排除三种解释 ——
+① 该函数**没有 `panic::Location`**（⇒ 进不了 527 分母）；② 归属被多数投票压到别的模块；③ 被内联。
+这一条是本节两块结论的关键（`graphwar_event` 是①，`clear_state`/`enable_play_chat_button`/`on_visibility_change` 是①，`init` 是③）。
+
+跑数过程中**发现我自己写错 2 处、任务书前提不成立 2 条**，逐条追加在 plan §11 勘误（**判据一个字没改**）：
+
+| # | 错在哪 | 处理 |
+|---|---|---|
+| E1 | plan §6 C1 把 **x86** 地址 `0x4b88d0`/`0x4b8a50` 当成 arm64 对照组目标 | 换 arm64 同物 `0x4be9cc`/`0x4beb5c`（`ImplementsGodotApi::__register_methods/__register_constants`），仍判 `na:gdext-glue` ✓ |
+| E2 | plan §2.2/§5 写"含别名的地址数 = 96" | 独立复算 = **106**（31 census + 75 同址别名）；原因是我把 `graphwar_event_handler/_queue` 的行混进来了 |
+| E3 | 任务书「`src/graphwar_event.rs` 这个文件在 `src/` 里」**不成立** | `src/` 里没有它，内容在 `src/events.rs`（`docs/02` §17 已登记）；`lin527 = 0` 的**结论对**，但原因不是"文件不在 src/"（见 §144.3） |
+| E4 | 任务书「31 条 android 真名应该全是 `na:*`」**不成立** | 31 条里有 **3 条手写方法**，只是**不在 527 分母里** |
+| E5 | 527 台账 `0x4d3180`（`process`）记 **F2**，与我方"没有函数体"冲突 | 只报告不改台账（生成物 + 不在本轮写入边界内），见 §144.6 第 3 条 |
+
+### 144.2 `graphwar_setup_control`：52 / 21 / 19 是**三个不同口径**，31 条差逐类拆解
+
+先把三个数拆开（这张表就是"为什么 `gap_proxy = 33` 不能当工作量"的证明）：
+
+| 口径 | 数 | 是什么 | 复算 |
+|---|---|---|---|
+| **M：Android 机器码条数** | **52** | Android 2.0.60 `.symtab` 里模块路径 = `graphwar_setup_control` 的 `.text` 函数（按地址去重） | `readelf -sW <android> \| grep graphwar_setup_control` + 按地址去重；与 `fixtures/global_triage_modules.tsv` 的 52 逐值相同 |
+| **本模块自己的 Location 锚** | **37** | Linux 侧函数体内引用了 `src/graphwar_setup_control.rs` 的 `panic::Location` 的函数 | `fixtures/module_funcs.tsv`（37 行） |
+| **G：527 台账里的行** | **21** | 上表 37 条里**多数投票留在本模块**的（另 16 条的多数投票落到 `src/graphwar_game_client.rs`） | `awk -F'\t' '$5=="src/graphwar_setup_control.rs"' fixtures/function_coverage.tsv` |
+| **已实现（F1/F2）** | **19** | 527 里 bucket = F1/F2 的行（另 2 条 F3 是 `__register_methods` 壳） | `--stats` |
+
+⇒ **52 − 21 = 31 不是 31 个函数**；21 也不是"模块只有 21 个函数"。**21 的来历**是 527 的归属规则（Location 多数投票），
+而那 16 条"被压到 `graphwar_game_client.rs`"的是：4 个 `connect_entry_buttons::{{closure}}` + 4 个 `ready::{{closure}}` +
+8 条 240–256 B 的"成对薄壳"（`0x4d8a00`…`0x4d96e0`）—— 它们体内引用的 `game_client.rs` 行号比本模块的多
+（闭包体里内联了 `GraphwarGameClient::request_lock_change` 之类的代码），所以投票输了。**不是丢了，也没缺实现。**
+
+#### 144.2.1 那 31 条差（= 52 − 21）逐类
+
+| 类 | 条数 | 具体（arm64 vaddr） | 源码级 `fn` 增量 | 缺口? |
+|---|---|---|---|---|
+| `na:gdext-glue` | **12** | `__init::__inner_init::{{closure}}::{ptrcall_fn ×4, varcall_fn ×4}`（`0x4c6310`/`0x4c63ac`/`0x4c6448`/`0x4c64e4`；`0x4c657c`/`0x4c663c`/`0x4c66f8`/`0x4c67b8`）+ `__virtual_call::virtual_fn ×2`（`0x4ccba0`/`0x4ccc3c`）+ `__default_virtual_call::virtual_fn`（`0x4b9180`）+ `class_id`（`0x4b93f0`） | **+0** | **不是** |
+| `na:other / drop-glue` | **8** | `drop_in_place<GraphwarSetupControl>` ×4（628 B 同一符号名的 4 个副本）+ `<InstanceStorage<…>>` + 4 个闭包的 28 B drop glue | **+0** | **不是** |
+| `na:other / closure-in-fn` | **7** | 4 个 `connect_entry_buttons::{{closure}}`（`0x4c9f74`/`0x4ca054`/`0x4ca134`/`0x4ca214`，各 224 B，父函数已实现）+ 3 个 `ready::{{closure}}`（8 个里 5 个已在 527 里：`0x4d1e00`/`0x4d1f10`/`0x4d2600`/`0x4d2f70`/`0x4d88b0`） | **+0**（闭包不是独立 `fn`） | **不是**（但**行为**要落在父函数里，见 §144.2.2） |
+| 手写方法 | **4** | `init`（`0x4cccd8`，480 B；推断内联进 `__inner_init` 一族）、`on_visibility_change`（`0x4c91e4`，140 B）、`clear_state`（`0x4c6878`，804 B）、`enable_play_chat_button`（`0x4ca2f4`，76 B） | **+4** | `init`/`on_visibility_change` 已实现；**`clear_state`/`enable_play_chat_button` 缺**（本轮落后者） |
+
+#### 144.2.2 三个**行为缺口**（不进 527 分母，但别当成"没有"）
+
+1. **`ready` 的 8 个闭包 vs 我方的 3 条 `connect`**：原版 `fn ready`（arm64 `0x4cceb8`，7764 B）里有 **8** 个闭包；
+   Linux 侧按源码行 **669/678/687/696/705/728/772/793**（`fixtures/gap_setup.tsv` 里按 size 比 1.11–1.16 与 216↔176 一组对上）。
+   本轮抽读了 3 个：`0x4ced0c` → `GraphwarEventQueue::add_event`（发事件）、`0x4cf9cc` → `GraphwarGameClient::request_lock_change`（`0x50_7490`）、
+   `0x4cef94`（2160 B）→ 节点 `bind_mut` + `String::clone` + `Vec::grow_one`（真业务回调）。
+   ⇒ **我方 `ready` 只连了 3 个信号**，至少 5 个回调体没复现。**登记，不落**（另外 5 个的语义没读完）。
+2. **`connect_entry_buttons` 的 4 个闭包**：父函数已实现（F1），4 个闭包 = 四个按钮的点击处理（Linux Location 行 263/270/277/284，col 72）。
+   我方父函数里已按同一接线实现，**语义对上**（观测）。
+3. **`process`（13564 B，本模块最大）**：见 §144.6 第 3 条 —— 台账记 F2，但我方**没有** `fn process`。
+
+### 144.3 `graphwar_event`：**≥1154 行的纯类型/枚举文件**，机器码里只有 3 个手写方法 —— `lin527 = 0` 是正常的
+
+#### 144.3.1 一句话结论
+
+> **`graphwar_event.rs` 是一个 ≥1154 行的纯数据/类型定义文件**（**72 个 `*Event` 结构体 + 主枚举 `GraphwarEvent`**；`docs/02` §18.3 已从 `.symtab` 列出这 73 型），
+> 编译后**只有 3 个手写方法**（`serialize` / `deserialize` / `make_new_connection_request_event`），
+> 其余机器码全部是 `#[derive(Serialize, Deserialize, Clone)]` 的产物与 drop glue。
+
+#### 144.3.2 证据（四条，全部可复算）
+
+| # | 证据 | 读数 | 复算 |
+|---|---|---|---|
+| ① | Android `.symtab` 里"任一符号名带 `graphwar_event` 模块路径"的 `.text` 地址 | **106** 个（census 口径 **31** 个 + 同址别名 **75** 个） | `fixtures/gap_event.tsv` 的 31 行 + §ALIAS 75 行 |
+| ② | 106 个里**不是** derive/drop glue 的 | **3 个**：`GraphwarEvent::deserialize`（`0x4691a4`，540 B）、`make_new_connection_request_event`（`0x4693c0`，188 B）、`serialize`（`0x46947c`，304 B） | 名字里没有 `_::<impl serde…>` / `drop_in_place` / `Clone>::clone`；且 `serialize` 体内 **`bl 0x4695ac`**（= 直接调 derive 的 `<impl Serialize>::serialize`）⇒ "derive 之外还有一层手写"的决定性证据 |
+| ③ | 该文件在 Linux `.so` 里的 `panic::Location` 结构体数 | **0**（全 `.so` 5301 个 Location 里没有一个 file 指向 `src/graphwar_event.rs`；`fixtures/boundary_audit.tsv` 里 `graphwar_event.rs` 出现 **0** 次） | `tools/loc_xrefs.py`（`locs` 全量扫描） |
+| ④ | 该文件在 `.rodata` 里留下的**自定义消息串** | **2 条**：`src/graphwar_event.rs:1149`（vaddr `0x1b2a1b`）、`:1154`（`0x1a24bc`）；**两个构建行号完全相同** | `grep -abo 'graphwar_event\.rs:[0-9]*' <so>` → 两条，Linux 与 Android 都是 1149/1154 |
+
+#### 144.3.3 为什么 `lin527 = 0` 是**正常**的（不是缺口，也不是"全复原了"）
+
+527 台账的归属机制是 **`panic::Location` 多数投票**（`docs/02` §18.2：Location 结构体 → 引用它的函数）。
+`graphwar_event` 的 3 个手写方法**都不 panic**：它们出错时走的是 ④ 那两条**把 `file:line` 直接写进消息文本**的
+`format!`（不是 `panic!`/`unwrap()`，后两者必然带 `Location` 结构体）。
+⇒ **没有 Location ⇒ 527 分母里没有行 ⇒ `real-missing` 只能是 0**。这是分母口径的正常结果，**不是"这个模块全做完了"**：
+按源码级口径，这 3 个手写方法我方**一个都没有以原版函数形态落码**（我方的事件 JSON 在 `_scaffold/protocol.rs` 里自造；
+`make_new_connection_request_event` 的帧被内联进 `graphwar_client_connection_handler.rs::connect`）—— 见 §144.5 第 3 条。
+
+#### 144.3.4 31 这个数本身也是 census 产物（31 vs 106）
+
+census 的模块名取自"该地址的**第一个**符号名"（`tools/global_triage.py::cmd_android_census`）。这片 serde 代码里有 **75 个地址**的
+第一个符号名是泛型别名 `_ZN41_$LT$T$u20$as$u20$serde..de..Expected$GT$3fmt…`（模块名 `<none>`），
+同一地址的第二个符号名才是 `…__Visitor as Visitor>::expecting`（带 `graphwar_event` 路径）⇒ 被 census 漏数。
+`fixtures/gap_event.tsv` §ALIAS 逐条列出这 75 条（全部是 serde derive 的 20 B `expected` 文本 shim，`na:other / derive-product`）。
+⚠️ 同理：**`graphwar_module_container` 的 69、`game_state_manager` 的 52 等 census 数也可能有同类少计**（T96 §143.6 已说 M 口径是推断）—— 本条只给 `graphwar_event` 的复算。
+
+### 144.4 落码（2 条，各一个 commit，各带单测）
+
+| # | 函数 | 地址 / 大小 | 体（证据） | commit | 单测 |
+|---|---|---|---|---|---|
+| ① | `on_visibility_change` 按证据**补实** | arm64 `0x4c91e4` / **140 B** | 全读：`base_mut`（`0x4c9200`）→ `check_rtti(…,"upcast_ref",10)`（`0x4c9214`）→ **`Object::call_deferred("force_title_update")`**（`0x4c9234`；名字在 `.rodata 0x1a1617`，长度立即数 `0x4c9228 mov w2,#0x12` = 18）→ 两次 guard drop。**观测**。 | `e91cc77` | 方法名字面量 = 18 字节 `force_title_update`；三条 arm64-only 方法的 vaddr/`st_size` 常量 |
+| ② | `enable_play_chat_button` **新增** | arm64 `0x4ca2f4` / **76 B**（本模块最小） | 全读 12 条指令：`0x4ca2f8 ldr x8,[x0,#0xd8] / cmp #1 / b.ne`（gdext `RawGd` niche 判空）→ `0x4ca324 check_rtti` → **`0x4ca32c eor w1,w19,#1`**（极性 = `!enabled`）→ `0x4ca338 b BaseButton::set_disabled`（tail-call）。**观测**。 | `59ea2d4` | 极性断言（挡"写成 `set_disabled(enabled)`"的镜像错误）+ 节点名断言（`ALL_GET_NODE_NAMES` 里必须有它，feature-gated） |
+
+两条都**只在 arm64 侧有真名**（x86 侧没有 Location ⇒ 527 里没有行）⇒ 常量名带 `_ARM64` 后缀，
+**不许**与 x86 地址互相换算。`clear_state` 的三条证据常量（`0x4c6878` / 804 B）也在 `e91cc77` 里，
+但**函数体没落**（§144.5）。
+
+### 144.5 没落的两条 + 缺什么（**诚实清单**）
+
+1. **`clear_state`（arm64 `0x4c6878`，804 B）** —— 体已读完，**语义已知**，但**不落**：
+   它做四件事（`0x4c68b8 RichTextLabel::clear` 作用于 `self+0x118`；`0x4c699c`/`0x4c6adc` 两次
+   `Button::set_button_icon`，图标取自**以单字节 `false` 为键**的 hashbrown 表（`0x4c68e0 strb wzr` → `0x4c68f0 hash_one`）；
+   `0x4c6b34 strb wzr,[x19,#0x1f6]` 清一个 bool；`0x4c6b58 CanvasItem::set_visible(false)` 作用于 `self+0x100`）。
+   **缺**：`self+0xb8 / +0xd8 / +0xf8 / +0x110` 四个 `onready` 字段的**节点名**，以及那张 `bool → Texture2D` 表的类型。
+   11 个 `get_node` 名字里 `ChatButtonSetup` / `ChatButtonPlay` / `ChatBox` 是候选，但 arm64 `ready` 的赋值点没逐条对上。
+   ⇒ 按 T45 纪律**不编语义**（落地前必须先钉字段名，否则就是"猜出来的 clear_state"）。
+2. **`process`（arm64 `0x4d00a8`，13564 B）** —— 我方**没有** `fn process`。
+   团队列表重建只到证据常量 `FN_TEAM_LIST_REBUILD`（`0x4d3180`）+ 4 个容器名（`Team1Container`/`Team2Container`/
+   `PlayerListContainer`/`GameIpLabel`）+ `user://local_ip.config`，**没有循环体**。
+   ⇒ 登记为 `real-missing`；与台账的冲突见 §144.6 第 3 条。
+3. **`graphwar_event` 的 3 个手写方法** —— 落码需要动 4 处**本轮写入边界之外**的东西：
+   ① 新建 `src/graphwar_event.rs`；② `src/lib.rs` 加 `pub mod graphwar_event;`；
+   ③ `tools/coverage_matrix.py` 里 `mod("graphwar_event.rs", …, ("src/events.rs",))` 的 `ours_file` 改指新文件；
+   ④ 决定 `enum Event`（74 变体）留在 `src/events.rs` 还是搬走（`docs/02` §17.4 已登记"混装待拆"）。
+   ⇒ 本轮只登记，**建议下轮单开一条**（见 §144.9）。
+
+### 144.6 与旧台账 / 任务书的冲突（5 条，**只报告不改**）
+
+| # | 冲突 | 证据 | 处置 |
+|---|---|---|---|
+| 1 | 任务书「`src/graphwar_event.rs` 在 `src/` 里」 | `ls src/graphwar_event.rs` → 不存在；内容在 `src/events.rs`（`docs/02` §17） | 报告（plan §11 E3） |
+| 2 | 任务书「31 条 android 真名应该全是 `na:*`」 | 3 条是手写方法（§144.3.2 ②） | 报告（plan §11 E4） |
+| 3 | `fixtures/function_coverage.tsv` 把 `0x4d3180`（`process`）记 **F2** | 我方无 `fn process`；`function_coverage_plan.txt` 的 F2 = "有实现无物证" ⇒ 应在 F3 | **只报告不改台账**（生成物 + 越界） |
+| 4 | `docs/02` §18.3 把 `graphwar_event` 记「函数 **2**」 | 按 `.symtab` 是 **3** 个手写方法（+ 若干 derive 产物）；"2"可能只数了 `graphwar_event::GraphwarEvent::*` 里的某两条 | **只报告**（`docs/02` 不在本轮写入范围） |
+| 5 | plan §6 C1 / §2.2 我自己写错的两处 | 见 §144.1 的 E1/E2 | 已在 plan §11 勘误 |
+
+### 144.7 门槛读数（本机实跑，读数为本分支终点）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1620 passed / 0 failed / 1 ignored**（74 个测试目标求和）= 起点 **1617** + 本轮 **3** 条新单测 |
+| `cargo test --offline --features gdext-bindings` | **1773 passed / 0 failed / 1 ignored** = 起点 **1769** + 本轮 **4** 条（另 1 条 feature-gated）⇒ 与任务书 1769 的基线对得上 |
+| `tools/coverage_matrix.py --check` | **OK**（改了 `src/` ⇒ 重跑生成物：`src_fns` 4077→**4083**、`graphwar_setup_control.rs` 的 `ours_funcs` 185→**191**） |
+| `tools/check_doc_refs.py` | **rc=0** |
+| `tools/docsec.py check docs/06-verification.md` | 无重复号 / 无冲突标记 / 无空心节（节数 141，断号 [43, 89] 是两个历史缺口，不算错） |
+| 三轴 · `fire`（`replay_attrib --drive fire --policy default`，冻结快照 401 份） | 结算批 1080、**内容命中 647** ✔ |
+| 三轴 · `batch`（`--drive batch --policy default`） | 结算批 1080、**内容命中 647** ✔ |
+| 三轴 · `batch_conv`（`batch_conv --policy strict`） | 种类 **1075/1080**、**内容命中 637**（多发批 130：32 / 单发批 950：605）；变好 **128** / 变差 **0** ✔ |
+| `tools/boundary_audit.py --check` | 527 个可归属函数：match **441** / **mismatch 0** / multi 86 ✔ |
+| `tools/function_coverage.py --stats` | F1 **332** / F2 **71** / F3 **124**；`M1 = F1 = 332/527 = 63.0 %`、`M2 = 403/527 = 76.5 %`、`R6 1:1 = 260/527 = 49.3 %`；**招牌 B `332/438 = 75.8 %` 与 F3 数一位未变**（本轮落码只增加我方函数体，不给任何原版函数新增 Linux 地址锚 ⇒ 机器码口径天然不动） |
+
+> ⚠️ 任务书给的门槛基线是 **cargo 1620 / gdext 1769**。`gdext 1769` 与本分支起点（`67e5ef0`）逐值相符；
+> `cargo 1620` 与起点对不上 —— 起点是 **1617**（= 今天 1620 − 本轮 3 条非 feature-gated 单测），
+> 所以"1620"这个数在今天**恰好**等于起点+本轮，**别把它当成本轮抬上去的**。逐目标求和见 `$WT` 的 `cargo.log` / `gdext.log`（74 个目标）。
+
+### 144.8 复算命令（照抄可跑；`$WT` = 本工作树，`$AND`/`$X86` = 两份原版 `.so`）
+
+```bash
+# ① Android .symtab：两个模块的 52 / 31 条真名（按地址去重）
+readelf -sW $AND | awk '$4=="FUNC"' | grep -E 'graphwar_setup_control|14graphwar_event' | ...
+# ② Linux 侧：本模块的 Location 锚函数（37）与 527 台账行（21）
+grep 'graphwar_setup_control' fixtures/module_funcs.tsv | wc -l      # 37
+awk -F'\t' '$5=="src/graphwar_setup_control.rs"' fixtures/function_coverage.tsv | wc -l   # 21
+# ③ graphwar_event 的 lin527 = 0（三条证据）
+$PY tools/loc_xrefs.py loc src/graphwar_event.rs         # 期望：0 条
+grep -c 'graphwar_event\.rs' fixtures/boundary_audit.tsv  # 期望：0
+grep -abo 'graphwar_event\.rs:[0-9]*' $X86 $AND           # 期望：各 2 条，都是 1149/1154
+# ④ 落码的两条 arm64 函数的体（vaddr 口径）
+llvm-objdump -d --start-address=0x4ca2f4 --stop-address=0x4ca340 $AND
+llvm-objdump -d --start-address=0x4c91e4 --stop-address=0x4c9270 $AND
+```
+
+### 144.9 遗留 / 建议下一步
+
+1. **`clear_state` 落码**（优先级最高，804 B 真语义）：先钉 `self+0xb8/+0xd8/+0xf8/+0x110` 四个字段与 `bool → Texture2D` 表 ——
+   手段是读 arm64 `ready`（`0x4cceb8`，7764 B）里的 `get_node` + 字段写入点，逐条对 11 个名字。
+2. **`process`（13564 B）落码**：它是本模块最大函数（团队列表重建 + 行构件调度）。先落"容器 + 逐行循环 + 4 个行构件的缝"，
+   再交单测；顺带把台账 `0x4d3180` 的 F2 改判（F3）—— 需要 lead 允许重跑 `function_coverage`。
+3. **`graphwar_event` 的三个手写方法**（`serialize`/`deserialize`/`make_new_connection_request_event`）：
+   需要 §144.5 第 3 条的 4 处改动（新建文件 + `lib.rs` + `coverage_matrix.py` 映射 + `events.rs` 拆分）⇒ **下一轮单开**。
+4. **`ready` 的 5 个未读闭包**（8 个里抽读了 3 个）：抽读后决定"哪些回调体要落进我方 `ready`"。
+5. **census 的同址别名少计**（§144.3.4）：`tools/global_triage.py --android-census` 取"第一个符号名"会系统性少计；
+   若要修，应改成"任一符号名命中即算，并按模块给置信度"——但它是 T96 刚定稿的生成器，**别在 T98 里动**。
+
+### 144.10 本轮改了什么（范围核对）
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `fixtures/gap_setupevent_plan.txt` | 新增（319 行 + §11 勘误 60 行） | 预注册，单独 commit `ea80200`；勘误追加在 `f083fce` |
+| `fixtures/gap_setup.tsv` | 新增（74 行 = 8 头 + 52 数据 + 14 §CTRL） | 52 条逐条定性 + 正/负对照读数 |
+| `fixtures/gap_event.tsv` | 新增（137 行 = 22 头 + 31 数据 + 82 §ALIAS + 2 尾） | 31 条逐条定性 + 75 条同址别名 |
+| `src/graphwar_setup_control.rs` | +184 行（2 个 commit） | `enable_play_chat_button` 新增、`on_visibility_change` 补实、4 条常量、4 条单测 |
+| `docs/06-verification.md` | 追加本节 | 不动既有节 |
+| **没动** | `src/graphwar_root_node.rs` / `graphwar_button.rs`（t97）、`src/_scaffold/**`、`client/**`、`tools/**`、`fixtures/guardrails.json`、`fixtures/function_coverage.tsv`、`fixtures/boundary_audit.tsv`、`fixtures/global_triage*.tsv`、`fixtures/f3_triage.tsv`、`docs/00`/`02`/`16`/HANDOVER/README | 只读引用 |
