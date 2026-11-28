@@ -317,3 +317,50 @@ cargo run --release --offline -q --example batch_conv   -- --dir <快照> --poli
 * **L4** 本模块在 `coverage-matrix` 是 `观测` 档 ⇒ 落码只是"观测级"，**不等于**逐位验证。
 * **L5** `census` 的模块归属对同址别名**不敏感**（只取第一个符号名）⇒ M 口径会**少计**；
   本轮要同时报 `31`（census）与 `96`（地址数，含同址别名）两个数。
+
+## 11. 勘误（**追加式**；跑数过程中发现的判据/前提错误，只许往这里加，不改 §1–§10）
+
+### E1（2026-11-28，跑数前）§6 的 C1 对照组用了 **x86 地址**去当 arm64 目标
+
+* §6 C1 写「`0x4b88d0` / `0x4b8a50`（setup_control，527 里已判 `na:gdext-glue` 的 F3 行）」。
+  这两条是 **Linux x86-64** 地址（`fixtures/function_coverage.tsv` 的行）。拿它们去 Android
+  `.symtab` 里查会得到"不存在"，本轮第一次跑 `bl/slot` 时就撞上了。
+* 处理（**判据一字未改**，只换对照组地址）：arm64 侧同物 = `0x4be9cc` / `0x4beb5c`
+  （`ImplementsGodotApi::{__register_methods,__register_constants}`，400 B），两条都判
+  `na:gdext-glue` ✓。x86 那两条的判档（F3 / `na:macro-generated`）沿用 T82 台账，只读引用。
+
+### E2（同日）§2.2 / §5 C5 写的"地址数 **96**"是错的，独立复算是 **106**
+
+* 复算：Android `.symtab` 里"任一符号名带 `graphwar_event` 模块路径"的 `.text` 地址 = **106**；
+  其中"**第一个**符号名带模块路径"（= census 口径）= **31**，剩下 **75** 个的第一个符号名是泛型别名
+  `_ZN41_$LT$T$u20$as$u20$serde..de..Expected$GT$3fmt…`。
+* 写错原因：把"含 `graphwar_event_handler`/`_queue` 的那 106 行"当成了"graphwar_event 自己的地址数"。
+  ⇒ §5 C5 的闸门据此改成 **31 vs 106**（`fixtures/gap_event.tsv` §ALIAS 逐条列出 75 条，可复算）。
+
+### E3（同日）任务书前提有两条不成立（写在这里，免得后来人按任务书找）
+
+1. **「`src/graphwar_event.rs` 这个文件在 `src/` 里」不成立**：`src/` 里**没有**这个文件。
+   它的内容在 `src/events.rs`（`docs/02-module-map.md` §17 已登记：62 个模块里只有它没有同名文件），
+   `tools/coverage_matrix.py` 也把 `graphwar_event.rs` 的 `ours_file` 硬编码成 `src/events.rs`。
+   ⇒ 任务书里那句"lin527 = 0 说明没有任何函数引用 `src/graphwar_event.rs` 的 Location"**结论对**（确实 0 条），
+   但原因不是"文件不在 `src/`"，而是**原版这个模块的函数本来就没有 Location**（§144 的三条证据）。
+2. **「31 条 android 真名应该全是 `na:*`」不成立**：31 条里有 **3 条手写方法**
+   （`serialize` / `deserialize` / `make_new_connection_request_event`），它们**不是** derive 产物，
+   只是**不在 527 分母里**（无 Location）。⇒ 该模块按源码级口径有 **3 条 real-missing**，
+   按 527 台账口径仍是 **0**（两个口径都对，别混着说）。
+
+### E4（同日）本轮**没有**改任何判据/阈值
+
+五类定义、`VOL_CAP`、T89 调用形态闸、R4 三条解释、`F1–F4` 判法**一个字都没改**。
+唯一新增的是 §3.1 的 4 个 `subclass` 命名（`derive-product` / `drop-glue` / `closure-in-fn` / `vcall-adapter`），
+它只影响 TSV 的 `subclass` 列，不改变类别语义、也不改变"进不进诚实缺口"。
+
+### E5（同日）发现 527 台账与"有没有函数体"冲突 1 处（**只报告，不改台账**）
+
+* `0x4d3180` = `<GraphwarSetupControl as IControl>::process`（arm64 `0x4d00a8`，13564 B，
+  本模块最大函数）。台账 `fixtures/function_coverage.tsv` 记 **F2**（`pin = free-fn-name`）。
+* 本轮实测：我方 `it` **没有** `fn process`（gdext 壳只有 `fn init` / `fn ready`；团队列表重建只到
+  证据常量 `FN_TEAM_LIST_REBUILD` + 4 个容器名）。按 `function_coverage_plan.txt` 的 F 档定义
+  （F2 = "有实现无物证"），它应在 **F3**。
+* ⇒ 本轮把它判 `real-missing`（`fixtures/gap_setup.tsv`），台账**不动**（生成物 + 不在 T98 写入边界内），
+  差额交 lead 决定是否另派一轮重跑台账。
