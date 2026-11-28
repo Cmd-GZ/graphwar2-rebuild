@@ -820,6 +820,92 @@ pub const FN_UPDATE_SOLDIERS: u64 = 0x4c_2ef0;
 /// 名字来源：唯一锚（`257:133`）。既有常量 [`FN_PLAYER_ROW`]。
 pub const FN_CONNECT_ENTRY_BUTTONS: u64 = 0x4c_4c20;
 
+// ===========================================================================
+// 1b. **arm64 2.0.60 侧**的三条手写方法（T98 / `docs/06` §144）
+// ===========================================================================
+//
+// ⚠️ 口径：上面那一节的地址是 **x86-64 2.0.60**（ELF vaddr）。下面这三条只在
+// **arm64 2.0.60**（`.reference/steam/android-2.0.60/libgraphwarrust.so`，未 strip）里有**真名**，
+// 因此只能标成 `*_ARM64`，**绝不能**与 x86 地址互相换算（两份构建布局完全不同）。
+//
+// 为什么 X86 侧没有它们的名字：它们的函数体里**没有 `panic::Location`**（不 panic、不 unwrap），
+// 而 527 台账的归属机制就是 Location 多数投票 ⇒ 它们在 x86 侧**进不了分母**。
+// 复算：`tools/loc_xrefs.py` 全量扫 5301 个 Location，`file == src/graphwar_setup_control.rs` 的
+// 结构体 70 个，**没有一个**落在这三条的体内（附录 T98 `fixtures/gap_setup.tsv`）。
+
+/// `GraphwarSetupControl::clear_state` —— **arm64 `0x4c6878`**（`st_size` = **804 B**；`bl` 调用点 1、数据槽 0）。
+///
+/// 名字来源：Android 2.0.60 `.symtab` 的 legacy mangled 名
+/// `_ZN12graphwarrust22graphwar_setup_control20GraphwarSetupControl11clear_state17h…E`
+/// （`c++filt -s rust` 还原；同一地址无别名）。档位：**观测**（兄弟构建真名）。
+///
+/// 体（**观测**，逐条见 `fixtures/gap_setup.tsv` 的这一行）：
+/// * `0x4c68b8` `RichTextLabel::clear()` —— 作用于 `self+0x118`（聊天记录控件）；
+/// * `0x4c68e0` `strb wzr,[sp,#0x10]` → `0x4c68f0` `BuildHasher::hash_one` —— 用**单字节 `false`** 作键
+///   在 hashbrown 表里查图标（`self+0x210/0x218/0x228/0x230` 是调用者传进来的 map），
+///   `0x4c699c` / `0x4c6adc` 两次 `Button::set_button_icon`（作用于 `self+0xc0` / `self+0xe0`）；
+/// * `0x4c6b34` `strb wzr,[x19,#0x1f6]` —— 把一个 bool 字段清 `false`；
+/// * `0x4c6b58` `CanvasItem::set_visible(false)` —— 作用于 `self+0x100`。
+///
+/// **未落码**（`fixtures/gap_setup.tsv` 判 `real-missing`，但本轮只登记）：缺 `self+0xb8/0xd8/0xf8/0x110`
+/// 四个字段的**节点名**与那张 `bool → Texture2D` 表的类型。11 个 `get_node` 名字里
+/// `ChatButtonSetup` / `ChatButtonPlay` / `ChatBox` 是候选，但 arm64 `ready` 的 onready 赋值点没逐条对上
+/// ⇒ 按 T45 纪律**不编语义**。
+pub const FN_CLEAR_STATE_ARM64: u64 = 0x4c_6878;
+/// 见 [`FN_CLEAR_STATE_ARM64`]：`.symtab` 的 `st_size`。
+pub const FN_CLEAR_STATE_ARM64_SIZE: u32 = 804;
+
+/// `GraphwarSetupControl::enable_play_chat_button` —— **arm64 `0x4ca2f4`**（`st_size` = **76 B**，本模块最小）。
+///
+/// 体（**观测**，全读 = 12 条指令）：
+/// ```text
+/// 0x4ca2f8  ldr  x8,[x0,#0xd8] / cmp x8,#1 / b.ne 返回   ; +0xd8/+0xe0 = RawGd<BaseButton> 的 niche 判空
+/// 0x4ca324  bl   RawGd::check_rtti(…, "upcast_ref", 10)  ; gdext 的 upcast 检查（上下文串是 gdext 自己的）
+/// 0x4ca32c  eor  w1,w19,#1                               ; w1 = !enabled
+/// 0x4ca338  b    BaseButton::set_disabled                ; tail-call
+/// ```
+/// ⇒ **语义：`play_chat_button.set_disabled(!enabled)`**（极性 `!` 有指令证据 `eor w1,w19,#1`）。
+///
+/// 取名「ChatButtonPlay」的依据：本模块 11 个 `get_node` 名字里只有它叫 Play+Chat（**观测**，串表）；
+/// 它和 `+0xd8` 的绑定是**推断**（缺 onready 赋值点的逐条对照）——见 [`PLAY_CHAT_BUTTON_NODE`]。
+pub const FN_ENABLE_PLAY_CHAT_BUTTON_ARM64: u64 = 0x4c_a2f4;
+/// 见 [`FN_ENABLE_PLAY_CHAT_BUTTON_ARM64`]：`.symtab` 的 `st_size`（本模块 52 条里最小）。
+pub const FN_ENABLE_PLAY_CHAT_BUTTON_ARM64_SIZE: u32 = 76;
+
+/// 「play/chat 按钮」的节点名 —— 候选来自 11 个 `get_node` 串表（`0x19ea20`… 区域）。
+///
+/// 档位：**推断**（名字本身是观测；与 `self+0xd8` 字段的对应未逐条证）。
+pub const PLAY_CHAT_BUTTON_NODE: &str = "ChatButtonPlay";
+
+/// `enable_play_chat_button` 的**极性**：`set_disabled(!enabled)`。
+///
+/// 档位：**逐位**（arm64 `0x4ca32c eor w1,w19,#1` —— 对入参取反后才进
+/// `BaseButton::set_disabled`；`0x4ca338` 的 tail-call 实参就是 `w1`）。
+///
+/// 抽成常量函数的唯一理由：让"极性"成为**可断言**的东西（`AGENTS.md` §0.5 —— 期望值只能来自
+/// 反汇编，不能来自我方实现的输出）。它不是原版的函数，只是本文件的一个测试钩子。
+pub const fn play_chat_button_disabled(enabled: bool) -> bool {
+    !enabled
+}
+
+/// `GraphwarSetupControl::on_visibility_change` —— **arm64 `0x4c91e4`**（`st_size` = **140 B**）。
+///
+/// 体（**观测**，全读）：`0x4c9200` `base_mut()` → `0x4c9214` `check_rtti(…,"upcast_ref",10)`
+/// → `0x4c9234` `Object::call_deferred(<名>, 长度 18, 无参)` → 两次 guard drop。
+/// 方法名字面量在 `.rodata` **`0x1a1617`**（长度立即数 `0x12` = 18）⇒ 见 [`DEFERRED_FORCE_TITLE_UPDATE`]。
+///
+/// ⚠️ x86 侧没有它的 Location（体内无 panic）⇒ 527 分母里没有它；Linux 侧是否被内联**未证**。
+pub const FN_ON_VISIBILITY_CHANGE_ARM64: u64 = 0x4c_91e4;
+/// 见 [`FN_ON_VISIBILITY_CHANGE_ARM64`]：`.symtab` 的 `st_size`。
+pub const FN_ON_VISIBILITY_CHANGE_ARM64_SIZE: u32 = 140;
+
+/// `on_visibility_change` 里 `call_deferred` 的**方法名** —— `.rodata` `0x1a1617`，长度 18。
+///
+/// 档位：**逐位**（字节 = `force_title_update`，长度立即数 `mov w2,#0x12` 在 `0x4c9228`；
+/// arm64 与 x86 都能在 `.rodata` 里按同一串找到）。它和 `#[func] fn force_title_update` 同名
+/// ⇒ 原版是"延迟调自己"的写法（**观测**）。
+pub const DEFERRED_FORCE_TITLE_UPDATE: &str = "force_title_update";
+
 /// `graphwar_setup_control::_::__init::__inner_init`（第 1 份实例）—— **x86 `0x4bd030`**
 /// （FDE `0x4bd030..0x4bd27f`，`0x24f` = **591 B**；唯一 Location `608:1`）。
 ///
@@ -2029,9 +2115,18 @@ impl GraphwarSetupControl {
     }
 
     /// `ChatPopUp.visibility_changed` 的落点（原版方法名 `on_visibility_change`）。
+    ///
+    /// 原版 **arm64 `0x4c91e4`（140 B）**：`self.base_mut()` → `Object::call_deferred("force_title_update")`
+    /// （`0x4c9234`；方法名在 `.rodata 0x1a1617`，长度立即数 18 = `0x4c9228 mov w2,#0x12`）。
+    /// 档位：**观测**（体逐条读完，见 [`setup::FN_ON_VISIBILITY_CHANGE_ARM64`]）。
+    ///
+    /// 我方差异：原版是 `call_deferred`（下个空闲帧才跑），这里用 `Callable::call_deferred` 保持
+    /// **同样的延迟语义**，**不**直接 `self.force_title_update()`（那会变成同帧同步调用）。
     #[func]
     fn on_visibility_change(&mut self) {
         self.visibility_change_calls += 1;
+        let deferred = self.to_gd().callable(setup::DEFERRED_FORCE_TITLE_UPDATE);
+        let _ = deferred.call_deferred(&[]);
     }
 
     /// `ChatLineEdit.text_submitted` 的落点（原版方法名 `on_chat_submitted`）。
@@ -2047,6 +2142,41 @@ impl GraphwarSetupControl {
         self.chat_log.push(text.to_string());
 
         self.emit_chat_message(&text);
+    }
+
+    /// 原版 `GraphwarSetupControl::enable_play_chat_button` —— **arm64 `0x4ca2f4`（76 B）**。
+    ///
+    /// 语义（**观测**）：`play_chat_button.set_disabled(!enabled)`
+    /// —— `0x4ca32c eor w1,w19,#1` 决定极性，`0x4ca338 b BaseButton::set_disabled` 是 tail-call。
+    /// 判空是 gdext `RawGd` 的 niche 检查（`0x4ca2f8 ldr x8,[x0,#0xd8] / cmp #1 / b.ne`）。
+    ///
+    /// 我方差异（**写清，不假装一样**）：
+    /// * 原版把 `BaseButton` 句柄**缓存在字段 `+0xd8`**（在 `ready`/onready 里赋值，未逐条证）；
+    ///   我方按需 `find_child_ex` 查 —— 因为本文件的视图层子集只建 3 个替身节点
+    ///   （[`STUB_NODE_NAMES`]），缓存成字段会引入一个"找不到也要存"的假状态。
+    /// * 找不到节点时**只记账**（`missing`），不 panic —— 原版的 `+0xd8 == 1` 分支就是"空则返回"。
+    ///
+    /// 档位：**观测**（名字 + 体 + 极性）；节点名与 `+0xd8` 的对应是**推断**（见 [`setup::PLAY_CHAT_BUTTON_NODE`]）。
+    pub fn enable_play_chat_button(&mut self, enabled: bool) {
+        let Some(node) = self
+            .base()
+            .find_child_ex(setup::PLAY_CHAT_BUTTON_NODE)
+            .owned(false)
+            .done()
+        else {
+            self.missing
+                .borrow_mut()
+                .push(setup::PLAY_CHAT_BUTTON_NODE.to_owned());
+            return;
+        };
+        let Ok(mut button) = node.try_cast::<godot::classes::BaseButton>() else {
+            self.missing.borrow_mut().push(format!(
+                "{}: not a BaseButton",
+                setup::PLAY_CHAT_BUTTON_NODE
+            ));
+            return;
+        };
+        button.set_disabled(setup::play_chat_button_disabled(enabled));
     }
 
     /// 标题：四格的线上名字拼起来（原版 `force_title_update` **写哪个节点未知**）。
@@ -2643,6 +2773,60 @@ mod f3_landing_tests {
         let mut e = FakeEngine { fail_upcast: true, ..Default::default() };
         let mut m = FakeModules::default();
         SetupControlIntent::update_name(&mut e, &mut m, 0, GdHandle::new(0x10, 0x20));
+    }
+
+    /// **T98**：`clear_state` / `enable_play_chat_button` / `on_visibility_change` 三条**只在 arm64
+    /// 2.0.60 里有真名**的手写方法 —— 地址与 `st_size` 都来自 `.symtab`（观测），不许改。
+    ///
+    /// 复算：
+    /// ```bash
+    /// readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E 'clear_state|enable_play_chat_button|on_visibility_change'
+    /// ```
+    #[test]
+    fn arm64_only_hand_written_methods_keep_their_symbol_evidence() {
+        assert_eq!(FN_CLEAR_STATE_ARM64, 0x4c_6878);
+        assert_eq!(FN_CLEAR_STATE_ARM64_SIZE, 804);
+        assert_eq!(FN_ENABLE_PLAY_CHAT_BUTTON_ARM64, 0x4c_a2f4);
+        assert_eq!(FN_ENABLE_PLAY_CHAT_BUTTON_ARM64_SIZE, 76);
+        assert_eq!(FN_ON_VISIBILITY_CHANGE_ARM64, 0x4c_91e4);
+        assert_eq!(FN_ON_VISIBILITY_CHANGE_ARM64_SIZE, 140);
+        // 76 B 是本模块 52 条里最小的一条（`fixtures/gap_setup.tsv` 里 `arm64_size` 列的最小值）
+        assert!(FN_ENABLE_PLAY_CHAT_BUTTON_ARM64_SIZE < FN_ON_VISIBILITY_CHANGE_ARM64_SIZE);
+        assert!(FN_ON_VISIBILITY_CHANGE_ARM64_SIZE < FN_CLEAR_STATE_ARM64_SIZE);
+    }
+
+    /// **T98**：`on_visibility_change` 的 `call_deferred` 方法名 = `.rodata 0x1a1617`，长度 **18**。
+    ///
+    /// 期望值来自指令：`0x4c9228 mov w2,#0x12`（= 18）+ 该地址的字节（`force_title_update`）。
+    /// 复算：`python3 -c "d=open('.reference/steam/android-2.0.60/libgraphwarrust.so','rb').read(); print(d[0x1a1617:0x1a1617+18])"`
+    #[test]
+    fn deferred_title_update_name_matches_the_rodata_literal() {
+        assert_eq!(DEFERRED_FORCE_TITLE_UPDATE, "force_title_update");
+        assert_eq!(DEFERRED_FORCE_TITLE_UPDATE.len(), 18);
+    }
+
+    /// **T98**：`enable_play_chat_button` 的极性 —— arm64 `0x4ca32c eor w1,w19,#1` ⇒ `!enabled`。
+    ///
+    /// 这条断言能挡住"写成 `set_disabled(enabled)`"的那类镜像错误（本项目的 `update_sprite` 漏 `k`
+    /// 就是同一类 bug，见 `docs/06` §58）。
+    #[test]
+    fn enable_play_chat_button_polarity_is_inverted() {
+        assert!(!play_chat_button_disabled(true), "enabled=true ⇒ disabled=false");
+        assert!(play_chat_button_disabled(false), "enabled=false ⇒ disabled=true");
+    }
+
+    /// **T98**：`play/chat` 按钮的节点名是 11 个 `get_node` 串表里的那一项（`观测`）；绑定是推断。
+    ///
+    /// ⚠️ `ALL_GET_NODE_NAMES` 住在 `mod node_class`（gdext 壳，`cfg(feature = "gdext-bindings")`）
+    /// ⇒ 这条断言也**只能**在打开该 feature 时跑（否则它不可见）。它同时是对 `pub use` 抬平的检查。
+    #[cfg(feature = "gdext-bindings")]
+    #[test]
+    fn play_chat_button_node_name_is_from_the_get_node_table() {
+        assert_eq!(PLAY_CHAT_BUTTON_NODE, "ChatButtonPlay");
+        assert!(
+            ALL_GET_NODE_NAMES.contains(&PLAY_CHAT_BUTTON_NODE),
+            "名字必须来自 ready 的 11 个 get_node 串表（不许另造）"
+        );
     }
 
     /// 三条宏产物 / 未定名的常量：`.text` 里的内嵌函数指针与 GOT 槽被调者。
