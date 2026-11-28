@@ -29188,3 +29188,321 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/fz_orig --mine $WT/.agent-w
 门槛/护栏/停帧表（`fixtures/frame_diff_thresholds*.txt`、`fixtures/guardrails.json`、
 `fixtures/frame_capture_freeze_plan.txt` 一个字节没改）、`docs/00` / `HANDOVER` / `README`。
 `src/graphwar_plane.rs` 与 t102 的分工已在 chat 里确认（`drive_frame` 归我、`on_resized`/`ready` 归 t102）。
+
+## 151. T103 `graphwar_backend`（22 vs 6）与 `graphwar_game_recorder`（20 vs 2）两块"缺口"的定性：**backend 的 22 条是 19 个源码函数 + 3 条 drop glue（落码 4 条，F1 2→6）**；**recorder 的 20 条里 17 条是编译器生成物 ⇒ 源码函数只有 3 条、且全部已有函数体**；`fixtures/function_coverage.tsv:414` 的 `0x4d3180` 裁决 = **名字对、桶错（F2 应为 F3），T98 的观察成立**（2026-11-28，任务 T103 / `task-96` / 分支 `agent/gap-backend-recorder`）
+
+> **判据先写死再跑**：[`fixtures/gap_backend_recorder_plan.txt`](../fixtures/gap_backend_recorder_plan.txt)（单独 commit `fb77a74`）。
+> 判据原样继承 T82 `fixtures/f3_triage_plan.txt` §1–§3（五类）+ §10 E6 `R-CALLFORM` / E7 `R-WRAP`
+> + `VOL_CAP=0x800` + T89 调用形态闸；本轮**只新增两条闸**（E-1「同名 ≠ 实现」/ E-2「常量与步骤表 ≠ 函数体」）
+> 与三处口径裁决（分母三数分开算 / `lin527=2` 的检验办法 / `0x4d3180` 的四条取证法）。
+> **逐条产物**：[`fixtures/gap_backend.tsv`](../fixtures/gap_backend.tsv)（22 行）、
+> [`fixtures/gap_recorder.tsv`](../fixtures/gap_recorder.tsv)（20 行）。
+> **名字来源**：`llvm-nm -C --defined-only --print-size --no-sort`（arm64 2.0.60 **未 strip**）——
+> ⇒ 本轮 `na:other` 的档位是**观测**（符号名逐字写着 `core::ptr::drop_in_place<…>`），
+> **不是** T82 那种"形态推断"。地址一律 ELF vaddr（RVA）。
+> ⚠️ 踩坑登记：本机 `/usr/bin/objdump` **不能反汇编 aarch64**，`objdump -d <arm64 so>` 只打印文件头、
+> **返回 0、不报错**（静默空输出）。必须 `llvm-objdump`（`tools/arm64_sym.py dis` 可用
+> `OBJDUMP=llvm-objdump` 绕过，本轮没改工具）。
+
+### 151.0 一页结论
+
+**① 两个模块的"缺口"都不是缺口表那 4 条 / 1 条**
+
+| 模块 | census `android_fns` | **源码函数** `A_src` | 其中 na | 落码状态（本轮后） | 真实待写 |
+|---|---|---|---|---|---|
+| `graphwar_backend.rs` | **22** | **19**（18 方法 + 1 闭包） | 3（drop glue） | F1 **6** / F2 6 / F3 2 / F4 5 | **7 条从零写 + 6 条要补** |
+| `graphwar_game_recorder.rs` | **20** | **3**（`new` / `save_game` / `subscribe_to_events` 闭包） | 17（drop glue） | F1 0 / F2 **3** / F3 0 / F4 0 | **0 条从零写 + 3 条要补** |
+
+⇒ 「backend 22 / recorder 20」是 **census 的地址数代理**（T98 §147 同一条教训），不是源码函数数。
+**recorder 的 `lin527 = 2` 之谜当场解开**：20 条里 **17 条**是 `drop_in_place<Vec<EventInfo>>` /
+`mpmc::*` / `RefCell<GraphwarGameRecorder>` 的实例化（**85 %**），源码函数只有 3 条；
+Linux 侧 2 条 Location 锚恰好落在其中 2 条上，第 3 条 `new` 不 panic ⇒ **本来就没有 Location**
+（`panic::Location` 只覆盖会 panic 的函数，T87 §138 的口径 caveat 在这里正好对上）。
+⇒ 任务书里「高度可疑是中方（gdext 壳/derive）占多数」的假设：**成立，而且比预想更彻底**
+（不是"gdext 壳"，是直接的 `drop_in_place` 单态化）。
+
+**② 落码 4 条**（backend 的 `setup_level` / `stop_client` / `stop_server` / `start_server`，**每处单独 commit**）：
+九条生命周期函数里最小的四条，逐指令读完、边界立起来、单测钉住守卫与调用序（见 §151.4）。
+**三条口径数字一位未动**（§151.7）：这四条在 527 分母**外**（无 Location 锚），落码只加我方函数体。
+
+**③ 顺手查出 527 台账三处假档位**（backend 全部在分子里）：
+
+| 地址 | 台账档位 | 台账落点 | 本轮裁决 | 证据 |
+|---|---|---|---|---|
+| `0x514a10` `button_pressed` | F1（`pinned=addr`） | `src/graphwar_game_client.rs:390` `on_command` | **F2** | `on_command` 只是 `"start_game"`/`"fire"` 两条命令的**真值表**；原版 324 B 还含取命令总线与键鼠分支（§151.2） |
+| `0x514b40` `subscribe_to_event` | F1（`pinned=addr`） | `src/entity_drawer.rs:3039` `fn is_kernel_event` | **F3** | `0x514b40` **只出现在** `entity_drawer.rs:3015` 的**注释**里；本模块根本没有 `fn subscribe_to_event` ⇒ 台账的 F1 是 P2 地址命中的假抬（T71 §123.5 的同一类） |
+| `0x515dc0` `process` | F2（`pinned=free-fn-name`） | `src/graphwar_game_client.rs:754` | **F3** | `game_client.rs:754` 是 **`GraphwarGameClient::process`（x86 `0x518400` / arm64 `0x40ac00`）**的循环体，与 `0x515dc0` **不是同一条原版函数**；本模块只有决策表 `process_steps` ⇒ E-1/E-2 双闸都不过 |
+
+**④ `0x4d3180`（`fixtures/function_coverage.tsv:414`）裁决：台账名对、桶错；我方**确实没有**这个函数**（§151.5）。
+
+### 151.1 分母三数分开算（plan §2）
+
+```text
+$PY=.reference/venv/bin/python
+# A_addr（census 口径，地址数）
+llvm-nm -C --defined-only --print-size --no-sort .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | grep -E 'graphwar_backend|graphwar_game_recorder'      # 22 / 22 个地址提到本模块
+$PY tools/global_triage.py --android-census                # → global_triage_modules.tsv 的 22 / 20
+# A_src（源码身份，本轮主口径）= 名字里带 graphwarrust::<mod>::<Type>::<fn> 的地址，去重后
+#   backend 19（18 方法 + 1 闭包）/ recorder 3
+# W_names（Windows early2026 COFF，**跨版本**）= backend 39 / recorder 无额外
+```
+
+`A_addr` 与 `A_src` 的差逐条可读（`fixtures/gap_*.tsv` 的 `src_kind` / `class` 两列）：
+**backend 22 − 19 = 3**、**recorder 20 − 3 = 17**，全部是 `core::ptr::drop_in_place<…>` 实例化。
+
+**`W_names` = 39 不进分母**（plan §2-3）。Windows **early2026** 的 COFF 比 2.0.60 多出 20 个方法名
+（`request_*` ×11 / `go_to_*_checkpoint` ×3 / `pause_replay` / `toggle_replay_pause` / `is_paused` /
+`advance_replay_tick` / `function_text_update` / `set_game_name` / `drop`）；这些名字在 **2.0.60 的两份构建**
+里都**没有独立符号**（arm64 `.symtab` 无、Linux 无 Location 锚）⇒ 版本差异或内联差异，本轮**证不到是哪种**，
+只登记、不据此判缺口（plan §10 L2）。⚠️ 反过来说：**`A_src` 对"源码函数数"是下界**。
+
+### 151.2 backend 22 条逐条（逐行见 `fixtures/gap_backend.tsv`）
+
+19 个源码函数里，**6 条在 527 内**（`0x514a10` / `0x514b40` / `0x514d80` / `0x514f20` / `0x5153f0` / `0x515dc0`，
+另 `0x520100` 是同一闭包的第二条 x86 shim），**13 条在分母外**（无 Location 锚）。
+落地状态（本轮后）：**F1 6 / F2 6 / F3 2 / F4 5**，逐条 `verdict` 列已写清判据。
+
+* **F1（6）**：`resubscribe_to_events`(0x514d80) / `start_client_to_replay`(0x514f20)（T95 落码）
+  + 本轮 4 条（`setup_level` 0x406b4c / `stop_client` 0x406ba4 / `stop_server` 0x406c0c / `start_server` 0x406c64）。
+* **F2（6）**：`subscribe_to_event_with_id`(0x407580) + 它的闭包(0x407688)（落了"登记 (id,name)"，闭包派发体未落）、
+  `start_client_to_local_server`(0x407848) / `start_client_to_remote_server`(0x407b9c)（落成**自由函数**，形状不是 backend 方法）、
+  `new`(0x407d08)（我方 `new()` = `Self::default()`）、`button_pressed`(0x406d3c)（只有真值表）。
+* **F3（2）**：`subscribe_to_event`(0x406e80) / `process`(0x407ef0) —— **就是台账那两处假档位**。
+* **F4（5）**：`stop_lan_broadcaster`(0x407068) / `start_lan_broadcaster`(0x407220) /
+  `get_next_clip_checkpoint`(0x40745c) / `stop_server_broker_handler`(0x4074f8) / `start_server_broker_handler`(0x4077bc)。
+
+⚠️ **F4 里有两个带前提**（写清，不是"没时间"）：
+`get_next_clip_checkpoint` 读的是**播放器对象里的第三个 `Vec<u32>`**——arm64 `0x407468 ldp x8,x9,[x0,#0x48]`
+（ptr@+0x48 / len@+0x50），而 `GraphwarReplayPlayer.checkpoints` 是 +0x30(ptr)/+0x38(len)，
+`events` 是 +0x18(ptr)/+0x20(len) ⇒ 播放器有**三个** `Vec`，第三个的字段要加在
+`src/graphwar_replay_player.rs`（**超出本轮写边界**，只登记）。
+`start/stop_lan_broadcaster` 的体里有 `close@plt` + `hashbrown::RawTable::drop` + `__rust_dealloc` 与
+`0x8000000000000001` / `0x8000000000000000` 两个哨兵值（`0x407068`–`0x4070dc`），
+**槽的表示（枚举判别 vs `Vec` cap 哨兵）本轮没读完** ⇒ 不硬落码。
+
+### 151.3 recorder 20 条逐条（逐行见 `fixtures/gap_recorder.tsv`）
+
+`A_src = 3`，三条**全部已有函数体**、**全部缺"原版那个函数边界"** ⇒ F2：
+
+| 源码函数 | arm64 / size | x86 锚 | 我方落点 | 缺什么 |
+|---|---|---|---|---|
+| `GraphwarGameRecorder::new` | `0x3d7e3c` / 840 | `0x3d5260`（527 **外**：无 Location） | `graphwar_game_recorder.rs:368` | 32 条订阅只登记**名字**，没把闭包交给 handler ⇒ 录音链路未闭环 |
+| `…::subscribe_to_events::{{closure}}` | `0x3d7b54` / 744 | **`0x3d4fa0`**（527 内，T82 判 `real-missing`） | `:440 record` / `:462 on_event_state` / `:470 on_game_state` | `subscribe_to_events` **这个边界本身**不存在；且原版闭包**先从 ModuleContainer 取 TickHandler 的 tick**，我方把 tick 当入参 |
+| `…::save_game` | `0x3d8184` / 2720 | **`0x3d5740`**（527 内，F1） | `:496` | 建目录 / 拼名 / `FileAccess::open` / `GzEncoder` 写盘这一段（本 crate 无压缩依赖；字节层由 T83 §132 在别处对拍过） |
+
+⇒ **T82 给 `0x3d4fa0` 判的 `real-missing` 本轮下调为 F2**：函数**体**在（`record` + 状态机，
+T56/T83 的 `EventInfo`/0x38 布局就在这条怀里），缺的是**边界与 tick 来源**。
+这不改变"缺口还在"的结论，只改变"缺的是什么"——按 plan §3 的 E-2，缺口算 **F2 待补**，不算"从零写 1 条"。
+
+### 151.4 落码 4 条（backend 生命周期，每处单独 commit）
+
+| # | 函数 | arm64 vaddr / size | commit | 单测 | 不显然之处（本轮新证据） |
+|---|---|---|---|---|---|
+| 1 | `setup_level` | `0x406b4c` / 88 | `31f7fab` | 2 | **守卫顺序**：先 server 槽（`0x406b50`）后 client 槽（`0x406b5c`）；末尾是**尾调用** `b 0x48297c` ⇒ 本函数不再有指令 |
+| 2 | `stop_client` | `0x406ba4` / 104 | `10e9455` | 1 | 判别字**先读**（`0x406bcc`）**后清客户端**（`0x406bd0`）⇒ 不是 `Option::take()` 那种一条表达式；与 T95 的 `start_client_to_replay` 共用 tag==2 判据 |
+| 3 | `stop_server` | `0x406c0c` / 88 | `df6b5f9` | 1 | **stop 之后重读判别字**（`0x406c34`）再决定 drop ⇒ 防二次析构（`GraphwarGameServer::stop` 的体本轮没读，只观测到判据存在） |
+| 4 | `start_server` | `0x406c64` / 216 | `62bf998` | 2 | 顺序证据 `0x406c94`(start) < `0x406c9c`(读旧判别字) < `0x406cc8`(drop 旧) ⇒ **先在栈上 new+start，再拆旧槽**；`new` 的第三个实参**恒为 0**（`0x406c88 mov w2,wzr`） |
+
+**顺带结掉一个旧标注错误**（`BackendField::STATE`）：`+0x60` 一直被写成抽象的"state/mode，4 的语义未知"。
+本轮由**三个写点**定死它是**内联 `GraphwarGameServer` 槽（0x80 字节）的判别字、4 = 槽空**：
+`stop_server` 的 `0x406c1c`/`0x406c48`、`start_server` 的 `0x406c9c`/`0x406ccc`（四组 `stp q` 把 **0x80 字节**
+整块写到 `self+0x60`，**含判别字本身** ⇒ 它只能在对象内部）、`setup_level` 的 `0x406b4c`。
+⇒ `local_client_allowed(backend_state, port)` 的真实语义是"**本机联机要求后端里已经有一个 server**"
+（与 `setup_level`/`stop_server` 同一个字段同一个值），参数名保留只为不改调用方。
+
+**档位纪律**：四条全部标 **观测**（逐指令读 arm64 + `.symtab` 真名），**没有**一条写"逐位" ——
+x86 侧这四条**无 Location 锚**，无法逐字节对拍同一函数；函数体里引用的立即数/偏移可以算逐位证据，
+"语义"不算。这与 T97 `get_media_storage_path` 的口径一致。
+
+### 151.5 `fixtures/function_coverage.tsv:414`（`0x4d3180`）的裁决：**名字对、桶错**
+
+**四条取证（plan §7 预注册，全做完才下结论）**
+
+**① 台账这一行原样**（13 列，`ours_pos` 那列是关键）：
+
+```text
+0x4d3180  graphwar_setup_control.rs::GraphwarSetupControl::process  v2唯一锚  graphwar_setup_control.rs
+  src/graphwar_game_client.rs:754  F2  free-fn-name  name-free  free-fn  multi
+  P1 未命中同类型实现，只找到自由函数同名 ⇒ F2
+  原版是 `GraphwarSetupControl::process`（类型上的方法），我方只有跨模块的同名自由函数 ⇒ 指认只能算推断
+  real-missing  —(未入 na 台账…)
+```
+
+⇒ 台账**自己**已经写着"只有跨模块的同名自由函数" ⇒ F2 的唯一支撑就是**同名**。
+按 plan E-1（同名 ≠ 实现），只要证明那个自由函数是**另一条原版函数**，F2 就塌。
+
+**② `ours_pos` 指向什么**：`src/graphwar_game_client.rs:754` = `pub fn process<L: ProcessLoop + ?Sized>(host, _delta)`，
+它的文档头逐字写着「`GraphwarGameClient::process`（x86 `0x518400`；arm64 `0x40ac00`）的循环体」，
+调用链 `GraphwarRootNode::process 0x3a5760 → GraphwarBackend::process 0x515dc0 → 本函数`。
+⇒ 这是**另一条**原版函数（`GraphwarGameClient::process`），与 `0x4d3180` 的源码身份不同 ⇒ **E-1 不通过**。
+
+**③ 真值那一头是什么**（跨构建双证）：
+
+```text
+$PY tools/addr_probe.py fde 0x4d3180
+  eh_frame  0x4d3180..0x4d6fb7  size 0x3e37           # 15927 字节
+$PY tools/addr_probe.py locs 0x4d3180
+  src/graphwar_game_client.rs   x23
+  src/graphwar_setup_control.rs x21   e.g. :532:53
+  src/graphwar_texture_loader.rs x1
+# v2 三向唯一锚（fixtures/name_to_addr_v2.tsv，键 = Location 三元组，跨构建/跨 ISA 不变）
+graphwar_setup_control  GraphwarSetupControl  process  0x4d3180  src/graphwar_setup_control.rs :100 :45
+  唯一锚  android+win+win_old  votes=21
+  keys=:100:45,:103:41,:128:45,:131:41  win_addr=0x1800de640
+# Windows 2.0.60 COFF 里那个地址的符号（demangle 后）
+_ZN133_$LT$graphwarrust..graphwar_setup_control..GraphwarSetupControl$u20$as$u20$
+  godot_core..gen..classes..control..re_export..IControl$GT$7<7 字符方法名>
+```
+
+⇒ 源码身份 = **`impl IControl for GraphwarSetupControl` 的 `process`**（引擎 `_process` 覆写，
+方法名 7 字符 = `process`）。**台账的名字是对的**（三向 Location 键 + Windows 符号表双证）。
+补充：arm64 `.symtab` 里**没有** `GraphwarSetupControl::process` 这个符号（16 条 `GraphwarSetupControl::*`
+里有 `clear_state`/`update_soldiers`/`connect_entry_buttons`/`force_title_update`/`on_*`/`is_leader_local`/
+`enable_play_chat_button`/`update_name`/`update_rank`，**没有 `process`**）⇒ 那份构建把它**内联**了；
+所以"名字怎么来的"不能靠 arm64 符号，只能靠 Location 键（v2 的 `src=android+win` 正是这样）。
+
+**④ 我方有没有承载该语义的函数体**：`src/graphwar_setup_control.rs` 里
+**没有 `fn process`**（`grep -n 'fn process' src/graphwar_setup_control.rs` = 空）；
+只有 `pub const FN_TEAM_LIST_REBUILD: u64 = 0x4d_3180`（:129）+ 4 处注释（`:15/:43/:70/:1850/:1946`）
+写着"玩家/队伍列表重建"。⇒ **常量不是函数体**（plan E-2）。
+
+**裁决（三选一里的两个维度分开给）**
+
+| 维度 | 裁决 | 依据 |
+|---|---|---|
+| **元数据（名字）** | **台账对** | ②③：v2 三向唯一锚（Location 键跨 3 份构建）+ Windows COFF 符号 `<GraphwarSetupControl as IControl>::process` |
+| **桶（F2）** | **台账错 ⇒ 应为 F3** | ①②④：`ours_pos` 是另一条原版函数的循环体（E-1 不过）+ 我方无该函数体、只有常量（E-2 不过） |
+| **T98 的"我方无 `fn process`"** | **成立** | ④；并且本轮补上一条 T98 没说的：该 `process` 是 **`impl IControl` 的 trait 方法**，不是本类型的固有方法 |
+
+⇒ 一句话：**"台账对还是我方缺" = 名字对、桶错、我方确实缺**。三选一里落**②**（台账错），
+但**不是**台账全错——错的是把"跨模块同名自由函数"当成了实现（这正是 T71 §123.5 记过的 P2 假命中家族）。
+
+**建议改法（本轮不改生成物，`fixtures/function_coverage.tsv` 是 `tools/function_coverage.py` 的产物）**：
+给判据加一条 `E-1`（同名自由函数必须**入参形状**与 oracle 对得上才算 F2，否则 F3），
+重跑后该行应落到 `F3 / free-fn-name(降级) / why=自由函数是另一条原版函数（0x518400）`。
+同一条闸会顺带修正 §151.0③ 的另外两行（`0x514a10` → F2、`0x514b40` → F3、`0x515dc0` → F3）。
+
+### 151.6 顺带推进 / 新登记的悬案
+
+1. **`+0x60` 定死**（§151.4）：内联 `GraphwarGameServer` 槽的判别字、`4 = 空`、槽 0x80 字节。
+   旧文档 `docs/16` §46 与 `src/graphwar_backend.rs` 里的"MODE/STATE"两处措辞已被本轮更正（就地改，AGENTS.md §0.6）。
+2. **`+0x00` 回放播放器槽的 tag = 2 也是"空"**（T95 只记了"2 的语义未知"）：`stop_client` 的
+   `0x406bd4 cmp x8,#2` / `0x406be8 str x8=2` 给了写入点 ⇒ 与 `process` 的 `cmp x8,#2`（`0x407f20`）是**同一判据**。
+3. **`GraphwarReplayPlayer` 有第三个 `Vec`**（`+0x40/+0x48/+0x50` = cap/ptr/len，`get_next_clip_checkpoint` 读它）——
+   现有 `graphwar_replay_player.rs` 只记了两个 `Vec`（`events` +0x10/+0x18/+0x20、`checkpoints` +0x28/+0x30/+0x38）。
+   ⇒ 那个"第三个 `Vec<u32>`"是**片段（clip）检查点**表（名字是推理：函数名 `get_next_clip_checkpoint` + 元素是 u32 + 升序二分），
+   **档位：推断**（缺一次写点实证：谁往里 push）。落码前提见 §151.2。
+4. **`0x5153f0` / `0x520100` 是同一个源码闭包的 call_once / call_mut 两个 shim**（T95 已用 vtable `0x961fa8` 定，
+   本轮复核：两者 `ours_pos` 都指 `graphwar_backend.rs:508`、名字都带 `::{{closure}}`）⇒ 527 的分子里它们是**一条**源码闭包。
+5. **`GraphwarBackend::subscribe_to_event` 的真实动作**（本轮读了 arm64 `0x406e80`–`0x406ff4`，供下一轮落码）：
+   取**全局原子计数器**（`0x8b4378` 上的 `ldxr/stxr` 自增）当事件 id → 把 `&str` 拷成 `Box<[u8]>`（`__rust_alloc(len,1)`+`memcpy`）
+   → `HashMap::insert` 进 `+0x1d8`（键 = 新 id）→ drop 旧值（含一次经 vtable 的 `blr x8`）。
+   **档位：观测**（逐指令）；`+0x1d8` 的**值类型**仍未定（只看到 `(ptr,len)` 一对）。
+
+### 151.7 三个数 + 门槛读数
+
+**三个数（分开报，复跑命令见 §151.1）—— 一位未动**（落码只加我方函数体、不给原版函数新增 Linux 地址锚，T97/T98 先例）：
+
+| 口径 | 读数 | 复跑 |
+|---|---|---|
+| A（含 na，分母 527） | **333 / 527 = 63.2 %** | `$PY tools/function_coverage.py --stats` |
+| B（剔 na，分母 438）**招牌** | **333 / 438 = 76.0 %** | 同上 |
+| 1:1（F1 只指 261 个不同我方函数） | **261 / 527 = 49.5 %** | 同上（`敏感度 R6`） |
+
+`F1 333 / F2 71 / F3 123`；`F3` 三组：缺函数边界 37 / 判不了 37 / na 49。
+本模块自己的读数（`gap` 排行里 backend/recorder 都**不在**前 8）：`graphwar_backend.rs` 6 行
+（F1 5 / F2 1 / F3 0 —— 台账口径，与本轮 §151.2 的"F3 2"差在**分母外**的 13 条不进这张表）、
+`graphwar_game_recorder.rs` 2 行（F1 1 / F3 1）。**这正是 §151.0 的要点：这两个模块的真实工作量
+在 527 台账里几乎看不见。**
+
+**门槛读数（本机实跑；基线 = `58d9238` 上同一套命令，我在临时工作树里量过 `1634/0/1`）**
+
+| 门槛 | 读数 | 与基线 | 复跑 |
+|---|---|---|---|
+| `cargo test --offline` | **1640 / 0 / 1ignored** | 1634 ⇒ **+6**（本轮 6 条单测，一条没删） | `cargo test --offline` |
+| `cargo test --offline --features gdext-bindings` | **1795 / 0 / 1ignored** | 1789 ⇒ **+6** | 同上加 feature |
+| `coverage_matrix.py --check` | **OK**（`src_fns` 4125→4135） | 生成物已重跑 | `COVERAGE_MATRIX_UPSTREAM=…/.reference/upstream $PY tools/coverage_matrix.py --check` |
+| `boundary_audit.py --check` | **mismatch 0**（match 441） | 一致 | `$PY tools/boundary_audit.py --check` |
+| `check_doc_refs.py` | **rc=0** | 一致 | `python3 tools/check_doc_refs.py` |
+| `docsec.py check docs/06` | **通过**（145 节 → 146 节，断号仅历史 [43,89]） | 一致 | `python3 tools/docsec.py check docs/06-verification.md` |
+| 三轴 `fire` | 结算批 1080 / **内容命中 647** | 一致（`--check-baseline`「全部一致」） | `replay_attrib --drive fire` + `bit_exact_attrib.py --axis fire` |
+| 三轴 `batch` | 结算批 1080 / **内容命中 647** | 一致 | `replay_attrib --drive batch` + `--axis batch` |
+| 三轴 `batch_conv` | 结算批 1080 / **内容命中 637**（59.0%） | 一致 | `batch_conv --policy strict --drive batch` + `--axis batch_conv` |
+
+⚠️ **踩坑登记（"改了但没生效"家族，新的一条）**：为了量基线，我在 `.agent-work/` 里开了一个
+`git worktree`（`58d9238`）并让它**共用** `CARGO_TARGET_DIR`。结果两个工作树的测试二进制
+**互相覆盖**：本分支第一次跑出 `1636`（既不是基线 1634、也不是正确的 1640）。
+`touch src/lib.rs` 强制重建后才是 **1640 = 1634 + 6**。
+⇒ **量基线要单独一个 target 目录，或者量完立刻删 worktree + 强制重建**，否则条数会被污染。
+（`ls -la` 那个 `0` 字节结果文件、以及"跑了两分钟什么都没出"都是同一个原因的症状。）
+
+### 151.8 遗留 / 下一轮（写清缺什么，不许"大概是没时间"）
+
+1. **backend 剩 7 条从零写**：`subscribe_to_event`(0x406e80，动作已读出，见 §151.6-5，只差"值类型"这一步)、
+   `process`(0x407ef0 / x86 0x515dc0 / 0x5a9 字节，超 VOL_CAP，需要读 7 个 Location 行对应的 4 次 `get_module`)、
+   `stop_lan_broadcaster` / `start_lan_broadcaster`（槽表示没读完）、
+   `get_next_clip_checkpoint`（要动 `graphwar_replay_player.rs`）、
+   `stop_server_broker_handler`(0x4074f8，**已经读通**：`broker.stop()` → `Arc` 强计数减 → `RawTable::drop` → 写 0，
+   下一轮可直接落)/ `start_server_broker_handler`(0x4077bc)。
+2. **backend 6 条要补**：`new`(488 B 建容器/广播者/房间名 13 B)、`button_pressed`(命令总线)、
+   `subscribe_to_event_with_id` 的**闭包派发体**、两条 `start_client_to_*`（把自由函数改成 backend 方法要动
+   `graphwar_game_client.rs` 的调用方 ⇒ 越界）、`process`（同上）。
+3. **recorder 3 条要补**（§151.3 表）：①闭包 tick 取数要 `ModuleContainer::get_module_wk::<TickHandler>`；
+   ②`subscribe_to_events` 要 handler 收 boxed 闭包（现在 `subscribe_to_event` 只收名字）；
+   ③`save_game` 的写盘段要 gzip（本 crate 无依赖）。三条都要动别的模块的接口 ⇒ 本轮只登记。
+4. **`function_coverage.py` 的 E-1 闸**（§151.5 建议改法）：改了才修得了 §151.0③ 三行；
+   改判法必须像 T82 那样**先预注册**。
+5. **`global_triage_modules.tsv` 的 backend 行是 T96 快照**（`lin_F3=4`）：今天 `function_coverage.tsv` 里
+   backend 的 6 行已全 F1/F2（T95 落码 + T87 定名）⇒ **527 内 F3 = 0**。本轮**没重跑**那张表（不在写边界），
+   下一轮任何一次 `--android-census` 重跑都会自动对齐；引用那张表时**先复算**。
+
+### 151.9 本轮改了哪些文件
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `fixtures/gap_backend_recorder_plan.txt` | 新增 | **预注册**（先 commit `fb77a74`） |
+| `fixtures/gap_backend.tsv` / `fixtures/gap_recorder.tsv` | 新增（22 / 20 行） | 逐条定性（`ae92968`） |
+| `src/graphwar_backend.rs` | +4 个方法体、+1 个 `ServerSlot`、+3 个步骤枚举、+2 个槽判别常量、+6 条单测；**改** `BackendField::STATE` 与 `local_client_allowed` 的注释 | 4 个 commit（`31f7fab` / `10e9455` / `df6b5f9` / `62bf998`） |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑生成物（`src_fns` 4125 → 4135、`src_tree_sha256` 更新） | 不是手改 |
+| `docs/06-verification.md` | 追加本节 | 不动既有节 |
+| **没动** | `src/graphwar_game_recorder.rs`（本轮只读：3 条都缺边界，硬写要越界）、`src/graphwar_setup_control.rs`（只读核台账）、`src/graphwar_replay_player.rs`、`src/_scaffold/**`、`client/**`、`tests/` 既有断言、`fixtures/function_coverage.tsv`、`fixtures/boundary_audit.tsv`、`fixtures/global_triage*.tsv`、`fixtures/f3_triage.tsv`、`docs/00`/`02`/`16`/HANDOVER/README、门槛/护栏文件 | 只读引用 |
+
+### 151.10 补记（同一分支续做：第 5 条落码 + 两条新证据）
+
+**落码 5/5：`subscribe_to_event`（arm64 `0x406e80` / 488 B；x86 **`0x514b40`** / FDE `0x1d7`）**
+——把 §151.0③ 里那条**假 F1**（落点只是 `entity_drawer.rs:3015` 的注释）补成真函数体。
+这不改任何数字（它本来就在分子里），改的是"分子站不站得住"。逐指令注释在函数体上方，`0x406fd0` 之后
+直接 epilogue ⇒ **返回值就是被调者（`subscribe_to_event_with_id`）的返回值**。
+
+**两条新证据（比落码本身更值钱，下一轮直接用）**
+
+1. **订阅 id 不是线上 tag，是"分配"出来的**：`0x406e84 adrp 0x8b4000` + `0x406eb8 add #0x378`
+   ⇒ `0x8b4378` 是一个**全局原子计数器**，`0x406ebc ldxr` / `0x406ec0 add w9,w22,#1` / `0x406ec4 stxr`
+   = `fetch_add(1)` 且**返回旧值**。⇒ `+0x1d8` 的键（T95 记作"事件 id"）是**订阅 id**。
+2. **表项是 4 个字，不是"只有名字"**：`0x406f2c stp x20,x26,[sp,#0x28]` + `0x406f30 a903e7f4`
+   （存 `x20`=name_len / `x26`=刚 alloc 的名字缓冲 / `x25`=arg3） + `0x406f34 f90027f8`（存 `x24`=arg4）
+   ⇒ 值是 `(name: Box<[u8]>, arg3, arg4)`。**arg3/arg4 的类型本轮没读出**——最大可能是
+   `Box<dyn FnMut>` 的胖指针（数据 + vtable），旁证是 `0x406f78 ldr x8,[x25]` + `0x406f7c blr x8`
+   那次"drop 旧值"的调用形态。
+   ⇒ **T95 把 `+0x1d8` 的值建模成 `String` 是简化、不是结论**；要修就得同时改
+   `resubscribe_to_events` / `subscribe_to_event_with_id` 的建模与它们的单测（本轮**没动**，
+   因为那会把 T95 的三条已落码函数一并改签名，超出"补一条函数体"的范围）。
+
+**落地状态（更新 §151.0① 的 backend 行）**：F1 **7** / F2 6 / F3 **1** / F4 5
+⇒ **真实待写 = 6 条从零写 + 6 条要补**（上一版是 7 + 6）。剩的 F3 只有 `process`（0x407ef0 / x86 `0x515dc0`，
+0x5a9 字节、7 个 Location 行、4 次 `get_module`，超本轮 VOL_CAP）。
+
+**门槛（第 5 条落码后重跑）**：`cargo test --offline` **1642 / 0 / 1ignored**（基线 1634 ⇒ **+8**，
+= 6 条生命周期单测 + 2 条本函数单测）；`coverage_matrix.py --check` **OK**（`src_fns` 4135→4138）；
+其余门槛（gdext / 三轴 / boundary_audit / check_doc_refs / docsec）与 §151.7 相同、未退。
+**三个数仍一位未动**：A `333/527 = 63.2 %`、B `333/438 = 76.0 %`、1:1 `261/527 = 49.5 %`（`--stats` 复算）。
+
+**HEAD 复查（`f1e55d8` + `77fde89` 之后，全部重跑一遍，数字都是本机实跑）**：
+`cargo test --offline` **1642 / 0 / 1ignored**（基线 1634 ⇒ **+8**）；
+`cargo test --offline --features gdext-bindings` **1797 / 0 / 1ignored**（基线 1789 ⇒ **+8**）；
+`coverage_matrix.py --check` **OK**（`src_fns` 4138）；`boundary_audit.py --check` **match 441 / mismatch 0**；
+`check_doc_refs.py` **rc=0**；`docsec.py check docs/06` **通过**（146 节 / 范围 1..148 / 仅历史断号 [43,89]）；
+三轴 **fire 647 / batch 647 / batch_conv 637**，三条 `bit_exact_attrib.py --check-baseline` 全部
+「**校验结果：全部一致**」。**三个数一位未动**：A `333/527 = 63.2 %`、B `333/438 = 76.0 %`（招牌）、
+1:1 `261/527 = 49.5 %`。

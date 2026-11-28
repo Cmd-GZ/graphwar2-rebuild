@@ -121,11 +121,26 @@ pub const LOCATIONS: &[(u32, u32)] = &[
 pub struct BackendField;
 
 impl BackendField {
-    /// `u64`：模式/标记。`process` 里 `cmp x8,#2`（arm64 `0x407f20`）决定要不要跑回放播放器。
-    /// 2 的语义**未知**（只有"==2 就跳过 ReplayPlayer::process"这一条观测）。
+    /// `u64`：**回放播放器槽的判别字**（槽本体 `+0x00..0x60`）。
+    ///
+    /// T103 定死（此前只写"模式/标记，2 的语义未知"）：
+    /// * `stop_client` 收尾 `0x406bd4 ldr x8,[x19]` / `cmp x8,#2` / `b.eq` ⇒ **2 = 槽空**，
+    ///   `0x406be8 str x8(=2),[x19]` 把槽清成"空"；
+    /// * `stop_client` 中间 `0x406be0 bl drop_in_place<GraphwarReplayPlayer>`（实参 = `self+0x00`）
+    ///   ⇒ `+0x00` 起就是播放器对象本体，判别字与对象首字段共址；
+    /// * `process` 里 `cmp x8,#2`（arm64 `0x407f20`）决定要不要跑 `ReplayPlayer::process`
+    ///   = **同一个判据**（槽空就跳过），不是另一个"MODE"语义。
     pub const MODE: usize = 0x00;
-    /// `u64`：`start_client_to_local_server` 的入口守卫，`==4` 直接返回
-    /// （`0x407864 cmp x8,#4; b.eq`）。4 的语义**未知**。
+    /// `+0x60`：**内联 `GraphwarGameServer` 槽的判别字**（槽本体 `+0x60..0xe0`，0x80 字节）。
+    ///
+    /// ⚠️ **T103 更正**：旧注释把它叫 `STATE`（"`start_client_to_local_server` 的入口守卫，4 的语义未知"）。
+    /// 本轮由三个写点定死它是 server 槽的判别字、**4 = 槽空**：
+    /// * `stop_server` `0x406c1c ldr x8,[x19,#0x60]!` + `cmp x8,#4` ⇒ 空就直接返回；
+    ///   `0x406c48 str x8(=4),[x19]` 清空；`0x406c40 bl drop_in_place<GraphwarGameServer>`（实参 `self+0x60`）；
+    /// * `start_server` `0x406c9c` 同一处 pre-index 读判别字、`0x406cc8` drop 旧 server、
+    ///   `0x406ccc`–`0x406ce8` 把 **0x80 字节**整块写进 `self+0x60`（四组 `stp q`，含判别字本身）；
+    /// * `setup_level` `0x406b4c ldr x8,[x0,#0x60]!` + `cmp x8,#4` ⇒ 没有 server 就返回。
+    /// ⇒ 一个字段被 0x80 字节对象覆盖 ⇒ 它**在对象内部**，只能是枚举判别字。
     pub const STATE: usize = 0x60;
     /// LAN 广播者**内联**在这里（`process` 里 `add x0,x22,#0x110` 后直接调
     /// `GraphwarLanBroadcasterV::process`）。
@@ -301,6 +316,12 @@ impl ClientTarget {
 /// （`0x407870 tbz w0,#0`）。
 ///
 /// ⇒ 本机联机**必须先起服务端**；端口是现取的，不是常量。
+///
+/// ⚠️ **T103 更正第一个实参的名字**：`+0x60` 不是抽象的"state"，它是**内联
+/// `GraphwarGameServer` 槽的判别字**、`4 = 槽空`（三个写点见 [`BackendField::STATE`]）。
+/// ⇒ 这条守卫的真实语义是"**本机联机要求后端里已经有一个 server**"，
+/// 与 `setup_level`/`stop_server` 用的是**同一个字段同一个值**。
+/// 参数名保留 `backend_state` 只为不改调用方；语义按上面这条读。
 pub const fn local_client_allowed(backend_state: u64, server_port: Option<u16>) -> bool {
     backend_state != 4 && server_port.is_some()
 }
@@ -415,6 +436,11 @@ pub struct GraphwarBackend {
     pub subscriptions: std::collections::BTreeMap<u32, String>,
     /// `+0x1e0`：`Option<GraphwarGameClient>`（内联）。
     pub client: Option<ReplayClientSlot>,
+    /// `+0x60`：内联 `GraphwarGameServer` 槽（0x80 字节；判别字 4 = 空，见 [`BackendField::STATE`]）。
+    ///
+    /// T103 落码 `setup_level` / `start_server` / `stop_server` 时装它；
+    /// 槽里只有 [`ServerSlot`] 记的那三件事有指令证据。
+    pub server: Option<ServerSlot>,
     /// `start_client_to_replay` 造出来的 `SocketAddr`（`([::1], 端口)`；见 [`REPLAY_CLIENT_ADDR`]）。
     pub client_addr: Option<([u8; 16], u16)>,
 }
@@ -453,10 +479,281 @@ pub enum ReplayStartStep {
     GoToNextCheckpoint,
 }
 
+/// 订阅 id 的全局分配器 —— 原版是 `.data`/`.bss` 里 `0x8b4378` 那个原子计数器
+/// （arm64 `0x406e84 adrp 0x8b4000` + `0x406eb8 add #0x378` + `0x406ebc ldxr` / `0x406ec4 stxr`）。
+///
+/// ⚠️ **初值未知**：没有查到它在哪初始化（是否由某个构造器写 0）⇒ 只保证"每次调用 +1"，
+/// 不保证第一个 id 是 0。单测因此只断言**相对**关系。
+static NEXT_SUBSCRIPTION_ID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// 内联 `GraphwarGameServer` 槽（`BackendField::STATE` = `+0x60`，0x80 字节）里**我方建模**的那部分。
+///
+/// 只有 `GraphwarGameServer::new` 的实参与"`start()` 是否已调用"两件事有指令证据：
+/// arm64 `0x406c8c bl GraphwarGameServer::new`（实参 `w1`,`w2`,`wzr`）、`0x406c94 bl …::start`。
+/// 槽里其余字节（0x80 − 12）本轮**没有**读出来 ⇒ 不建模（AGENTS.md §0.3：不猜）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerSlot {
+    /// `GraphwarGameServer::new(w1, w2, wzr)` 的前两个实参（arm64 `0x406c80`–`0x406c88`：
+    /// `mov w0,w1` / `mov w1,w2` / `mov w2,wzr` ⇒ **第三个实参恒为 0**）。
+    pub arg0: u32,
+    pub arg1: u32,
+    /// `start()` 在**搬进槽之前**就调过了（`0x406c94` 在 `0x406ccc` 的整块写入之前）。
+    pub started: bool,
+}
+
+/// 槽空的判别字（`+0x00` 回放播放器槽 = `2`、`+0x60` 服务器槽 = `4`）。
+///
+/// 值来自指令立即数（`0x406be8 mov w8,#0x2` / `0x406c48 mov w8,#0x4`），
+/// 不是猜的；`==2`/`==4` 的比较点见 [`BackendField::MODE`] / [`BackendField::STATE`]。
+pub const PLAYER_SLOT_EMPTY: u32 = 2;
+pub const SERVER_SLOT_EMPTY: u32 = 4;
+
+/// `setup_level`（arm64 `0x406b4c` / 88 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupLevelStep {
+    /// `GraphwarGameClient::wait_for_players`（arm64 `0x406b80 bl 0x4094ec`）。
+    WaitForPlayers,
+    /// `GraphwarGameServer::setup_level`（arm64 `0x406b9c` 的**尾调用** `b 0x48297c`）。
+    ServerSetupLevel,
+}
+
+/// `stop_client`（arm64 `0x406ba4` / 104 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopClientStep {
+    /// `GraphwarGameClient::disconnect`（`0x406bc0 bl 0x4087fc`）。
+    DisconnectClient,
+    /// `drop_in_place<GraphwarGameClient>`（`0x406bc8 bl 0x417758`）。
+    DropClient,
+    /// `drop_in_place<GraphwarReplayPlayer>`（`0x406be0 bl 0x417b84`，实参 `self+0x00`）。
+    DropPlayer,
+}
+
+/// `stop_server`（arm64 `0x406c0c` / 88 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopServerStep {
+    /// `GraphwarGameServer::stop`（`0x406c2c bl 0x482e74`，实参 `self+0x60`）。
+    StopServer,
+    /// `drop_in_place<GraphwarGameServer>`（`0x406c40 bl 0x4178dc`）。
+    DropServer,
+}
+
+/// `start_server`（arm64 `0x406c64` / 216 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartServerStep {
+    /// `GraphwarGameServer::new(w1, w2, 0)`（`0x406c8c bl 0x482cc4`），对象建在**栈上**。
+    NewServer,
+    /// `GraphwarGameServer::start`（`0x406c94 bl 0x483090`），也在栈上、**先**于搬移。
+    StartServer,
+    /// 旧槽非空 ⇒ `drop_in_place<GraphwarGameServer>`（`0x406cc8 bl 0x4178dc`）。
+    DropOldServer,
+}
+
 impl GraphwarBackend {
     /// 空后端。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// `subscribe_to_event` —— **原版 arm64 `0x406e80` / 488 字节**（x86 **`0x514b40`** / FDE `0x1d7`）。
+    ///
+    /// 逐指令（arm64 `0x406e80..0x407000` 主路径；`0x407000` 之后是 panic/cleanup 垫片）：
+    ///
+    /// ```text
+    /// 0x406e84  adrp x8,0x8b4000 / 0x406eb8 add x8,x8,#0x378   ; x8 = 0x8b4378：**全局原子计数器**
+    /// 0x406ebc  ldxr w22,[x8] / 0x406ec0 add w9,w22,#1 / 0x406ec4 stxr
+    ///                                                          ; **返回旧值**（fetch_add）⇒ 本次订阅 id
+    /// 0x406ecc  ldr x19,[x23,#0x1d8]                            ; 订阅登记表 = Rc<RefCell<HashMap<…>>>
+    /// 0x406ed0  ldr x8,[x19,#0x10] / 0x406ed4 cbnz 0x406ff4     ; RefCell 借用标记 ≠ 0 ⇒ 走
+    ///                                                            ;   panic_already_borrowed（0x406ffc，Location 0x8526f8）
+    /// 0x406edc  str x8(=-1),[x19,#0x10]                          ; borrow_mut
+    /// 0x406ee0  tbz x20,#0x3f  / 0x406f0c bl __rust_alloc        ; Box<[u8]>：alloc(len, align 1)
+    /// 0x406f20  bl memcpy                                        ;   把 &str 拷进去
+    /// 0x406f2c  stp x20,x26,[sp,#0x28] / a903e7f4 / f90027f8     ; 表项 = (name len, name ptr, x25, x24)
+    /// 0x406f48  bl HashMap::insert(table+0x18, id, &entry)       ; 键 = 上面那个 id
+    /// 0x406f4c..0x406f90  drop 旧值（含一次经 vtable 的 `blr x8` + `__rust_dealloc`）
+    /// 0x406f94..0x406fac  恢复 borrow
+    /// 0x406fb0  ldr x8,[x23,#0x1e0] / 0x406fcc csel x1,xzr,x9,eq  ; x1 = Option<&mut client>（槽空则 null）
+    /// 0x406fc4  mov w4,w22                                       ; 第 5 个实参 = id
+    /// 0x406fd0  bl 0x407580                                      ; **subscribe_to_event_with_id**(self, client, name, id)
+    /// 0x406fd0 之后直接 epilogue ⇒ **返回值就是被调者的返回值**
+    /// ```
+    ///
+    /// ⇒ 语义：**给这条事件分配 id（全局计数器自增）→ 登记进 `+0x1d8` 的表 → 转给
+    /// [`Self::subscribe_to_event_with_id`] 去真正订到 handler 上**。
+    /// 三个不显然的点（本轮新证据）：
+    /// 1. **id 不是线上 tag**：它由 `0x8b4378` 的全局原子计数器**分配**（`fetch_add`），
+    ///    与 `Event::wire_tag()` 无关 —— T95 把 `+0x1d8` 的键当"事件 id"是对的，但它是**分配来的**；
+    /// 2. **表项是 4 个字**（`x2/x3/x4` 三个实参 + name）：`0x406f2c`–`0x406f38` 连续存
+    ///    `(name_len, name_ptr, x25=arg3, x24=arg4)` ⇒ 值与"只有名字"不同，本轮**没有**读出
+    ///    arg3/arg4 的类型（落在 vtable 里的可能性最大：`0x406f90` 那次 `blr x8` 是 drop 旧值）；
+    /// 3. 借用冲突走的是 `panic_already_borrowed`（`0x406ffc` + Location `0x8526f8`）⇒ 整段在
+    ///    一个 `borrow_mut` 里，**不是**逐条 `RefCell` 操作。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）；`+0x1d8` 的值类型本轮只建模成 `String`（沿用 T95 的简化），
+    /// **不是**结论。计数器的**初值未知**（是否在别处初始化没查）⇒ 单测只断言"每次 +1"的相对关系，
+    /// 不断言绝对 id。
+    pub fn subscribe_to_event(&mut self, name: &str) -> bool {
+        // 0x406ebc..0x406ec4：全局原子计数器，返回旧值 = 本次订阅 id
+        let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        // 0x406f48：登记进 +0x1d8 的表（键 = id）
+        self.subscriptions.insert(id, name.to_string());
+        // 0x406fd0：转给 subscribe_to_event_with_id（返回值原样透出）
+        self.subscribe_to_event_with_id(name, id)
+    }
+
+    /// `setup_level` —— **原版 arm64 `0x406b4c` / 88 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `llvm-objdump`，`0x406b4c..0x406ba4`）：
+    ///
+    /// ```text
+    /// 0x406b4c  ldr  x8,[x0,#0x60]!      ; 前索引：x0 += 0x60，x8 = [self+0x60]（server 槽判别字）
+    /// 0x406b50  cmp  x8,#0x4
+    /// 0x406b54  b.eq 0x406ba0            ; 没有 server ⇒ 直接 ret（连栈帧都不建）
+    /// 0x406b58  ldr  x8,[x0,#0x180]      ; x0 已是 self+0x60 ⇒ 读 [self+0x1e0] = 内联客户端槽
+    /// 0x406b5c  cbz  x8,0x406ba0         ; 没有客户端 ⇒ ret
+    /// 0x406b70  mov  x19,x0              ; x19 = self+0x60 = &server
+    /// 0x406b74  add  x0,x0,#0x180        ; x0 = self+0x1e0 = &client
+    /// 0x406b78  mov  x20,x2 / 0x406b7c mov x21,x1   ; 实参 a,b 存到 callee-saved
+    /// 0x406b80  bl   0x4094ec            ; GraphwarGameClient::wait_for_players(&client, a, b)
+    /// 0x406b84  mov  x0,x19 / x1=x21 / x2=x20       ; 换成 &server 与同一对实参
+    /// 0x406b9c  b    0x48297c            ; **尾调用** GraphwarGameServer::setup_level(&server, a, b)
+    /// ```
+    ///
+    /// ⇒ 语义：**两个前置守卫（server 非空、client 非空）→ 让客户端等玩家 → 转给服务端**。
+    /// 守卫顺序也是证据（先 server 后 client：`0x406b50` 在 `0x406b5c` 之前）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令读出，两侧名字由 arm64 `.symtab` 给出）。
+    /// 不声称"逐位"：x86 侧没有锚，无法逐字节对拍同一函数；`wait_for_players` 的**语义**
+    /// （阻塞轮询，见 `graphwar_game_client` 的 `0x516fd0`）不在本函数体内。
+    pub fn setup_level(&mut self, arg0: u32, arg1: u32) -> Vec<SetupLevelStep> {
+        let mut steps = Vec::new();
+        // 0x406b50：cmp x8,#4 —— server 槽空就直接返回（此时 `arg0/arg1` 一个都不用）
+        if self.server.is_none() {
+            return steps;
+        }
+        // 0x406b58：ldr x8,[self+0x1e0] / cbz —— client 槽空也直接返回
+        if self.client.is_none() {
+            return steps;
+        }
+        let _ = (arg0, arg1); // 两个实参原样透传（0x406b78/0x406b7c → 0x406b88/0x406b8c）
+        steps.push(SetupLevelStep::WaitForPlayers); // 0x406b80
+        steps.push(SetupLevelStep::ServerSetupLevel); // 0x406b9c（尾调用 ⇒ 本函数不再有指令）
+        steps
+    }
+
+    /// `stop_client` —— **原版 arm64 `0x406ba4` / 104 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `0x406ba4..0x406c0c`）：
+    ///
+    /// ```text
+    /// 0x406bb0  ldr  x8,[x0,#0x1e0]      ; 内联客户端槽（niche：0 = None）
+    /// 0x406bb8  cbz  x8,0x406bcc         ; 客户端为空 ⇒ 跳过 disconnect+drop
+    /// 0x406bc0  bl   0x4087fc            ; GraphwarGameClient::disconnect(&self.client)
+    /// 0x406bc8  bl   0x417758            ; drop_in_place<GraphwarGameClient>(&self.client)
+    /// 0x406bcc  ldr  x8,[x19]            ; 回放播放器槽判别字（self+0x00）
+    /// 0x406bd0  str  xzr,[x19,#0x1e0]    ; self.client = None
+    /// 0x406bd4  cmp  x8,#0x2
+    /// 0x406bd8  b.eq 0x406be4            ; 槽已经是空的（2）⇒ 不要再 drop
+    /// 0x406be0  bl   0x417b84            ; drop_in_place<GraphwarReplayPlayer>(self+0x00)
+    /// 0x406be8  str  x8(=2),[x19]        ; 判别字写 2 = 空
+    /// ```
+    ///
+    /// ⇒ 语义：**先拆客户端（disconnect + drop），再拆回放播放器；两个槽最后都变空**。
+    /// 注意判别字**先读**（`0x406bcc`）**后写**（`0x406bd0`）—— 读的顺序对"drop 前先判"没有影响，
+    /// 但说明这两件事在源码里是相邻的两段，不是 `Option::take()` 那种一条表达式（`take` 只会读一次）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。x86 侧无锚 ⇒ 不能逐位对拍。
+    pub fn stop_client(&mut self) -> Vec<StopClientStep> {
+        let mut steps = Vec::new();
+        // 0x406bb8：客户端为空就跳过整段
+        if self.client.is_some() {
+            steps.push(StopClientStep::DisconnectClient); // 0x406bc0
+            steps.push(StopClientStep::DropClient); // 0x406bc8
+            self.client = None; // 0x406bd0
+        }
+        // 0x406bd4：播放器槽判别字 == 2（空）就不 drop
+        if self.replay_slot_tag != PLAYER_SLOT_EMPTY {
+            steps.push(StopClientStep::DropPlayer); // 0x406be0
+            self.replay = None;
+        }
+        self.replay_slot_tag = PLAYER_SLOT_EMPTY; // 0x406be8
+        steps
+    }
+
+    /// `stop_server` —— **原版 arm64 `0x406c0c` / 88 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `0x406c0c..0x406c58`）：
+    ///
+    /// ```text
+    /// 0x406c1c  ldr  x8,[x19,#0x60]!     ; x19 += 0x60；x8 = server 槽判别字
+    /// 0x406c20  cmp  x8,#0x4
+    /// 0x406c24  b.eq 0x406c44            ; 已经是空的（4）⇒ 只写一次 4 就 ret
+    /// 0x406c2c  bl   0x482e74            ; GraphwarGameServer::stop(&self.server)
+    /// 0x406c34  ldr  x8,[x19]            ; **stop 之后重读**判别字（stop 可能自己把它写成 4）
+    /// 0x406c38  cmp  x8,#0x4
+    /// 0x406c3c  b.eq 0x406c44            ; 变成 4 了 ⇒ 不再 drop_in_place（避免二次析构）
+    /// 0x406c40  bl   0x4178dc            ; drop_in_place<GraphwarGameServer>(self+0x60)
+    /// 0x406c48  str  x8(=4),[x19]        ; 判别字写 4 = 空
+    /// ```
+    ///
+    /// ⇒ 语义：**有 server 才停；stop 之后按"新判别字"决定要不要 drop**（这条二次判据是本函数的
+    /// 不显然之处，`stop` 自己可能把槽清空 ⇒ 不允许重复 drop）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。"`stop` 会不会自己清空"本轮**没有**读 `0x482e74` 的体
+    /// ⇒ 双判据的**必要性**是观测，**怎么发生**的未知。
+    pub fn stop_server(&mut self) -> Vec<StopServerStep> {
+        let mut steps = Vec::new();
+        // 0x406c20：空槽直接返回（`0x406c48` 的写入是幂等的，这里不重复推步骤）
+        if self.server.is_none() {
+            self.server = None; // 幂等：相当于 0x406c48 写 4
+            return steps;
+        }
+        steps.push(StopServerStep::StopServer); // 0x406c2c
+        // 0x406c34：stop 之后**重读**判别字
+        if self.server.is_some() {
+            steps.push(StopServerStep::DropServer); // 0x406c40
+        }
+        self.server = None; // 0x406c48
+        steps
+    }
+
+    /// `start_server` —— **原版 arm64 `0x406c64` / 216 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `0x406c64..0x406d00`，主路径）：
+    ///
+    /// ```text
+    /// 0x406c64..0x406c78  sub sp,#0x130 / 存 x29,x30,x28,x20,x19   ; 0x100 字节栈区留给 server 对象
+    /// 0x406c80  mov  w0,w1 / 0x406c84 mov w1,w2 / 0x406c88 mov w2,wzr
+    /// 0x406c8c  bl   0x482cc4            ; GraphwarGameServer::new(a, b, 0) → 写到 [sp]
+    /// 0x406c90  mov  x0,sp / 0x406c94 bl 0x483090   ; GraphwarGameServer::start(&mut on-stack)
+    /// 0x406c9c  ldr  x8,[x19,#0x60]!     ; x19 += 0x60；读旧槽判别字（**在 new+start 之后**）
+    /// 0x406ca8  cmp  x8,#0x4
+    /// 0x406ca8..0x406cc0 四组 ldp/stp 把栈上 0x80 字节重排到 [sp+0x80..0x100]
+    /// 0x406cc0  b.eq 0x406ccc            ; 旧槽空 ⇒ 不 drop
+    /// 0x406cc8  bl   0x4178dc            ; drop_in_place<GraphwarGameServer>(self+0x60)
+    /// 0x406ccc..0x406ce8 四组 ldp/stp 把 0x80 字节写进 self+0x60..0xe0（含判别字）
+    /// ```
+    ///
+    /// ⇒ 语义：**先在栈上 `new` + `start`，再（必要时）拆旧槽，最后整块 0x80 字节装进去**。
+    /// 顺序是证据：`0x406c94`（start）**先于** `0x406c9c`（读旧判别字）与 `0x406cc8`（drop 旧槽）
+    /// ⇒ 新 server 建好之后才动旧的（`start` 失败/panic 时旧槽仍完好）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。对象 0x80 字节我方只建模 `new` 的两个实参 + `started` 标志；
+    /// 其余字节没读出来。
+    pub fn start_server(&mut self, arg0: u32, arg1: u32) -> Vec<StartServerStep> {
+        let mut steps = Vec::new();
+        steps.push(StartServerStep::NewServer); // 0x406c8c
+        steps.push(StartServerStep::StartServer); // 0x406c94
+        if self.server.is_some() {
+            // 0x406ca8：cmp x8,#4 —— 旧槽非空才 drop（顺序在 new+start 之后）
+            steps.push(StartServerStep::DropOldServer); // 0x406cc8
+        }
+        self.server = Some(ServerSlot {
+            arg0,
+            arg1,
+            started: true,
+        }); // 0x406ccc..0x406ce8
+        steps
     }
 
     /// `resubscribe_to_events`（x86 **`0x514d80`** / FDE `0x112`；arm64 `0x407114`）。
@@ -571,6 +868,182 @@ impl GraphwarBackend {
         }
         steps.push(ReplayStartStep::GoToNextCheckpoint);
         steps
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    //! T103 落码的四条生命周期函数（`setup_level` / `stop_client` / `stop_server` / `start_server`）。
+    //!
+    //! **期望值来源**：全部来自 arm64 反汇编里读出来的**分支条件与调用点顺序**
+    //! （`llvm-objdump -d --start-address=0x406b4c --stop-address=0x406d3c <arm64 so>`），
+    //! **不来自**我方实现的输出（AGENTS.md §0.5）。
+    use super::*;
+
+    /// `0x406be8 mov w8,#0x2` / `0x406c48 mov w8,#0x4`：两个槽的"空"判别字。
+    /// 契约断言（不含语义）：钉住常量与指令立即数的对应关系。
+    #[test]
+    fn empty_slot_tags_match_the_instruction_immediates() {
+        assert_eq!(PLAYER_SLOT_EMPTY, 2, "0x406be8 mov w8,#0x2；0x406bd4 cmp x8,#0x2");
+        assert_eq!(SERVER_SLOT_EMPTY, 4, "0x406c48 mov w8,#0x4；0x406c20 cmp x8,#0x4");
+    }
+
+    /// `setup_level` 的两道守卫，**顺序**是被测点（arm64 先 server `0x406b50` 后 client `0x406b5c`）。
+    #[test]
+    fn setup_level_requires_server_then_client() {
+        // ① 没有 server：即使 client 在也直接返回（0x406b54 b.eq）
+        let mut b = GraphwarBackend::new();
+        b.client = Some(ReplayClientSlot::default());
+        assert!(b.setup_level(1, 2).is_empty(), "server 槽空 ⇒ 不建栈帧就 ret");
+
+        // ② 有 server、没有 client：也返回（0x406b5c cbz）
+        let mut b = GraphwarBackend::new();
+        b.server = Some(ServerSlot { arg0: 0, arg1: 0, started: true });
+        assert!(b.setup_level(1, 2).is_empty(), "client 槽空 ⇒ ret");
+
+        // ③ 两个都在：先 wait_for_players（0x406b80），再尾调用 server.setup_level（0x406b9c）
+        b.client = Some(ReplayClientSlot::default());
+        assert_eq!(
+            b.setup_level(1, 2),
+            vec![SetupLevelStep::WaitForPlayers, SetupLevelStep::ServerSetupLevel],
+            "顺序 = 调用点地址顺序 0x406b80 → 0x406b9c"
+        );
+    }
+
+    /// `stop_client`：客户端那段是**有才拆**；播放器那段按判别字 2 决定 drop。
+    #[test]
+    fn stop_client_disconnects_then_clears_both_slots() {
+        // ① 两个槽都满：disconnect → drop client → drop player → 判别字=2
+        let mut b = GraphwarBackend::new();
+        b.client = Some(ReplayClientSlot::default());
+        b.replay = Some(crate::graphwar_replay_player::GraphwarReplayPlayer::new());
+        b.replay_slot_tag = 0; // != 2 ⇒ 槽里是活的播放器
+        assert_eq!(
+            b.stop_client(),
+            vec![
+                StopClientStep::DisconnectClient,
+                StopClientStep::DropClient,
+                StopClientStep::DropPlayer
+            ],
+            "0x406bc0 → 0x406bc8 → 0x406be0"
+        );
+        assert!(b.client.is_none(), "0x406bd0 str xzr,[x19,#0x1e0]");
+        assert_eq!(b.replay_slot_tag, PLAYER_SLOT_EMPTY, "0x406be8");
+
+        // ② 客户端为空：跳过前两步；播放器槽已经是 2 ⇒ 连 drop 也不做
+        let mut b = GraphwarBackend::new();
+        b.replay_slot_tag = PLAYER_SLOT_EMPTY;
+        assert!(b.stop_client().is_empty(), "0x406bb8 cbz + 0x406bd8 b.eq 两条都命中");
+        assert_eq!(b.replay_slot_tag, PLAYER_SLOT_EMPTY);
+    }
+
+    /// `stop_server`：**stop 之后要重读判别字**（`0x406c34`）⇒ 二次判据。
+    #[test]
+    fn stop_server_stops_then_drops_only_if_still_present() {
+        // ① 空槽：一步都不做（0x406c24 b.eq 直接跳 0x406c44 写 4）
+        let mut b = GraphwarBackend::new();
+        assert!(b.stop_server().is_empty());
+        assert!(b.server.is_none());
+
+        // ② 有 server：stop → drop → 清空
+        let mut b = GraphwarBackend::new();
+        b.server = Some(ServerSlot { arg0: 7, arg1: 9, started: true });
+        assert_eq!(
+            b.stop_server(),
+            vec![StopServerStep::StopServer, StopServerStep::DropServer],
+            "0x406c2c → 0x406c40"
+        );
+        assert!(b.server.is_none(), "0x406c48 str w8(=4)");
+        // `stop` 自己把槽清空那条岔路（0x406c38 b.eq）我方建模不出来：
+        // 需要 `GraphwarGameServer::stop` 的函数体，本轮**未读** ⇒ 不写断言（plan L3）。
+    }
+
+    /// `start_server`：`new` + `start` **先于**"拆旧槽"，这条顺序是不显然之处。
+    #[test]
+    fn start_server_builds_then_replaces() {
+        // ① 首次装：只有 new + start
+        let mut b = GraphwarBackend::new();
+        assert_eq!(
+            b.start_server(35245, 1),
+            vec![StartServerStep::NewServer, StartServerStep::StartServer],
+            "0x406c8c → 0x406c94，此时 0x406ca8 判据为 **空**"
+        );
+        assert_eq!(
+            b.server,
+            Some(ServerSlot { arg0: 35245, arg1: 1, started: true }),
+            "0x406ccc..0x406ce8 把栈上对象整块搬进 self+0x60"
+        );
+
+        // ② 再装一次：旧槽非空 ⇒ 多一步 DropOldServer，且它排在 new/start **之后**
+        let steps = b.start_server(35246, 2);
+        assert_eq!(
+            steps,
+            vec![
+                StartServerStep::NewServer,
+                StartServerStep::StartServer,
+                StartServerStep::DropOldServer
+            ],
+            "顺序证据：0x406c94(start) < 0x406c9c(读旧判别字) < 0x406cc8(drop 旧)"
+        );
+        assert_eq!(b.server.unwrap().arg0, 35246, "新对象覆盖旧槽");
+    }
+
+    /// `subscribe_to_event`（arm64 0x406e80 / x86 0x514b40）：**全局计数器分配 id → 登记 → 转给
+    /// `subscribe_to_event_with_id`**。期望值全部来自指令（`0x406ebc`–`0x406ec4` 的 fetch_add、
+    /// `0x406f48` 的 insert、`0x406fd0` 的调用点）。
+    #[test]
+    fn subscribe_to_event_allocates_an_id_then_delegates() {
+        let mut b = GraphwarBackend::new();
+        // 没有客户端 ⇒ 被调者 subscribe_to_event_with_id 早退返回 false（0x515334 / 0x4075xx 的判据）
+        assert!(!b.subscribe_to_event("tick_event"), "client 槽空 ⇒ 返回 false");
+        // 但**登记已经发生**（insert 在调用之前：0x406f48 < 0x406fd0）
+        assert_eq!(b.subscriptions.len(), 1, "表项在转调之前就插进去了");
+
+        // 有客户端 ⇒ true，且客户端的按 id 注册表收到 (id, name)
+        b.client = Some(ReplayClientSlot::default());
+        assert!(b.subscribe_to_event("pos_info_event"));
+        let reg = &b.client.as_ref().unwrap().registered;
+        assert_eq!(reg.len(), 1);
+        assert_eq!(reg[0].1, "pos_info_event");
+        assert!(b.subscribe_to_event("name_info_event"), "被调者那一步成功 ⇒ 返回 true");
+        assert_eq!(b.subscriptions.len(), 3);
+    }
+
+    /// 计数器语义 = **单调 +1、不重复**（`0x406ec0 add w9,w22,#1`）。
+    /// 用 200 次连续调用钉住，而不是断言绝对 id —— 初值未知、且测试并行会推进同一个全局计数器。
+    #[test]
+    fn subscription_ids_are_strictly_increasing_and_unique() {
+        let mut b = GraphwarBackend::new();
+        b.client = Some(ReplayClientSlot::default());
+        for i in 0..200u32 {
+            let name = format!("ev{}", i);
+            assert!(b.subscribe_to_event(&name), "{}", name);
+        }
+        let ids: Vec<u32> = b.client.as_ref().unwrap().registered.iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids.len(), 200);
+        for w in ids.windows(2) {
+            assert!(w[1] > w[0], "id 必须严格递增：{:?} → {:?}", w[0], w[1]);
+        }
+        // 登记表（+0x1d8）与客户端按 id 注册（+0x08）用的是**同一个** id
+        for (id, name) in b.client.as_ref().unwrap().registered.iter() {
+            assert_eq!(b.subscriptions.get(id), Some(name), "两处 id 必须一致");
+        }
+    }
+
+    /// 四条函数都不碰 `+0x1d8` 订阅表与 `+0x1d0` 共享计数（反汇编里 0 条相关指令）——
+    /// 反面对照：`resubscribe_to_events` 会碰，说明"不动"是我方实现的可测差异面。
+    #[test]
+    fn lifecycle_functions_do_not_touch_subscription_state() {
+        let mut b = GraphwarBackend::new();
+        b.subscriptions.insert(30, "game_state_info_event".into());
+        b.client = Some(ReplayClientSlot::default());
+        b.replay_slot_tag = 0;
+        let _ = b.setup_level(0, 0);
+        let _ = b.stop_client();
+        let _ = b.stop_server();
+        let _ = b.start_server(1, 2);
+        assert_eq!(b.subscriptions.len(), 1, "四条函数体内没有访问 +0x1d8 的指令");
+        assert_eq!(b.shared_refs, 0, "也没有 inc/dec [self+0x1d0]");
     }
 }
 

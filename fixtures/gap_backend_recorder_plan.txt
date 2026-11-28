@@ -1,0 +1,175 @@
+# gap_backend_recorder_plan.txt —— T103 **预注册**：`graphwar_backend.rs` / `graphwar_game_recorder.rs`
+# 两块「缺口」的定性判据（**本文件先单独 commit，之后才出分类表、才落码**）
+#
+# 为什么必须预注册：本轮要回答的是「这两个模块到底还差几个源码函数」。
+# 这个数有三条容易作弊的滑轨：
+#   ① 分母选哪个（同源 Android 构建的**地址**数？**源码身份**数？Windows 兄弟构建的名字数？）
+#   ② `na:*` 判据松紧（把编译器生成物算进缺口 ⇒ 缺口虚大；把它们说成"已实现" ⇒ 复原率虚高）
+#   ③ 「已实现」怎么算（模块里有个同名自由函数就算？还是要有函数体、语义对得上？）
+# 判据边跑边改，结论就必然是"想让它是多少就是多少"。⇒ 先写死，再跑。
+#
+# 口径（一律可复算，命令都写在下面）：
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = +0x100000（只加一次）。
+#     本文件里 `x86 vaddr` = `.reference/steam/2026-08-28/libgraphwarrust.so`（stripped）；
+#     `arm64 vaddr` = `.reference/steam/android-2.0.60/libgraphwarrust.so`（`.symtab` 完整）。
+#   * 函数范围 = `.eh_frame` FDE 自解（x86）/ `.symtab` FUNC size（arm64）。
+#   * Location = `panic::Location`（`.data.rel.ro` 的 {file,len,line,col}），跨构建/跨 ISA 不变
+#     ⇒ 是**唯一**能把 x86 stripped 函数与 arm64 真名对上键。
+#   * 反汇编 = x86 用 capstone（`.reference/venv`，`tools/addr_probe.py`）；
+#     arm64 用 `llvm-objdump -d --start-address=… --stop-address=…`
+#     （⚠️ 本机 `/usr/bin/objdump` 不能反汇编 aarch64，会**静默输出空**——踩过，见 §7 已知坑 K1）。
+
+## 1. 五类定义（**原样继承** T82 `fixtures/f3_triage_plan.txt` §1，不新增类别）
+
+| 类别 | 定义 | 进不进"真实待写源码函数" |
+|---|---|---|
+| `real-missing` | **原版有、我方没有的源码函数**：函数体承载本模块自己的语义，能按源码写出来 | **进** |
+| `na:std-mono` | std/core/alloc 的单态化（本模块只贡献被内联进去的实参/闭包） | 不进 |
+| `na:gdext-glue` | gdext 宏产物：类注册胶水 / `#[func]` 分发壳 / ptrcall-varcall shim / 属性访问器 | 不进 |
+| `na:other` | 其它不该手写的编译器生成物：`drop_in_place` glue、`_Unwind_Resume`、`#[derive]` 生成物、serde `__Visitor::expecting`、`mpmc`/`Arc`/`RawTable` 的 drop 实例化 | 不进 |
+| `unknown` | 判不了（**必须写清缺什么**） | **进**（保守：按缺口算） |
+
+**决定性便利（本轮的强证据，不是推断）**：Android `.symtab` **未 strip**，`na:other` 的判定
+不需要靠形状猜——符号名里逐字写着 `core::ptr::drop_in_place<…>` / `serde::de::Visitor::expecting` /
+`std::sync::mpmc::…`。⇒ 本轮 `na:other` 的档位是**观测**（名字是物证），不是 T82 那种"形态推断"。
+反过来，**只有名字里出现 `graphwarrust::<本模块>::<Type>::<method>` 的才是源码函数候选**。
+
+## 2. 分母：**三个数分开算，一个都不许省**
+
+| 记号 | 定义 | 复算命令 |
+|---|---|---|
+| `A_addr` | 同源 Android 构建里**名字里含本模块**、且被 `tools/global_triage.py::classify` 判成 `game*` 的**地址**数 = `fixtures/global_triage_modules.tsv` 的 `android_fns`（backend **22** / recorder **20**） | `.reference/venv/bin/python tools/global_triage.py --android-census` |
+| `A_src` | 其中**源码身份**（名字里带 `graphwarrust::<mod>::<Type>::<fn>`，去掉编译器生成物、同名去重）= 本轮的分母主口径 | `tools/arm64_sym.py mod <mod>` + 逐条名字分类 |
+| `W_names` | Windows **early2026** COFF 的 `graphwar_backend::GraphwarBackend::*` 名字数（backend **39**、recorder 无额外） | `fixtures/name_to_addr_v2.tsv`（`$1==graphwar_backend` 的 39 行） |
+
+**预注册的裁决（写在这里，跑之前就定死）**：
+1. **分母主口径 = `A_src`**，理由是它是**同版本（2.0.60）**构建里**真名 + 真地址**的集合，
+   `na:*` 靠符号名机判、不靠形状推断。
+2. `A_addr` 必须一并报出并与 `A_src` 的差给出逐条解释（T98 §147 的教训：census 只数"第一个符号名"，
+   `android_fns` 是**地址数代理**，不是源码函数数）。
+3. `W_names`（39）**不进分母**，只做**交叉登记**：early2026 是**另一个版本**的构建（T86 §134.2 自己写的
+   口径 caveat），它多出来的 20 个方法名（`request_*` / `go_to_*_checkpoint` / `pause_replay` /
+   `toggle_replay_pause` / `is_paused` / `advance_replay_tick` / `function_text_update` / `set_game_name` /
+   `drop`）在 **2.0.60 的两份构建里都没有独立符号**（arm64 `.symtab` 无、Linux 无 Location 锚）。
+   ⇒ 它们是"**跨版本同名**"，本轮只登记，**不据此判 real-missing**；除非能拿到 2.0.60 侧的第二条证据
+   （Linux FDE 结构对得上 / 调用点实参形状一致），才升级。
+4. **527 内 vs 527 外分开报**（T97 §145 的先例）：`A_src` 里有一部分**有 Linux Location 锚**（进 527 分母），
+   另一部分**没有锚**（分母外）。两个数分开给，不许合并成一个"缺口"。
+
+## 3. 「已实现」怎么算（`F1/F2/F3/F4` 判定，**原样继承** T38 `fixtures/function_coverage_plan.txt`）
+
+对每条 `A_src` 源码函数，判它在我方的落地状态：
+
+| 档 | 判据 |
+|---|---|
+| `F1` | 我方有**同名/同边界**函数体，且有物证（指令级注释 / Location 锚 / fixture 真值） |
+| `F2` | 我方有函数体，但**只有同名自由函数**、类型上的方法边界不在 ⇒ 指认只能算推断 |
+| `F3` | 我方只有模块骨架/常量/步骤表，**没有承载该函数语义的函数体** |
+| `F4` | 完全没有 |
+
+**本轮新增的两条硬闸（因为 T98/T97 各踩过一次）**：
+* **E-1 「同名 ≠ 实现」**：`F2` 只在**语义对得上**时成立。判据 = 该自由函数的入参形状与
+  oracle 函数的实参形状一致（本模块 oracle = arm64 `.symtab` 名字 + 参数寄存器用法）。
+  反例（本轮实测）：`graphwar_game_client.rs:754 pub fn process()` 是
+  `GraphwarGameClient::process`（x86 `0x518400`）的循环体，**不是** `GraphwarSetupControl::process`
+  也不是 `GraphwarBackend::process` ⇒ 拿它给后两者挂 `F2` 是**假 F2**。
+* **E-2 「常量/步骤表 ≠ 函数体」**：一条函数如果在我方只有 `const` 表项、`enum` 步骤名、
+  或一句"装配顺序"的 `Vec`，判 **F3**（不是 F2）。T95 落的三条 `start_*`/`resubscribe_*` 是**真函数体**
+  （有实参、有返回值、有分支），所以它们 F1/F2 成立；本轮的 `process_steps`
+  只是 `GraphwarBackend::process` 的**决策表**，不算它的函数体。
+
+## 4. `na:*` 的调用形态闸（**原样继承** T82 §10 E6 `R-CALLFORM` / E7 `R-WRAP` / T89）
+
+* `na:std-mono` 必须满足 `CALLERS(rel32) >= 1` **或** R-STD 结构组 A/B/C 命中；都不满足 ⇒ 降 `unknown`。
+* `na:gdext-glue` 不受 E6 约束（G1/G1b/G2 的定义本身就是 `CALLERS==0 且 SLOT>=1`）。
+* E7 `R-WRAP`：命中 wrapper 家族名单 `__rust_begin_short_backtrace` / `catch_unwind` /
+  `std::thread::spawn` / `LangStart` 且 Linux 自身 Location 里有 `src/graphwar_*.rs` ⇒ **不许 `na`**。
+* **本轮的实际形态**：这两个模块的 `na:*` 几乎全是 `drop_in_place` 实例化，**符号名就是物证**，
+  E6 的结构组在这里用不上——按 §2「决定性便利」直接用名字判 `na:other`，并在表里逐条写名字。
+  只有**符号名不带 `graphwarrust::` 前缀**的地址才走 E6/E7 形状判据。
+
+## 5. 体量闸（T82 `VOL_CAP`）
+
+单函数 FDE/符号尺寸 `> 0x800`（2048 字节）**且本轮没读完** ⇒ **不许**判 `na:*`，落 `unknown` 并写缺什么。
+（本模块会撞这条的：backend `process` 0x5a9/0x570、`start_client_to_local_server` 0x34c/0x3a2、
+`new` 0x1e8）；recorder 的 `save_game` 0x940 撞闸 ⇒ 但它**已有函数体**（F1），不进缺口。
+
+## 6. `lin527 = 2` 的处置（任务书点名的"高度可疑"）
+
+任务书假设：`graphwar_game_recorder` 的 Linux 侧只有 2 条 Location 锚，而 Android 有 20 条真名
+⇒ 可能是"中方（gdext 壳/derive）占多数"。
+
+**预注册的检验办法（可机判，不靠感觉）**：
+1. 把 `A_addr`（20）逐条按 **arm64 `.symtab` 原始 mangled 名**分类：`12graphwarrust22graphwar_game_recorder…`
+   开头的是**源码函数**；`core::ptr::drop_in_place<…>` / `serde::…` / `std::sync::mpmc::…` 开头的是
+   **编译器生成物**。这条**不需要推断**。
+2. 若 `A_src` ≤ 3 ⇒ 假设**成立**（"20 条真名"是地址数代理，绝大多数是 drop glue），
+   写清 `20 = A_src + na:other` 的逐条算术。
+3. 若 `A_src` 明显 > 3 ⇒ 假设**被证伪**，按 §3 逐条判 F 档。
+4. 无论成立与否，**不得**用"Linux 只有 2 条 Location 锚"这一点去推断"源码函数少"：
+   Location 只覆盖会 panic 的函数（T87 §138 的口径 caveat），二者不是同一件事。
+
+## 7. `fixtures/function_coverage.tsv:414`（`0x4d3180`）台账冲突的裁决办法
+
+冲突：台账记 `graphwar_setup_control.rs::GraphwarSetupControl::process`、**F2**、
+`ours_pos = src/graphwar_game_client.rs:754`；T98（`docs/06` §147.6-3）报"我方无 `fn process`"。
+
+预注册四条取证（**四条全做完才下结论**）：
+1. **台账这一行自己怎么写的**：把 13 列原样贴出来（`pinned` 列 = `free-fn-name`、`why` 列是否已自认
+   "只找到自由函数同名"）——若台账**自己**写明了这是推断，那"F2 是否成立"就只剩语义闸 E-1。
+2. **`ours_pos` 指向什么**：反汇编/源码读 `src/graphwar_game_client.rs:754` 那个 `process` 是哪条原版函数
+   （对照 `docs/16` §48 的 `0x518400`），并给出它的实参形状。
+3. **真值那一头是什么**：`0x4d3180` 的 FDE 尺寸 + 自重引用的 `panic::Location` 全集 +
+   用**Location 键**到 arm64 `.symtab` 里反查真名（跨构建不变），得到该地址的**源码身份**。
+4. **我方有没有承载该语义的函数体**：`grep` 全 `src/` 找该身份的边界（`fn process` / 列表重建 /
+   `FN_TEAM_LIST_REBUILD` 的消费者），有没有"只做数据层、视图未做"的自述。
+
+裁决三选一（**必须带证据编号**）：① 台账对（我方确实有实现，T98 的"无 `fn process`"是对字面而非语义）；
+② 台账错（F2 假成立 ⇒ 应是 F3/F4，我方缺）；③ 口径不同（元数据对、桶错；或元数据就错、桶对）。
+**不改** `fixtures/function_coverage.tsv`（生成物，超出本轮写边界）——只出裁决 + 建议改法。
+
+## 8. 本轮允许动的东西 / 交付物
+
+* 允许改：`src/graphwar_backend.rs`、`src/graphwar_game_recorder.rs`（含其 `#[cfg(test)]`）、
+  本文件、`fixtures/gap_backend.tsv`、`fixtures/gap_recorder.tsv`、`docs/06`（只**追加** §148）。
+* **不动**：`src/graphwar_setup_control.rs`（只读核 §7）、`src/graphwar_replay_player.rs`（§7 若要加字段
+  ⇒ 只登记不落码）、`src/_scaffold/**`、`client/**`、`tests/` 既有断言、门槛/护栏、别人的台账。
+* 交付物：`fixtures/gap_backend.tsv`（`A_addr`=22 行逐条）、`fixtures/gap_recorder.tsv`（20 行逐条）、
+  `real-missing` 落码（**每处单独 commit**，逐指令注释 + 单测）、`0x4d3180` 裁决、`docs/06` §148。
+
+## 9. 落码的验收判据（每处）
+
+1. 函数体第 1 行写 **arm64 名字 + vaddr/size** 与 **x86 vaddr/FDE**（有锚才有后者）。
+2. 函数体里每个分支/调用点写**指令地址**；引用的立即数（tag 值、偏移）逐条标注出处。
+3. 单测期望值**只能**来自反汇编读出的判据（守卫值、调用顺序、偏移），不许来自我方输出
+   （AGENTS.md §0.5：写测试的不许同时当判定标准的人）。
+4. 档位如实标：**观测**（读到指令/符号表）≠ **逐位**（与真二进制逐位对拍）。
+   本轮 x86 侧能对拍的部分（立即数/偏移/分支条件）标"逐位"，**语义**一律不高于"观测"。
+5. 门槛：`cargo test --offline` **1634/0/1ignored**、`--features gdext-bindings` **1789/0/1**、
+   `coverage_matrix --check` OK、`check_doc_refs` rc=0、`docsec` 通过、三轴 647/647/637、
+   `boundary_audit --check` mismatch 0。
+6. **三个数**（A `F1/527`、B `F1/(527−NA)`、1:1）落码后照原样报：落码只加我方函数体、
+   不给原版函数新增 Linux 地址锚 ⇒ 预期**一位不动**（T97/T98 的先例）；若动了必须解释。
+
+## 10. 跑之前就承认的已知会漏
+
+* **L1** 「源码身份」靠 `.symtab` 名字。若原版把某函数内联成别家的实例（如 recorder 的
+  `subscribe_to_events` 没有独立符号、只有它的 `{{closure}}`），名字就**少一条**。
+  ⇒ 分母 `A_src` 对"源码函数数"是**下界**。
+* **L2** `W_names`（early2026 的 39）与 `A_src`（2.0.60 的 19）的差里有真函数（版本差异/内联差异），
+  本轮**证不到**是哪种，只登记，不据此判缺口。
+* **L3** 我方"已实现"的判据里，"语义对得上"有人工成分（§3 E-1）。缓解：每条 `F1/F2` 都写
+  **入参形状**与**指令出处**，别人能复核。
+* **L4** 落码只能是"函数边界 + 守卫 + 调用序 + 立即数"，**不是**可运行的 gdext 对象图
+  （headless 侧没有那套对象图）。⇒ 行为保真度到不了"逐位"，文档里不许写成"已复原行为"。
+
+## 11. 已知坑（本轮踩到的，写在这里省下一个人几小时）
+
+* **K1** `/usr/bin/objdump` **不能反汇编 aarch64**：`objdump -d <arm64 so>` 只打印文件头、
+  **返回 0**、**不报错**。必须用 `llvm-objdump`（本机 `/usr/bin/llvm-objdump`）。
+  `tools/arm64_sym.py dis` 默认调 `objdump` ⇒ 本轮用 `OBJDUMP=llvm-objdump` 环境变量绕过（不改工具）。
+* **K2** `fixtures/global_triage_modules.tsv` 的 `lin_F3` 列是**快照**：backend 那行写 `lin_F3=4`，
+  但今天 `function_coverage.tsv` 里 backend 的 6 行已全是 `F1`/`F2`（T95 落码 + T87 定名把最后一条也升了 F1）
+  ⇒ **复算后 backend 的 527 内 F3 = 0**。表里那个 4 是 T96 快照，不许当今天的缺口。
+* **K3** `android_fns` 那一列不是"源码函数数"：`classify()` 把 `core::ptr::drop_in_place<…本模块类型…>`
+  也算进 `game:std-glue`（`startswith("game")`），而 `_android_syms()` 只取**每个地址的第一个符号名**。
