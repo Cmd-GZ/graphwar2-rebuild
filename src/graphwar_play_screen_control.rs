@@ -2046,3 +2046,487 @@ impl GraphwarPlayScreenControl {
         1
     }
 }
+
+// ---------------------------------------------------------------------------
+// 13. `append_debug_text` / `append_function_entry`（2026-11-28 T113 落码）
+// ---------------------------------------------------------------------------
+//
+// 这两条与 [`GraphwarPlayScreenControl::clear_state`] 一样，体内**没有** `panic::Location`
+// ⇒ 527 分母看不见（`fixtures/denom_outside.tsv` 的 `0x3deec8` / `0x3df07c` 两行）。
+// T109 已经把**操作序列**读出来了，但明确登记「实参值没解、只落序列=空壳」；本轮补的是**值**：
+//
+// * 颜色 = `.rodata` 的 16 字节常量槽（4×f32），槽地址 → 值的对照见每个常量；
+// * 字号 = `(Control::get_size().x / 25.0) as i32`（25.0 的来源两侧不同：arm64 是
+//   `fmov s0,#25.0` 立即数，x86 是 `.rodata` 的 f32 0x41c80000）；
+// * outline 尺寸 = 立即数 4；outline 颜色 = 另一条 `.rodata` 槽；
+// * `append_function_entry` 的尾部文本 = 三段拼接 + 7 次 `str::replace`（见
+//   [`wrap_operators_with_zero_width_space`]）。
+//
+// # 双构建对照（为什么能同时标"观测"而不是"单份反汇编的猜测"）
+//
+// | 事实 | arm64（未 strip，符号名可读） | Linux x86（stripped，结构指纹候选名） |
+// |---|---|---|
+// | 函数地址 | `append_debug_text` = **0x3deec8**（436 B）、`append_function_entry` = **0x3df07c**（1424 B） | 0x3d93c0（`0x1c7` 字节）、0x3d9590（`0x5bc` 字节）—— `fixtures/hybrid_names.tsv` 的高置信候选 |
+// | 序列 | push_color → get_size → push_font_size → push_outline_size → push_outline_color → append_text → append_text("\n") → pop×N | 同（GOT 槽序 0x9baff8 / 0x9bb000 / 0x9bb008 / 0x9bb010 / 0x9bb018 / 0x9bb020 一一对应） |
+// | debug 的 pop 数 | **3** | **3** |
+// | function_entry 的 pop 数 | **4** | **4**（pop 指针被提到 `r15` 后 `call r15`×4，只 `mov` 一次槽 ⇒ 数"槽出现次数"会误读成 1） |
+//
+// ⇒ 两侧逐指令同构、常量槽同值。**档位仍是观测**：没有运行时对拍（`AGENTS.md` §0.3 的"逐位"要求
+// 与真二进制逐字节对拍，本层做不到 —— 这两条是 gdext 引擎调用，没有可隔离执行的输入/输出）。
+//
+// # 一个原版就有的不对称（照抄，不"修正"）
+//
+// `append_debug_text` 推 4 个 tag 只弹 3 次（`0x3deff0` / `0x3df00c` / `0x3df028`），
+// `append_function_entry` 推 4 弹 4（`0x3df4c0` / `0x3df4d8` / `0x3df4f0` / `0x3df508`）。
+// 两构建数出来都是这个数 ⇒ **原版如此**。本层照原样建模（不替它补第 4 次 pop）。
+
+/// `append_debug_text` 的 `push_color` 实参：`.rodata` 常量槽里的 **4×f32 = (1,1,1,1)**（白）。
+///
+/// 档位：**观测**。
+/// * arm64：`0x3deef4 adrp x1,0x198000` + `0x3deef8 add x1,x1,#0xed0` ⇒ 槽 **`0x198ed0`**，
+///   16 字节 = `00 00 80 3f`×4；
+/// * x86：`0x3d93e2 lea rsi,[rip-0x23a6e9]` ⇒ 槽 **`0x19ed00`**，同 16 字节；
+/// * "Color 按**指针**传"的证据：`0x7b4df0 ldr q0,[x19]`（包装函数把 x1 当 Color\* 读 16 字节）。
+pub const DEBUG_TEXT_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+
+/// `push_outline_color` 的实参：`.rodata` 常量槽里的 **4×f32 = (0,0,0,1)**（黑）。
+///
+/// 档位：**观测**。
+/// * arm64：`0x3def80 adrp x1,0x197000` + `0x3def84 add x1,x1,#0x110` ⇒ 槽 **`0x197110`**，
+///   前 12 字节全 0、第 4 个 f32 = `00 00 80 3f`（=1.0）；
+/// * x86：`0x3d9491 lea rsi,[rip-0x23c528]` ⇒ 槽 **`0x19cf70`**，同 16 字节。
+pub const DEBUG_OUTLINE_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
+/// 字号的除数：**25.0**。
+///
+/// 档位：**观测**。
+/// * arm64：`0x3def38 fmov s0,#25.00000000`（立即数，进 `fdiv`）；
+/// * x86：`0x3d942f divss xmm0,[0x1b9b8c]`，该槽 4 字节 = `00 00 c8 41`（f32 = 25.0）。
+///
+/// 公式 = `(get_size().x / 25.0) as i32`：arm64 `0x3def3c fdiv` + `0x3def40 fcvtzs w1,s0`
+/// （截断 + 饱和），x86 `0x3d9437 cvttss2si` + `0x3d943b..0x3d944f` 的 `ucomiss/cmov` 夹取
+/// （Rust `as i32` 的饱和语义）⇒ 两侧同义。
+pub const FONT_SIZE_DIVISOR: f32 = 25.0;
+
+/// `push_outline_size` 的实参：**4**。
+///
+/// 档位：**观测**（arm64 `0x3def64 mov w1,#4`；x86 `0x3d9472 mov esi,4`）。
+pub const OUTLINE_SIZE: i32 = 4;
+
+/// 两条函数**共同**的收尾换行串：单字节 **`"\n"`**。
+///
+/// 档位：**观测**（arm64 `0x3deff4`/`0x3defc8` = `.rodata 0x19bdfe` 的一个字节 `0a`；x86 `0x3d94d4`/`0x1bf7e6`）。
+pub const NEWLINE: &str = "\n";
+
+/// `append_debug_text` 的 `pop` 次数：**3**（与 4 次 push 不对称 —— 原版如此，见本节开头）。
+///
+/// 档位：**观测**（arm64 `0x3deff0` / `0x3df00c` / `0x3df028` 三条 `bl RichTextLabel::pop`；
+/// x86 三条 `call [GOT 0x9bb020]`）。
+pub const DEBUG_TEXT_POPS: usize = 3;
+
+/// `append_function_entry` 的 `pop` 次数：**4**（4 push / 4 pop 对称）。
+///
+/// 档位：**观测**（arm64 `0x3df4c0` / `0x3df4d8` / `0x3df4f0` / `0x3df508`；
+/// x86 `0x3d9a0a mov r15,[GOT 0x9bb020]` 后 `0x3d9a14`/`0x3d9a2a`/`0x3d9a40`/`0x3d9a56` `call r15`）。
+pub const FUNCTION_ENTRY_POPS: usize = 4;
+
+/// `append_function_entry` 第一段文本的后缀：`": "`（冒号 + 空格）。
+///
+/// 档位：**观测**。原版是把这两个字节**直接写进** `arg1` 的字符串缓冲区尾部：
+/// arm64 `0x3df1c0 mov w9,#0x203a` + `0x3df1c4 strh w9,[x8,x1]`（长度 +2，`0x3df1bc add x10,x1,#2`）；
+/// x86 `0x3d96d2 mov word ptr [rax+rsi],0x203a`（`0x3d96d8 add rsi,2`）。
+/// 小端 `0x203a` ⇒ 先 `':'`(0x3a) 后 `' '`(0x20)。
+pub const ENTRY_LABEL_SUFFIX: &str = ": ";
+
+/// 函数文本的前缀（`arg3 == 0` 时）：**`"f(x) = "`**，7 字节。
+///
+/// 档位：**观测**。arm64 `.rodata 0x19bed0`（`0x3df210 add x8,x8,#0xed0`）；
+/// x86 `.rodata 0x1bf8c0`（`0x3d9734 lea rsi,[rip-0x219e7b]`）。
+pub const FUNCTION_PREFIX: &str = "f(x) = ";
+
+/// 导函数文本的前缀（`arg3 != 0` 时）：**`"dy/dx = "`**，8 字节。
+///
+/// 档位：**观测**。arm64 `.rodata 0x179a08`（`0x3df218 add x10,x10,#0xa08`）；
+/// x86 `.rodata 0x19f8d8`（`0x3d972d lea rcx,[rip-0x239e5c]`）。
+pub const DERIVATIVE_PREFIX: &str = "dy/dx = ";
+
+/// 前缀选择的三条指令（证明 `arg3` 只用来**二选一**，不是长度/计数）：
+///
+/// ```text
+/// 0x3df208  cmp  w22, #0                       ; arg3 == 0 ?
+/// 0x3df220  csel x1, x10, x8, ne               ; ne ⇒ "dy/dx = "(x10) / eq ⇒ "f(x) = "(x8)
+/// 0x3df228  cinc x2, x9, ne                    ; 长度 = 7 + (ne ? 1 : 0) = 7 / 8
+/// ```
+pub const PREFIX_SELECTION_SITES: [u64; 3] = [0x3d_f208, 0x3d_f220, 0x3d_f228];
+
+/// `append_function_entry` 里被插零宽空格的字符表，**顺序即原版调用顺序**：
+/// `+` `-` `*` `/` `^` `(` `)`。
+///
+/// 档位：**观测**（7 次 `bl alloc::str::_<impl str>::replace`，实参对槽：
+/// arm64 **`0x19bf7f/0x19bf80`**、`…87/…88`、`…8f/…90`、`…97/…98`、`…9f/…a0`、`…a7/…a8`、`…af/…b0`；
+/// x86 `0x1bf96f/0x1bf970` … `0x1bf99f/0x1bf9a0`（每对相距 8 字节：1 字节 `from` + 4 字节 `to` + 3 字节对齐））。
+pub const ZERO_WIDTH_OPERATORS: [char; 7] = ['+', '-', '*', '/', '^', '(', ')'];
+
+/// 插入的零宽空格：`U+200B`，UTF-8 **3 字节 `e2 80 8b`**。
+///
+/// 档位：**观测**（上一条那 7 个 `to` 槽的内容；`+` 那对 = 槽 `0x19bf80` 起 `e2 80 8b 2b`）。
+pub const ZERO_WIDTH_SPACE: char = '\u{200b}';
+
+/// `append_debug_text` / `append_function_entry` 需要的宿主能力。
+///
+/// 与 [`DebugLabelSink`] 同口径：引擎侧一律走 trait，本层只描述**调了谁、什么顺序、什么实参**。
+/// 方法名就是 `RichTextLabel` 的方法名，便于对着符号表核。
+pub trait RichTextDebugSink {
+    /// 标签句柄（原版是 `Gd<RichTextLabel>`）。
+    type Label: Copy;
+
+    /// `self+0x38` 的 `RichTextLabel`（`0x3deee8`/`0x3df0a8` 附近都做 `add x0,x20,#0x38`）。
+    fn debug_text_label(&mut self) -> Self::Label;
+
+    /// `RichTextLabel::push_color(color)` —— Color 在 arm64 是按**指针**传（`ldr q0,[x19]`）。
+    fn push_color(&mut self, label: Self::Label, color: [f32; 4]);
+
+    /// `Control::get_size() -> Vector2`；本层只取 `.x`（原版 `fmov s8,s0` 只存 x 分量）。
+    fn get_size(&mut self, label: Self::Label) -> (f32, f32);
+
+    /// `RichTextLabel::push_font_size(size: i32)`。
+    fn push_font_size(&mut self, label: Self::Label, size: i32);
+
+    /// `RichTextLabel::push_outline_size(size: i32)`。
+    fn push_outline_size(&mut self, label: Self::Label, size: i32);
+
+    /// `RichTextLabel::push_outline_color(color)`。
+    fn push_outline_color(&mut self, label: Self::Label, color: [f32; 4]);
+
+    /// `RichTextLabel::append_text(text)`。
+    fn append_text(&mut self, label: Self::Label, text: &str);
+
+    /// `RichTextLabel::pop()`。
+    fn pop(&mut self, label: Self::Label);
+}
+
+/// 字号公式：`(width / 25.0) as i32`（截断 + 饱和；两侧指令见 [`FONT_SIZE_DIVISOR`]）。
+pub fn font_size_for_width(width: f32) -> i32 {
+    (width / FONT_SIZE_DIVISOR) as i32
+}
+
+/// 把 [`ZERO_WIDTH_OPERATORS`] 里的每个字符前插一个 [`ZERO_WIDTH_SPACE`]（原版 7 次 `str::replace`）。
+///
+/// 顺序敏感：原版先换 `+`、再 `-`…`)`。因为替换结果只会**新增**零宽空格、不会新增运算符，
+/// 所以 7 次替换的先后不影响结果 —— 但本层照原版顺序做，便于逐条对反汇编。
+pub fn wrap_operators_with_zero_width_space(text: &str) -> String {
+    let mut out = text.to_string();
+    for op in ZERO_WIDTH_OPERATORS {
+        let mut replacement = String::with_capacity(4);
+        replacement.push(ZERO_WIDTH_SPACE);
+        replacement.push(op);
+        out = out.replace(op, &replacement);
+    }
+    out
+}
+
+/// `GraphwarPlayScreenControl::append_debug_text`（arm64 **`0x3deec8`** / **436** B；
+/// Linux x86 候选 **0x3d93c0** / `0x1c7` B）：
+/// 往调试文本标签里追加一段灰/白色小字。
+///
+/// 逐条指令：
+///
+/// ```text
+/// 0x3deed8  mov  x19, x1                        ; arg1 = 要追加的文本
+/// 0x3deee8  add  x0, x0, #0x38                  ; self+0x38 = RichTextLabel
+/// 0x3deef0  bl   RawGd::check_rtti("upcast_ref") ; 之后每次取标签前都重复这一次
+/// 0x3deef8  x1 = .rodata 0x198ed0               ; Color(1,1,1,1)
+/// 0x3def00  bl   RichTextLabel::push_color
+/// 0x3def1c  bl   Control::get_size              ; 返回 Vector2
+/// 0x3def30  fmov s8, s0                         ; 只留 .x
+/// 0x3def38  fmov s0, #25.0 ; 0x3def3c fdiv ; 0x3def40 fcvtzs w1,s0
+/// 0x3def48  bl   RichTextLabel::push_font_size  ; = (x/25) as i32
+/// 0x3def64  mov  w1, #4
+/// 0x3def68  bl   RichTextLabel::push_outline_size
+/// 0x3def84  x1 = .rodata 0x197110               ; Color(0,0,0,1)
+/// 0x3def8c  bl   RichTextLabel::push_outline_color
+/// 0x3defac  bl   RichTextLabel::append_text(arg1)
+/// 0x3defd4  bl   RichTextLabel::append_text("\n")
+/// 0x3deff0 / 0x3df00c / 0x3df028  bl RichTextLabel::pop   ; **3 次**
+/// ```
+///
+/// 档位：**观测**（arm64 逐条 + x86 同构同值，对照表见本节开头）。
+pub fn append_debug_text<S>(sink: &mut S, text: &str)
+where
+    S: RichTextDebugSink + ?Sized,
+{
+    // 0x3deee8：self+0x38
+    let label = sink.debug_text_label();
+    // 0x3deef8 → 0x3def00
+    sink.push_color(label, DEBUG_TEXT_COLOR);
+    // 0x3def1c → 0x3def48
+    let (width, _height) = sink.get_size(label);
+    sink.push_font_size(label, font_size_for_width(width));
+    // 0x3def64 → 0x3def68
+    sink.push_outline_size(label, OUTLINE_SIZE);
+    // 0x3def84 → 0x3def8c
+    sink.push_outline_color(label, DEBUG_OUTLINE_COLOR);
+    // 0x3defac / 0x3defd4
+    sink.append_text(label, text);
+    sink.append_text(label, NEWLINE);
+    // 0x3deff0 / 0x3df00c / 0x3df028（**3** 次，不是 4）
+    for _ in 0..DEBUG_TEXT_POPS {
+        sink.pop(label);
+    }
+}
+
+/// `GraphwarPlayScreenControl::append_function_entry`（arm64 **`0x3df07c`** / **1424** B；
+/// Linux x86 候选 **0x3d9590** / `0x5bc` B）：往调试文本标签里追加一条"函数记录"。
+///
+/// 实参：`arg1` = 前缀标签（后接 `": "`）、`arg2` = 函数文本（做零宽空格处理）、
+/// `arg3`(w3) = 是否导函数（只用于二选一前缀）、`arg4`(x4) = **颜色常量指针**（由调用方算）。
+///
+/// 逐条指令（只列与语义有关的）：
+///
+/// ```text
+/// 0x3df098  mov  x23, x4                        ; arg4 = &Color
+/// 0x3df09c  mov  w22, w3                        ; arg3 = bool（导函数？）
+/// 0x3df0a0  mov  x21, x2                        ; arg2
+/// 0x3df0a4  mov  x20, x1                        ; arg1
+/// 0x3df0c8  bl   RichTextLabel::push_color      ; 实参 = x23（**不是常量**）
+/// 0x3df0f0  bl   Control::get_size ; 0x3df114 fdiv 25.0 ; 0x3df118 fcvtzs
+/// 0x3df120  bl   RichTextLabel::push_font_size  ; = (x/25) as i32
+/// 0x3df144  mov  w1,#4 ; 0x3df14c bl push_outline_size
+/// 0x3df16c  x1 = .rodata 0x197110 ; 0x3df178 bl push_outline_color   ; 黑
+/// 0x3df194  ldr  q0,[x20] / 0x3df198 ldr x1,[x20,#0x10]  ; arg1 的 String 头
+/// 0x3df1c0  mov  w9,#0x203a ; 0x3df1c4 strh   ; 尾部写 ": "（长度 +2）
+/// 0x3df1d8  bl   RichTextLabel::append_text(arg1 + ": ")
+/// 0x3df208  cmp  w22,#0 ; 0x3df220 csel ; 0x3df228 cinc   ; "f(x) = "(7) / "dy/dx = "(8)
+/// 0x3df230  bl   RichTextLabel::append_text(前缀)
+/// 0x3df24c  ldr  q0,[x21] → 0x3df264 bl String::clone          ; 克隆 arg2
+/// 0x3df284  bl   str::replace("+" → "\u{200b}+")               ; 7 次
+/// 0x3df468  bl   RichTextLabel::append_text(替换后的 arg2)
+/// 0x3df4a8  bl   RichTextLabel::append_text("\n")
+/// 0x3df4c0 / 0x3df4d8 / 0x3df4f0 / 0x3df508  bl RichTextLabel::pop  ; **4 次**
+/// ```
+///
+/// ⚠️ `arg4`（颜色）**不是常数**：调用点 `0x3e27dc` / `0x3e2a70` 用它把"字节色 / 255"算出来
+/// （`0x3e27b0 fdiv v0.4s, v3.4s, q0.4s`，v3 的前三分量是 `ucvtf` 过的字节）。
+/// 本层如实把颜色作为**入参**，不编一个常数。
+///
+/// 档位：**观测**（arm64 逐条 + x86 同构同值）。
+pub fn append_function_entry<S>(
+    sink: &mut S,
+    entry_label: &str,
+    function_text: &str,
+    is_derivative: bool,
+    color: [f32; 4],
+) where
+    S: RichTextDebugSink + ?Sized,
+{
+    let label = sink.debug_text_label();
+    // 前 5 步与 append_debug_text 完全相同，只有 push_color 的实参来自调用方
+    sink.push_color(label, color);
+    let (width, _height) = sink.get_size(label);
+    sink.push_font_size(label, font_size_for_width(width));
+    sink.push_outline_size(label, OUTLINE_SIZE);
+    sink.push_outline_color(label, DEBUG_OUTLINE_COLOR);
+    // 0x3df194 → 0x3df1d8：arg1 + ": "
+    let mut head = String::with_capacity(entry_label.len() + ENTRY_LABEL_SUFFIX.len());
+    head.push_str(entry_label);
+    head.push_str(ENTRY_LABEL_SUFFIX);
+    sink.append_text(label, &head);
+    // 0x3df208 → 0x3df230：二选一前缀
+    sink.append_text(
+        label,
+        if is_derivative {
+            DERIVATIVE_PREFIX
+        } else {
+            FUNCTION_PREFIX
+        },
+    );
+    // 0x3df24c → 0x3df468：arg2 克隆后 7 次 replace
+    let wrapped = wrap_operators_with_zero_width_space(function_text);
+    sink.append_text(label, &wrapped);
+    // 0x3df4a8
+    sink.append_text(label, NEWLINE);
+    // 0x3df4c0 / 0x3df4d8 / 0x3df4f0 / 0x3df508
+    for _ in 0..FUNCTION_ENTRY_POPS {
+        sink.pop(label);
+    }
+}
+
+#[cfg(test)]
+mod append_text_tests {
+    use super::*;
+
+    /// 记录所有调用的假宿主：`(方法名, 实参文本)`。
+    #[derive(Default)]
+    struct Recorder {
+        ops: Vec<String>,
+        size: (f32, f32),
+    }
+
+    impl RichTextDebugSink for Recorder {
+        type Label = ();
+        fn debug_text_label(&mut self) -> () {
+            self.ops.push("label".into());
+        }
+        fn push_color(&mut self, _l: (), color: [f32; 4]) {
+            self.ops.push(format!("push_color({:?})", color));
+        }
+        fn get_size(&mut self, _l: ()) -> (f32, f32) {
+            self.ops.push("get_size".into());
+            self.size
+        }
+        fn push_font_size(&mut self, _l: (), size: i32) {
+            self.ops.push(format!("push_font_size({})", size));
+        }
+        fn push_outline_size(&mut self, _l: (), size: i32) {
+            self.ops.push(format!("push_outline_size({})", size));
+        }
+        fn push_outline_color(&mut self, _l: (), color: [f32; 4]) {
+            self.ops.push(format!("push_outline_color({:?})", color));
+        }
+        fn append_text(&mut self, _l: (), text: &str) {
+            self.ops.push(format!("append_text({:?})", text));
+        }
+        fn pop(&mut self, _l: ()) {
+            self.ops.push("pop".into());
+        }
+    }
+
+    /// 颜色常量必须是真二进制 `.rodata` 槽里的位模式（不是"看起来像白/黑"）。
+    #[test]
+    fn colors_are_the_rodata_bit_patterns() {
+        // 0x198ed0: 00 00 80 3f ×4 ⇒ 0x3f800000
+        for c in DEBUG_TEXT_COLOR {
+            assert_eq!(c.to_bits(), 0x3f80_0000);
+        }
+        // 0x197110: 00000000 00000000 00000000 3f800000
+        assert_eq!(DEBUG_OUTLINE_COLOR[0].to_bits(), 0x0000_0000);
+        assert_eq!(DEBUG_OUTLINE_COLOR[1].to_bits(), 0x0000_0000);
+        assert_eq!(DEBUG_OUTLINE_COLOR[2].to_bits(), 0x0000_0000);
+        assert_eq!(DEBUG_OUTLINE_COLOR[3].to_bits(), 0x3f80_0000);
+        // 25.0 的位模式（x86 槽 0x1b9b8c = 00 00 c8 41）
+        assert_eq!(FONT_SIZE_DIVISOR.to_bits(), 0x41c8_0000);
+    }
+
+    /// 顺序 + 实参：push_color → get_size → push_font_size → push_outline_size →
+    /// push_outline_color → append_text(text) → append_text("\n") → pop×3。
+    #[test]
+    fn debug_text_operation_sequence_is_the_binary_one() {
+        let mut s = Recorder {
+            size: (100.0, 40.0),
+            ..Default::default()
+        };
+        append_debug_text(&mut s, "hello");
+        assert_eq!(
+            s.ops,
+            vec![
+                "label",
+                "push_color([1.0, 1.0, 1.0, 1.0])",
+                "get_size",
+                "push_font_size(4)",       // (100 / 25) as i32
+                "push_outline_size(4)",
+                "push_outline_color([0.0, 0.0, 0.0, 1.0])",
+                "append_text(\"hello\")",
+                "append_text(\"\\n\")",
+                "pop",
+                "pop",
+                "pop",
+            ]
+        );
+    }
+
+    /// 字号 = `(width / 25.0) as i32`：截断（不是四舍五入）+ 负值截向 0。
+    #[test]
+    fn font_size_is_width_over_twenty_five_truncated() {
+        assert_eq!(font_size_for_width(0.0), 0);
+        assert_eq!(font_size_for_width(24.9), 0);
+        assert_eq!(font_size_for_width(25.0), 1);
+        assert_eq!(font_size_for_width(99.0), 3);
+        assert_eq!(font_size_for_width(100.0), 4);
+        assert_eq!(font_size_for_width(-25.0), -1); // fcvtzs / cvttss2si 都截向 0
+        assert_eq!(font_size_for_width(f32::NAN), 0); // `as i32` 饱和 ⇒ NaN → 0
+        assert_eq!(font_size_for_width(f32::INFINITY), i32::MAX); // 饱和
+    }
+
+    /// pop 次数：debug = 3，function_entry = 4（两构建都数过）。
+    #[test]
+    fn pop_counts_are_three_and_four() {
+        let mut s = Recorder {
+            size: (50.0, 10.0),
+            ..Default::default()
+        };
+        append_debug_text(&mut s, "x");
+        assert_eq!(s.ops.iter().filter(|o| *o == "pop").count(), DEBUG_TEXT_POPS);
+        assert_eq!(DEBUG_TEXT_POPS, 3);
+
+        let mut s = Recorder {
+            size: (50.0, 10.0),
+            ..Default::default()
+        };
+        append_function_entry(&mut s, "A", "x+1", false, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(s.ops.iter().filter(|o| *o == "pop").count(), FUNCTION_ENTRY_POPS);
+        assert_eq!(FUNCTION_ENTRY_POPS, 4);
+    }
+
+    /// 三段文本的拼接顺序 + 前缀二选一 + `": "` 后缀（全部来自反汇编串槽）。
+    #[test]
+    fn function_entry_text_order_and_prefix_selection() {
+        let mut s = Recorder {
+            size: (75.0, 10.0),
+            ..Default::default()
+        };
+        append_function_entry(&mut s, "3", "x+1", false, [1.0, 0.5, 0.25, 1.0]);
+        assert_eq!(s.ops[1], "push_color([1.0, 0.5, 0.25, 1.0])"); // 颜色来自入参
+        assert_eq!(s.ops[2], "get_size");
+        assert_eq!(s.ops[3], "push_font_size(3)"); // 75/25
+        assert_eq!(s.ops[4], "push_outline_size(4)");
+        assert_eq!(s.ops[5], "push_outline_color([0.0, 0.0, 0.0, 1.0])");
+        assert_eq!(s.ops[6], format!("append_text({:?})", "3: ")); // arg1 + ": "
+        assert_eq!(s.ops[7], format!("append_text({:?})", "f(x) = "));
+        // arg2 "x+1" 只被插一次零宽空格（每个运算符前一个）
+        assert_eq!(s.ops[8], format!("append_text({:?})", "x\u{200b}+1"));
+        assert_eq!(s.ops[9], format!("append_text({:?})", "\n"));
+
+        let mut s = Recorder {
+            size: (75.0, 10.0),
+            ..Default::default()
+        };
+        append_function_entry(&mut s, "3", "2x", true, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(s.ops[7], format!("append_text({:?})", "dy/dx = "));
+    }
+
+    /// 零宽空格：U+200B = 3 字节 `e2 80 8b`；7 个运算符、顺序照原版。
+    #[test]
+    fn zero_width_space_is_the_three_byte_utf8_one() {
+        assert_eq!(ZERO_WIDTH_SPACE as u32, 0x200b);
+        let mut buf = [0u8; 4];
+        assert_eq!(ZERO_WIDTH_SPACE.encode_utf8(&mut buf).as_bytes(), &[0xe2, 0x80, 0x8b]);
+        assert_eq!(ZERO_WIDTH_OPERATORS, ['+', '-', '*', '/', '^', '(', ')']);
+    }
+
+    /// 7 次 replace 逐个生效；**不是**幂等（原版每调一次就再插一层 —— 如实断言）。
+    #[test]
+    fn operator_wrapping_covers_all_seven_and_is_not_idempotent() {
+        let wrapped = wrap_operators_with_zero_width_space("f(x)=x^2*3/4-1+2");
+        for op in ZERO_WIDTH_OPERATORS {
+            let pat = format!("\u{200b}{}", op);
+            assert!(wrapped.contains(&pat), "缺 {:?} 的零宽空格: {:?}", op, wrapped);
+        }
+        // 7 个运算符 ⇒ 7 个零宽空格；再跑一遍就变 14 个（每层替换都在原有 ZWSP 上再加一个）
+        let zwsp = |s: &str| s.matches(ZERO_WIDTH_SPACE).count();
+        assert_eq!(zwsp(&wrapped), 7);
+        let twice = wrap_operators_with_zero_width_space(&wrapped);
+        assert_eq!(zwsp(&twice), 14);
+    }
+
+    /// 前缀串的字节数必须与 `csel/cinc` 的 7/8 对上。
+    #[test]
+    fn prefix_lengths_match_the_cinc_immediates() {
+        assert_eq!(FUNCTION_PREFIX, "f(x) = ");
+        assert_eq!(FUNCTION_PREFIX.len(), 7); // 0x3df228 cinc x2, #7, ne
+        assert_eq!(DERIVATIVE_PREFIX, "dy/dx = ");
+        assert_eq!(DERIVATIVE_PREFIX.len(), 8);
+        assert_eq!(ENTRY_LABEL_SUFFIX, ": ");
+        assert_eq!(ENTRY_LABEL_SUFFIX.as_bytes(), &[0x3a, 0x20]); // strh #0x203a
+        assert_eq!(NEWLINE.as_bytes(), &[0x0a]);
+    }
+}
