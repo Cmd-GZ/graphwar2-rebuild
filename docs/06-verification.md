@@ -26478,3 +26478,531 @@ python3 tools/docsec.py check docs/06-verification.md   # 通过（断号 43/89 
 7. **不做的事**：没有改任何 `src/**`、`client/**`、`tests/**`、护栏/门槛、`fixtures/naming_android*.tsv`
    （T87 原始台账，只读引用；`verify` 重写过的那份已 `git checkout --` 还原）、`fixtures/name_to_addr.tsv`（v1，只读引用）、
    `fixtures/global_triage*`（只读引用）、`tools/function_coverage.py`、`tools/three_way_match.py`。
+## 142. T96 全局台账刷新：`fixtures/global_triage*.tsv` 从 T86 旧快照刷到今天（F1+F2 **409→390**，逐项拆 = **34 出 / 15 入**，任务书那「25 条」= 34−9）+ 按 T93 逐行证据改判 **49 行** → `na:other` + **源码级缺口 ≈399 的推导与「为什么只能算推断」**（2026-11-28，任务 T96 / 分支 `agent/ledger-refresh`）
+
+> 预注册：[`fixtures/global_triage_refresh_plan.txt`](../fixtures/global_triage_refresh_plan.txt)（commit `a8c7864`，**先单独提交、后跑**；跑完只追加勘误，不改判据）。
+> 逐行改判台账：[`fixtures/global_triage_refresh_diff.tsv`](../fixtures/global_triage_refresh_diff.tsv)（**190 行**：哪一行 / 原值 / 新值 / 依据）。
+> 本节所有读数都能用 §142.8 的命令复跑；地址一律 **ELF vaddr**（Ghidra/REA 地址 = 本表 + 0x100000）。
+> 「旧快照」= HEAD 版 `fixtures/global_triage.tsv` / `_modules.tsv` / `_android_census.tsv`（T86 `d877738` 产出，之后从未重跑）。
+
+### 142.0 一页结论
+
+| # | 交付 | 结果 |
+|---|---|---|
+| ① | `fixtures/global_triage_modules.tsv` 重跑 | `lin_F1F2` **409 → 390**、`lin_F3` **118 → 137**、`lin_F3_real` **51 → 39**；82 个模块里 **15 行**变化（§142.2.5）。那「25 条」= **34 条离开 F1/F2**（T85 的 33 + T89 的 1）**− 9 条进入**（T87/T88 4 + T89 5）；而今天相对 T92 报告时刻又 +6（T94 落码）⇒ **与今天只差 19**。任务书里的"今天 384"是 **T92 那一刻**（T94 尚未合并），§142.2.3 逐行归因。 |
+| ② | 按 T93 逐行证据改判 | 49 行（43 `real-missing` + 6 `unknown`）→ `na:other`（**48 `own-generic-mono` + 1 `drop-glue`**）；`real-missing` **542 → 481**、`unknown` **3208 → 3199**（不是任务书估的 499/3202 —— 台账漂移同时把 `real-missing` 减了 12、L4/L5 级联又动了 19 行，逐项在 §142.4）。 |
+| ③a | `f3_triage.tsv` ↔ `function_coverage.tsv` 同步状态 | 仍不同步的 **6 条**，**全部**是 T94 落码后主表未归档（§142.5）；`function_coverage` 的 F3 集合**全部**在 f3 主表里（0 缺）。 |
+| ③b | 源码级缺口 ≈399 | **555 与 399 都是旧口径**。今天 **M = 574**（机器码）、**S = 397（减法式）/ 408（严格集合差）→ 去掉宏产物后候选真源码函数 ≈215**（推断，§142.6）。**招牌 B 口径 319/438 = 72.8 % 一字未动**。 |
+
+**唯一的判据变化**：加了一张**人工裁决表** `tools/global_triage.py::T93_MANUAL_NA`（49 个地址，运行时与 `fixtures/gap_modcontainer.tsv` 交叉校验）。
+五层判据（L1 Location / L2 结构 / L3 串 / L5 布局 / L4 扩散）、`VOL_CAP = 0x721`、六类定义**一个常数都没动**；本轮"刷新"改变的只是**输入台账的当前值**。
+
+### 142.1 预注册的四条自校验（`--self-check`，rc=0）
+
+| 闸 | 判据（预注册 plan §5） | 实测 |
+|---|---|---|
+| **S1 模块表** | 82 个模块**逐值**等于独立重算（只读 `function_coverage.tsv` + `boundary_audit.tsv` + `f3_triage.tsv` + Android 普查表，不经过 `classify()`），行序也要相同 | ✓ 82/82 逐值相同；合计 `android_fns` 1244 / `lin527` 527 / `lin_F1F2` **390** / `lin_F3` **137** / `lin_F3_real` **39** |
+| **S2 527 行** | bucket F1/F2 ⇒ `implemented`；bucket F3 ⇒ `f3_triage.tsv` 标签 | ✓ F1/F2 **390/390** 全 `implemented`；F3 **137** 里 133 按标签对上、4 条落在推断层（**旧快照就有 7 条**，本轮降到 4，既有性质不改，见 §142.9.1 第 2 条） |
+| **S3 MANUAL 面** | 默认跑 vs `--no-manual` 的类别/子类差集**恰等于** 49 个地址；且 49 地址集合 = `gap_modcontainer.tsv` 的 `group ∉ {C}` | ✓ 差集 **49 行**（一个不多、一个不少）；49 地址逐条相等、子类 48+1 相符 |
+| **S4 幂等 + 只读边界** | 连跑两次 MD5 相同；`global_triage_android_census.tsv` 逐字节不变 | ✓ 四个产物连跑两次 MD5 相同；census `git diff --exit-code` 通过 |
+
+> **预注册被我写错了一处（自己抓到，写在这里）**：plan §5 的 S2 原本写成「`layer ∈ {L1-location, L1-t82}` ⇒ 必须在 527 里」。
+> 实测这是**错的**：走 registry/std/gdext Location 分支的行 `layer` 也是 `L1-location`（**2,579 条**不在 527）。
+> 正确写法是**以 527 台账为循环对象**（bucket ⇒ 期望类）。判据方向没变（仍是"台账 ⇒ 类"），只是原句把 `layer` 当成了"在 527"的同义词。已按正确写法实现 S2 并全过。
+
+### 142.2 那「25 条差额」逐项去哪了
+
+先把「差额」的定义钉死：`fixtures/global_triage_modules.tsv` 的 `lin_F1F2` 是按**生成那一刻**的 `function_coverage.tsv` 数 F1/F2 行数得来的，
+而那份 527 台账在 T85/T87/T88/T89/T94 里被改过 5 次。逐 commit 的 F 档计数（`git show <commit>:fixtures/function_coverage.tsv`，527 行恒定）：
+
+| 台账状态 | commit | F1 | F2 | F3 | F1+F2 | 与旧快照的差 |
+|---|---|---|---|---|---|---|
+| **旧快照那一刻** | `d877738`（T86） | 312 | 97 | 118 | **409** | 0（= `lin_F1F2` 合计 409，逐值相符） |
+| T85 负向排除后 | `994b2ef` | 279 | 97 | 151 | 376 | −33 |
+| T87 Android 定名后 | `ab49b25` | 309 | 70 | 148 | 379 | −30 |
+| T88 后 | `615e712` | 310 | 70 | 147 | 380 | −29 |
+| T89 人工裁决后 | `2460fc6` | 313 | 71 | 143 | **384** | **−25** ← **任务书那 25 条 = 这一刻** |
+| T94 落码 6 条后 | `7835b37` | 319 | 71 | 137 | **390** | **−19** ← **今天** |
+| T92 后 | `ee001ce`（HEAD） | 319 | 71 | 137 | 390 | −19 |
+
+⇒ **25 = 34（离开 F1/F2）− 9（进入 F1/F2，截至 T89）**；今天再 +6（T94）⇒ **19 = 34 − 15**。下面是逐行表。
+
+#### 142.2.1 离开 F1/F2 的 34 行（旧快照判 `implemented`，今天 F3 ⇒ 按 T82 标签改判）
+
+| addr | 名字（527 台账） | 模块 | 因谁改档 | 旧快照类 | 新类 |
+|---|---|---|---|---|---|
+| `0x3aaea0` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x3ab290` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x3ab390` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x3ab490` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x3ab690` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x3ab790` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x3ab890` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | graphwar_nodes.rs | T85 负向排除 | implemented/F1 | **na:other/T82** |
+| `0x4b2260` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_plane.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4b23e0` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_plane.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bc490` | `axis_drawer::?::_` | graphwar_plane.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bc6b0` | `axis_drawer::?::_` | graphwar_plane.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bc860` | `axis_drawer::?::_` | graphwar_plane.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bcab0` | `graphwar_button::?::_` | graphwar_plane.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bd650` | `axis_drawer::?::_` | graphwar_long_press_animation.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bd800` | `axis_drawer::?::_` | graphwar_long_press_animation.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4bda50` | `axis_drawer::?::_` | graphwar_long_press_animation.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4d7bc0` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_long_press_animation.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4d7d40` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_long_press_animation.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e0e60` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_button.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e0fe0` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_button.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e5100` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_ad_switch.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e5280` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_ad_switch.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e6dc0` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_function_input.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e6f40` | `axis_drawer::AxisDrawer::__register_methods` | graphwar_function_input.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e8230` | `graphwar_root_node::?::_` | graphwar_button.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e83d0` | `graphwar_button::?::_` | graphwar_button.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e8580` | `graphwar_root_node::?::_` | graphwar_button.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e9730` | `graphwar_button::?::_` | graphwar_ad_switch.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e98e0` | `graphwar_root_node::?::_` | graphwar_ad_switch.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e9af0` | `graphwar_root_node::?::_` | graphwar_ad_switch.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4e9ee0` | `graphwar_root_node::?::_` | graphwar_function_input.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4ea080` | `graphwar_root_node::?::_` | graphwar_function_input.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x4ea2d0` | `graphwar_button::?::_` | graphwar_function_input.rs | T85 负向排除 | implemented/F1 | **na:gdext-glue/T82** |
+| `0x523410` | `—` | graphwar_replay_control.rs | T89 人工裁决 | implemented/F1 | **na:std-mono/T82** |
+
+小计：**T85 的 33 行**（7 行 `na:other` = `graphwar_nodes::get_node_by_name` 的 7 个单态化实例；26 行 `na:gdext-glue` = `AxisDrawer::__register_methods` / 属性访问器壳）
++ **T89 的 1 行**（`0x523410` → `na:std-mono`）。这 34 条**不是"实现丢了"**：是 T85 的「P2 负向排除」把虚抬的 F1 降回 F3（33 条），T89 又把 `0x523410` 判成 std 单态化。
+
+#### 142.2.2 进入 F1/F2 的 9 行（旧快照是 T82/扩散标签 ⇒ 今天 `implemented`）
+
+| addr | 名字 | 模块 | 台账动作 | 旧快照类 | 新类 | 谁做的 |
+|---|---|---|---|---|---|---|
+| `0x3aae60` | `button_manager::ButtonManager::new::{{closure}}` | src/button_manager.rs | F3→F2 | na:gdext-glue/T82 | **implemented/F2** | T89 人工裁决 |
+| `0x3b6e00` | `graphwar_root_node::GraphwarRootNode::ready::{{closu` | src/graphwar_root_node.rs | F3→F1 | na:gdext-glue/T82 | **implemented/F1** | T89 人工裁决 |
+| `0x3b6ed0` | `graphwar_root_node::GraphwarRootNode::ready::{{closu` | src/graphwar_root_node.rs | F3→F1 | na:gdext-glue/T82 | **implemented/F1** | T89 人工裁决 |
+| `0x3b7020` | `graphwar_root_node::GraphwarRootNode::ready::{{closu` | src/graphwar_root_node.rs | F3→F1 | na:gdext-glue/T82 | **implemented/F1** | T89 人工裁决 |
+| `0x3b70b0` | `button_manager::ButtonManager::new::{{closure}}` | src/button_manager.rs | F3→F2 | na:gdext-glue/T82 | **implemented/F2** | T89 人工裁决 |
+| `0x456f80` | `graphwar_function_manager.rs::GraphwarFunctionManage` | src/graphwar_function_manager.rs | F3→F1 | real-missing/T82 | **implemented/F1** | T88 落码 |
+| `0x4dec00` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list` | src/graphwar_lan_vbox.rs | F3→F1 | na:gdext-glue/prop:gdext | **implemented/F1** | T87 定名 |
+| `0x500070` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list` | src/graphwar_lan_vbox.rs | F3→F1 | na:std-mono/prop:std | **implemented/F1** | T87 定名 |
+| `0x5005b0` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list` | src/graphwar_lan_vbox.rs | F3→F1 | na:gdext-glue/prop:gdext | **implemented/F1** | T87 定名 |
+
+#### 142.2.3 T94 的 6 行（= 为什么"今天 384"不对：那是 T92 那一刻的读数）
+
+这 6 条全部来自 T94 落码的 `graphwar_game_state_manager`（`docs/06` §140），F3→F1：
+
+| addr | 名字 | 旧快照类 | 新类 |
+|---|---|---|---|
+| `0x473d00` | `graphwar_game_state_manager.rs::GraphwarGameStateManager::ha` | real-missing/T82 | **implemented/F1** |
+| `0x4764b0` | `graphwar_game_state_manager.rs::GraphwarGameStateManager::re` | real-missing/T82 | **implemented/F1** |
+| `0x4765f0` | `graphwar_game_state_manager.rs::GraphwarGameStateManager::re` | real-missing/T82 | **implemented/F1** |
+| `0x477410` | `graphwar_game_state_manager.rs::GraphwarGameStateManager::re` | real-missing/T82 | **implemented/F1** |
+| `0x477fa0` | `graphwar_game_state_manager::GraphwarGameStateManager::set_l` | real-missing/T82 | **implemented/F1** |
+| `0x478010` | `graphwar_game_state_manager::GraphwarGameStateManager::set_n` | real-missing/T82 | **implemented/F1** |
+
+⇒ 任务书写「今天 `function_coverage.tsv` 的 F1+F2 = 384」= **T92 分支基线的数**（313 + 71）；T94 合并后是 **390**（319 + 71）。
+⇒ 所以那条"差 25"与今天的真实差额是 **19**，两者都对，只是**基准时刻不同**。本节两个数都给，并各自逐行归因。
+
+#### 142.2.4 台账刷新顺手修掉的三类（旧快照同样过期）
+
+① **`sub-refresh` 28 行**：类不变（都是 `implemented`），只是 `F2`（有实现无物证）→ `F1`（有物证）。构成：
+   `graphwar_module_container.rs` 18（T93 C 组 20 条里 18 条；另 2 条旧快照已是 F1）、`graphwar_setup_control.rs` 1、`graphwar_root_node.rs` 3、`graphwar_game_server.rs` 1、`graphwar_lan_vbox.rs` 1。
+   ⇒ 这正是 **T93 §139.9.3 登记过的"两份台账在这里不一致"**（`global_triage.tsv` 给 C 组 2×F1+18×F2，`function_coverage.tsv` 给 20×F1）；重跑后**自动一致**。
+② **`t82-label` 5 行**：地址今天仍是 F3，但 `f3_triage.tsv` 的标签被 T89 §138.5 人工裁决改过（`real-missing` → `na:std-mono`）：`0x3b6c70`、`0x3bfdd0`、`0x3caa20`、`0x522070`、`0x5238c0`。
+③ **`name` 列刷新 58 行**（其中 40 行只换名字、18 行同时改了类/子类）：T87/T89 的定名结果进了 527 台账的 `name` 列。
+   `module` 列 **0 行**变化、`attributed` 列 **0 行**变化（这两列依赖 `boundary_audit.tsv`，本轮没动它）。
+
+#### 142.2.5 `modules.tsv` 逐模块变化（15 行，其余 67 行一字不变）
+
+| module | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `graphwar_game_state_manager.rs` | 52 | 33 | 17→**23** | 16→**10** | 16→**9** | 35→**29** |
+| `graphwar_root_node.rs` | 45 | 23 | 12→**15** | 11→**8** | 1→**1** | 33→**30** |
+| `graphwar_function_input.rs` | 38 | 13 | 13→**8** | 0→**5** | 0→**0** | 25→**30** |
+| `graphwar_button.rs` | 35 | 6 | 6→**1** | 0→**5** | 0→**0** | 29→**34** |
+| `graphwar_nodes.rs` | 29 | 11 | 11→**4** | 0→**7** | 0→**0** | 18→**25** |
+| `graphwar_plane.rs` | 27 | 10 | 10→**4** | 0→**6** | 0→**0** | 17→**23** |
+| `graphwar_audio_control.rs` | 22 | 7 | 3→**3** | 4→**4** | 4→**2** | 19→**19** |
+| `graphwar_lan_vbox.rs` | 19 | 11 | 2→**5** | 9→**6** | 0→**0** | 17→**14** |
+| `graphwar_function_manager.rs` | 19 | 7 | 6→**7** | 1→**0** | 1→**0** | 13→**12** |
+| `graphwar_play_screen_control.rs` | 16 | 10 | 6→**6** | 4→**4** | 4→**3** | 10→**10** |
+| `graphwar_long_press_animation.rs` | 14 | 7 | 7→**2** | 0→**5** | 0→**0** | 7→**12** |
+| `graphwar_ad_switch.rs` | 12 | 6 | 6→**1** | 0→**5** | 0→**0** | 6→**11** |
+| `graphwar_replay_control.rs` | 7 | 2 | 2→**1** | 0→**1** | 0→**0** | 5→**6** |
+| `button_manager.rs` | 5 | 2 | 0→**2** | 2→**0** | 0→**0** | 5→**3** |
+| `graphwar_logger.rs` | 5 | 2 | 1→**1** | 1→**1** | 1→**0** | 4→**4** |
+| **合计** | 1244 | 527 | 409→**390** | 118→**137** | 51→**39** | 835→**854** |
+
+> ⚠ `android_fns` 列**全部不变**（它只读 Android `.symtab`）：`global_triage_android_census.tsv` 重跑后**逐字节相同**。
+> `gap_proxy = android_fns − lin_F1F2` 是**代理估计**（Android 比 Linux 少 654 条函数，平台层差异未扣）——它跟着 `lin_F1F2` 变是设计如此。
+
+### 142.3 按 T93 逐行证据改判的 49 行（`real-missing` 43 + `unknown` 6 → `na:other`）
+
+**为什么现有判据判不了、必须人工补一条**：L2 的结构规则只认 **std 排序/比较单态化**（A/B/C 三组），
+而 `GraphwarModuleContainer::add_module::<M>` / `get_module::<M>` 是**本 crate 自己的泛型单态化**（TypeId 常量 + `dyn Any` vtable + 调 `HashMap::insert`/`hash_one`）；
+这 49 条**一个 `panic::Location` 都没有**（T93 C1 正对照：A/B/D 组 49 条 `locs` 为空）⇒ 进不了按 Location 建的 527，只能落到 L5/L4 推断层 ⇒ 旧快照把它们判成 `real-missing/prop:game`（"把已实现函数的邻居也算成 real"，T86 §134.7 自己预告过的失败模式）。
+
+证据 = `fixtures/gap_modcontainer.tsv`（T93 的 69 行逐行台账）× `docs/06` §139.2–§139.4：三个**等距块**（x86 `0x4694f0 + i·0xa0` / `0x46a490 + i·0x170` / `0x46c5a0 + i·0x220`，本轮独立按函数体形态复算）+ 同构建 `TypeId` 常量锚定 + 装配点调用序配对（4 处 22/20/1/1）⇒ **48 条 = 2 个泛型方法的其它实例化副本 + 1 条编译器 drop glue**，源码函数 3 个。
+
+| # | addr | 组 | 类型参数 M | 旧快照类 | 新类 |
+|---|---|---|---|---|---|
+| 1 | `0x4694f0` | A `add_module` | `GraphwarLocalPlayerManager` | unknown/no-evidence | **na:other/own-generic-mono** |
+| 2 | `0x469590` | A `add_module` | `GraphwarColorManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 3 | `0x469630` | A `add_module` | `GraphwarEffectManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 4 | `0x4696d0` | A `add_module` | `GraphwarServerConnectionHandler` | unknown/no-evidence | **na:other/own-generic-mono** |
+| 5 | `0x469770` | A `add_module` | `GraphwarTeamManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 6 | `0x469810` | A `add_module` | `GraphwarTickHandler` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 7 | `0x4698b0` | A `add_module` | `GraphwarGraphicsManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 8 | `0x469950` | A `add_module` | `GraphwarClientConnectionHandler` | unknown/no-evidence | **na:other/own-generic-mono** |
+| 9 | `0x4699f0` | A `add_module` | `GraphwarBanList` | unknown/no-evidence | **na:other/own-generic-mono** |
+| 10 | `0x469a90` | A `add_module` | `GraphwarModeManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 11 | `0x469b30` | A `add_module` | `GraphwarLifeManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 12 | `0x469bd0` | A `add_module` | `FunctionHistoryRecorder` | unknown/no-evidence | **na:other/own-generic-mono** |
+| 13 | `0x469c70` | A `add_module` | `GraphwarGameRecorder` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 14 | `0x469d10` | A `add_module` | `GraphwarEntityEffectManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 15 | `0x469db0` | A `add_module` | `GraphwarFunctionManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 16 | `0x469e50` | A `add_module` | `GraphwarComputerPlayerManager` | unknown/no-evidence | **na:other/own-generic-mono** |
+| 17 | `0x469ef0` | A `add_module` | `GraphwarRankManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 18 | `0x469f90` | A `add_module` | `GraphwarPlayerManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 19 | `0x46a030` | A `add_module` | `GraphwarTurnManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 20 | `0x46a0d0` | A `add_module` | `GraphwarPlanePosManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 21 | `0x46a170` | A `add_module` | `GraphwarSoldierManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 22 | `0x46a210` | A `add_module` | `GraphwarGameStateManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 23 | `0x46a2b0` | A `add_module` | `GraphwarNameManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 24 | `0x46a350` | A `add_module` | `GraphwarTargetManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 25 | `0x46a3f0` | A `add_module` | `GraphwarObstacleManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 26 | `0x46a490` | B `get_module` | `GraphwarPlayerManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 27 | `0x46a600` | B `get_module` | `GraphwarEffectManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 28 | `0x46a770` | B `get_module` | `GraphwarSoldierManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 29 | `0x46a8e0` | B `get_module` | `GraphwarGraphicsManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 30 | `0x46aa50` | B `get_module` | `GraphwarTickHandler` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 31 | `0x46abc0` | B `get_module` | `GraphwarModeManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 32 | `0x46ad30` | B `get_module` | `GraphwarPlanePosManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 33 | `0x46aea0` | B `get_module` | `GraphwarGameRecorder` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 34 | `0x46b010` | B `get_module` | `FunctionHistoryRecorder` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 35 | `0x46b180` | B `get_module` | `GraphwarClientConnectionHandler` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 36 | `0x46b2f0` | B `get_module` | `GraphwarServerConnectionHandler` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 37 | `0x46b460` | B `get_module` | `GraphwarComputerPlayerManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 38 | `0x46b5d0` | B `get_module` | `GraphwarColorManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 39 | `0x46b740` | B `get_module` | `GraphwarTurnManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 40 | `0x46b8b0` | B `get_module` | `GraphwarTeamManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 41 | `0x46ba20` | B `get_module` | `GraphwarNameManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 42 | `0x46bb90` | B `get_module` | `GraphwarFunctionManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 43 | `0x46bd00` | B `get_module` | `GraphwarObstacleManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 44 | `0x46be70` | B `get_module` | `GraphwarGameStateManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 45 | `0x46bfe0` | B `get_module` | `GraphwarRankManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 46 | `0x46c150` | B `get_module` | `GraphwarTargetManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 47 | `0x46c2c0` | B `get_module` | `GraphwarLifeManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 48 | `0x46c430` | B `get_module` | `GraphwarLocalPlayerManager` | real-missing/prop:game | **na:other/own-generic-mono** |
+| 49 | `0x527e80` | D drop glue | `GraphwarModuleContainer` | real-missing/prop:game | **na:other/drop-glue** |
+
+⇒ 改判前分布（工具自报）：**`real-missing/prop:game` 43 + `unknown/no-evidence` 6 = 49**；改判后 **`na:other/own-generic-mono` 48 + `na:other/drop-glue` 1**。
+⇒ 逐行依据在 `fixtures/global_triage_refresh_diff.tsv` 的 `kind=manual-t93` 行（含 T93 的组别与类型参数）。
+
+**这 49 行改判对三个总数的贡献（干净可核）**：`real-missing` −43、`unknown` −6、`na:other` +49。
+
+### 142.4 重跑前后计数（六类 + 证据层 + 级联归因）
+
+| 类 | 旧快照（HEAD） | `--no-manual` 基线 | **最终（含 T93）** | 净变化 | 变化构成 |
+|---|---|---|---|---|---|
+| `implemented` | 409 | 390 | **390** | -19 | −34（T85 33 + T89 1）+15（T87 4 + T88 1 + T89 5 + T94 6） |
+| `real-missing` | 542 | 524 | **481** | -61 | −7（台账上抬的 7 条 T82-real）+ −5（T89 标签改成 std-mono）+ −6（L4/L5 级联）+ **−43（T93 人工裁决）** |
+| `na:std-mono` | 1494 | 1497 | **1497** | +3 | +1（`0x523410` 出柜）−1（`0x500070` 入柜）+5（T89 标签）−2（级联） |
+| `na:gdext-glue` | 1456 | 1486 | **1486** | +30 | +26（T85 出柜）+11（级联）−7（5 条 T82 + 2 条 prop 入柜） |
+| `na:other` | 6154 | 6161 | **6210** | +56 | +7（`get_node_by_name` 7 个单态化实例）+ **+49（T93 人工裁决）** |
+| `unknown` | 3208 | 3205 | **3199** | -9 | −3（级联）+ **−6（T93 人工裁决）** |
+| 合计 | 13,263 | 13,263 | **13,263** | 0 | — |
+
+**证据层变化**（推断层在缩、硬证据层在长）：
+
+| layer | 旧快照 | 最终 | 说明 |
+|---|---|---|---|
+| `L1-location` | 2988 | **2969** | −19：34 条掉档 + 15 条上抬（净 −19） |
+| `L1-t82` | 111 | **133** | T86 §134.4 那批 T82 裁决现在真按 F3 生效（+22） |
+| `L1-t93` | 0 | **49** | **新增层**：T93 人工裁决 49 行 |
+| `L2-struct` | 41 | **41** | — |
+| `L3-str` | 497 | **497** | — |
+| `L4-prop` | 1195 | **1152** | −43：原来靠扩散票判 real 的 43 条被 T93 改判 |
+| `L5-region` | 5278 | **5278** | — |
+| `L-none` | 3153 | **3144** | −9（−3 级联、−6 人工裁决） |
+
+#### 142.4.1 L4/L5 级联的 19 行（**全部**在推断层，逐条归因）
+
+改族的硬种子 = 上面 34 + 15 = 49 条（`implemented`→`na:*` 的 34 条以前是 **game 族硬票**，改判后变 third/gdext/std 硬票；15 条反向变 game）。
+`apply_region_prior` 的 region 投票分子与 `apply_propagation` 的种子集都因此变化 ⇒ 19 行无硬证据的行改族：
+
+| addr | 旧类（层） | 新类（层） | 归因 |
+|---|---|---|---|
+| `0x3ba3e0` | na:std-mono/prop:std（`L4-prop`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x3b0000`）里 4 条改族种子（L5 布局局部性） |
+| `0x3c8590` | real-missing/prop:game（`L4-prop`） | unknown/no-evidence（`L-none`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x3cc7c0` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x3cd4a0` | real-missing/prop:game（`L4-prop`） | unknown/no-evidence（`L-none`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x403400` | na:std-mono/prop:std（`L4-prop`） | unknown/no-evidence（`L-none`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x405a60` | real-missing/prop:game（`L4-prop`） | unknown/no-evidence（`L-none`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x419e10` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x485630` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x497270` | real-missing/prop:game（`L4-prop`） | unknown/no-evidence（`L-none`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x4c6b40` | real-missing/prop:game（`L4-prop`） | na:std-mono/prop:std（`L4-prop`） | **调用图**：经邻居链从改族种子传来（L4 扩散，2–3 轮） |
+| `0x4da1e0` | real-missing/prop:game（`L4-prop`） | unknown/no-evidence（`L-none`） | 同 64 KiB region（`0x4d0000`）里 3 条改族种子（L5 布局局部性） |
+| `0x4da330` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x4d0000`）里 3 条改族种子（L5 布局局部性） |
+| `0x4da440` | real-missing/prop:game（`L4-prop`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x4d0000`）里 3 条改族种子（L5 布局局部性） |
+| `0x4db2e0` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x4d0000`）里 3 条改族种子（L5 布局局部性） |
+| `0x501080` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x500000`）里 2 条改族种子（L5 布局局部性） |
+| `0x501150` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x500000`）里 2 条改族种子（L5 布局局部性） |
+| `0x501230` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x500000`）里 2 条改族种子（L5 布局局部性） |
+| `0x501360` | na:std-mono/prop:std（`L4-prop`） | real-missing/prop:game（`L4-prop`） | 同 64 KiB region（`0x500000`）里 2 条改族种子（L5 布局局部性） |
+| `0x5013b0` | unknown/no-evidence（`L-none`） | na:gdext-glue/prop:gdext（`L4-prop`） | 同 64 KiB region（`0x500000`）里 2 条改族种子（L5 布局局部性） |
+
+其中 **10/19** 与改族种子同 region；另外 **9/19** 的直接邻居链（用 `.text` 调用图查，可复跑见 §142.8 第 6 条）都指回种子，例如：
+`0x405a60` 的 7 个直接邻居就是 7 条 `get_node_by_name` 单态化实例（game→third）；`0x4c6b40` 直接调 `0x523410`（game→std）；`0x403400` 直接调 `0x500070`（→game）。
+**这 19 行没有一条在 527 台账里**，所以 527 层的结论不受影响；它们的类本来就是"推断层"的类，改的是**推断的出处不是事实**。
+
+### 142.5 `f3_triage.tsv` ↔ `function_coverage.tsv` 的同步状态（T86 报过 35 条，现在 6 条）
+
+| 检查 | 结果 |
+|---|---|
+| f3_triage 主表行数 | **143**（另有 11 行 `# [归档]` 注释行，不参与机读计数） |
+| 主表里「cov 已不是 F3」的陈旧行 | **6**，全部 `now=F1`（T94 落码的 6 个 `graphwar_game_state_manager` 函数：`0x473d00`/`0x4764b0`/`0x4765f0`/`0x477410`/`0x477fa0`/`0x478010`） |
+| cov 里 F3 但 f3_triage 主表**没有**裁决 | **0**（137 条 F3 全部有标签 ⇒ `lin_F3` 可精确算成 137） |
+| 归档段里「cov 仍是 F3」的行（错归档） | **0** |
+
+⇒ **结论**：T92 把 11 行归档之后，同步状态是对的；剩下 6 条陈旧行的唯一原因是 **T94 在 T92 之后合并**（T92 的归档清单里没有它们）。
+⇒ **修法（本轮不做，登记给台账主人）**：把这 6 行按 T92 的 §10 E10 流程移到 `fixtures/f3_triage.tsv` 末尾的 `# [归档]` 段（`real-missing ⇒ 已离开 F3（现 F1：…）`）。本轮任务范围把 `fixtures/f3_triage*.tsv` 列为禁区（T92 刚改）。
+
+### 142.6 源码级缺口：≈555 与 ≈399 都是旧口径 —— 推导、今天的读数、为什么只能算推断
+
+#### 142.6.1 三个数各是什么
+
+| 口径 | 定义 | T86/T93 当时 | **今天（本轮实测）** |
+|---|---|---|---|
+| **M 机器码** | `Android 游戏本 crate 具名地址（非 drop glue）− Linux F1+F2 行数` | 964 − 409 = **555** | 964 − 390 = **574** |
+| **S 减法式**（T93 §139.5 写法） | `Android 去重源码级名字数 − Linux F1+F2 去重名字数` | 693 − 294 = **399** | 693 − 300 = **393**（raw 名字）／693 − 296 = **397**（归一化后） |
+| **S 集合差**（本轮补的严格写法） | `|A \ L|` = Android 名字里**没有对应已实现名字**的个数 | 未做 | **408** |
+
+> ⚠ **555 与 399 都不是今天能引用的数**：555 的被减数是**旧快照的 409**（今天是 390 ⇒ 574）；399 的被减数是**T92 时刻的 294 个名字**（今天 296/300 ⇒ 397/393）。
+> 这不是"缺口变大/变小"，是**被减数换了**。
+
+#### 142.6.2 逐步算式（`|A|`、`|L|` 怎么来的）
+
+```text
+Android 2.0.60 arm64（.symtab 未剥离，只读）
+  .text 内 FUNC 按地址去重 → 游戏本 crate 地址 1244
+    其中 core::ptr::drop_in_place<…>  280（编译器生成，不算源码函数）
+    其余                              964  ← 「机器码条数」分子
+  964 条按「抹 h<hash> 的 demangle 名」去重 → 693 个源码级名字 |A|（冗余 271 = 单态化副本）
+
+Linux x86-64（function_coverage.tsv，今天）
+  F1 319 + F2 71 = 390 行（其中 2 行无名字 ⇒ 388 有名行）
+  388 有名行去重 → 300（raw 名字串）／归一化后 296 |L|
+
+正对照（名字可比性）：|L ∩ A| = 285/296 = 96.3% 的 Linux 名字能在 Android 名字集里逐字找到
+  ⇒ 归一化后的两个名字空间可比（T93 没做这一步，也没有这个闸）
+
+口径 M = 964 − 390 = 574
+口径 S（减法式） = 693 − 296 = 397      （隐含假设 L ⊆ A）
+实测 L ⊄ A：L 里 11 个名字在 A 里不存在（`?::_`、`setup_level_N`、`panic_cold_explicit` 等）
+  ⇒ 严格写法 |A \ L| = 693 − 285 = 408
+408 拆开 = gdext 虚/注册壳 89（`__register_methods`/`class_id`/`virtual_fn`/`draw`/`process`…，宏生成）
+         + serde/derive 产物 104（`clone`/`deserialize`/`__Visitor`/`expecting`…，宏生成）
+         + **候选真源码函数 215**
+```
+
+#### 142.6.3 为什么它只能算**推断**（不能当观测，更不能改招牌）
+
+1. **两侧名字来自两份不同构建**（arm64 2.0.60 与 x86-64 2.0.60），名字集**不能逐条对齐**：Android 有被整体内联掉的函数，Linux 有 Android 没有的闭包副本 / `panic_cold_explicit` / `?::_` 未知名。
+   名字只是**代理**，不是同一份源码的函数表。
+2. **减法式隐含 `L ⊆ A`，实测不成立**（11 条反例）⇒ `|A| − |L|` 不等于 `|A \ L|`，差 11 条。
+   T93 的 399 用的就是这个减法式，而且用的是 **raw 名字**（`graphwarrust::` 前缀、`<A as Trait>::` 形态都没归一化）——两个名字空间写法不同，直接相减本身就不合法。
+3. **`A` 里混着大量宏产物**（89 + 104 = 193 条），它们**不是源码函数**；`215` 也只是**上界**（还含 Android 独有、Linux 内联掉、命名噪声三类）。
+4. 分母也不干净：Linux 侧 F1+F2 只覆盖"能按 Location 归属的 527"，它自己就是**可度量下限**（`tools/function_coverage.py` 文件头写明）。
+
+#### 142.6.4 决定：文档里给**双口径并列**，招牌数一个字不改
+
+- 写 **M = 574（机器码条数，观测级算术但口径含副本回声）** 与 **S = 397（减法式）/ 408（严格集合差）→ 去宏产物后候选真源码函数 ≈215（推断上界）**，每条都标证据档与"缺什么"。
+- **不把任何 S 口径写成陈述句**，也不把 555/399 当今天的数（它们各自的基准写清：555 = 409 台账、399 = 294 名字）。
+- **招牌数仍是 `tools/function_coverage.py --stats` 的口径 B = 319/438 = 72.8 %**，本节**一处都不改**；`docs/00`/`README`/`HANDOVER` 也不在本轮范围内。
+- 下一步（若要收口）：把两侧名字**逐条对齐**（用 Location/TypeId/调用形态而不是名字串），才能把 215 变成可核的清单——本轮不做。
+
+#### 142.6.5 三口径读数（本轮只读复算，一位未变）
+
+| 口径 | 读数 | 说明 |
+|---|---|---|
+| **A 含 na（分母 527）** | **319 / 527 = 60.5 %** | 保守/历史对照 |
+| **B 剔 na（分母 438）** | **319 / 438 = 72.8 %** | ← **招牌数**（分子分母同口径剔 na） |
+| **B′ 只剔强 na（分母 445）** | **319 / 445 = 71.7 %** | 区间下界（`na:other` 那 7 条留回分母） |
+
+> `f3_triage.tsv` 本轮**一字未改**（它是分母的来源），所以三口径与 T94 合并后完全一致 —— 这正是"本轮没有靠改判据抬招牌"的自证。
+
+### 142.7 门槛读数（本机实跑，2026-11-28；全部通过）
+
+| 门槛 | 读数 | 与预注册/任务书 |
+|---|---|---|
+| `cargo test --offline` | **1599 passed / 0 failed / 1 ignored**（74 个 test 二进制求和） | 任务书 1599/0/1 ✔ |
+| `cargo test --offline --features gdext-bindings` | **1748 passed / 0 failed / 1 ignored** | 任务书 1748/0/1 ✔ |
+| `tools/coverage_matrix.py --check` | **OK** | ✔ |
+| `tools/check_doc_refs.py` | **rc=0** | ✔ |
+| `tools/docsec.py check docs/06-verification.md` | 无重复号 / 无冲突标记 / 无空心节（断号 [43, 89] 是两个历史缺口，不算错） | ✔ |
+| 三轴 · `fire`（`replay_attrib --drive fire --policy default`，冻结快照 401 份） | 结算批 1080、**内容命中 647** | 647 ✔ 一位未退 |
+| 三轴 · `batch`（`--drive batch --policy default`） | 结算批 1080、**内容命中 647** | 647 ✔ |
+| 三轴 · `batch_conv`（`batch_conv --policy strict`） | 种类 1075/1080、**内容命中 637**（多发批 32 + 单发批 605）；变好 128 / 变差 0 | 637 ✔ |
+| `tools/boundary_audit.py --check` | 527 个可归属函数：match **441** / **mismatch 0** / multi 86 | mismatch 0 ✔ |
+| `tools/f3_triage.py --control` | **六组全过，rc=0** | ✔ |
+| `tools/global_triage.py --control` | **A–D 全过，rc=0**（其中 B/B′ 6 条标 `△ 台账已变档`，见 §142.9.2） | ✔ |
+| `tools/global_triage.py --self-check` | **S1/S2/S3 全过，rc=0**（§142.1） | ✔ |
+
+> 三轴只读冻结快照（401 份回放 + `MANIFEST.tsv` + `SHA256SUMS` = 403 个条目）；"文件 286（读失败 117）"是既有现象，与 §41 有关，本轮无关。
+> 本轮**没有改 `src/**`、`tests/**`、`client/**`**（改动的只有 `tools/global_triage.py` 与 `fixtures/global_triage*.tsv` + `docs/06`）⇒ cargo / gdext / 三轴 / 像素类门槛本来就不该动，实测也确实一位未变。
+
+### 142.8 复算命令（照抄可跑；`$WT` = 本工作树，`$PY` = `$WT/.reference/venv/bin/python`）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t96 ; cd $WT
+PY=$WT/.reference/venv/bin/python
+
+# 1) 旧快照那一刻的 527 台账状态（409 的来源），以及 §142.2 那张表：
+for c in d877738 994b2ef ab49b25 615e712 2460fc6 7835b37 ee001ce; do
+  printf "%-9s " $c; git show $c:fixtures/function_coverage.tsv | \
+  awk -F'\t' 'NR>14&&NF>6{c[$7]++}END{printf "F1=%d F2=%d F3=%d\n",c["F1"],c["F2"],c["F3"]}'; done
+
+# 2) 重跑（顺序固定；前两步建索引 + 控制组必须过）
+$PY tools/global_triage.py --build-index          # ~12 s，缓存到 .agent-work/metric-total/
+$PY tools/global_triage.py --control              # rc=0 才继续
+mkdir -p .agent-work/t96 && git show HEAD:fixtures/global_triage.tsv > .agent-work/t96/gt_old.tsv
+$PY tools/global_triage.py --no-manual --out .agent-work/t96/gt_nomanual.tsv   # 基线，不写 fixtures
+$PY tools/global_triage.py                        # 默认 = 含 T93 人工裁决 → 写 fixtures/global_triage.tsv
+$PY tools/global_triage.py --android-census       # → fixtures/global_triage_modules.tsv + _android_census.tsv
+$PY tools/global_triage.py --self-check --baseline .agent-work/t96/gt_nomanual.tsv   # S1/S2/S3，rc=0
+$PY tools/global_triage.py --write-diff .agent-work/t96/gt_old.tsv   # → fixtures/global_triage_refresh_diff.tsv
+
+# 3) 六类计数 + 证据层（本节所有计数表）：
+awk -F'\t' 'NR>5&&$0!~/^#/{c[$7]++}END{for(k in c)printf "%-16s %d\n",k,c[k]}' fixtures/global_triage.tsv
+awk -F'\t' 'NR>5&&$0!~/^#/{c[$9]++}END{for(k in c)printf "%-16s %d\n",k,c[k]}' fixtures/global_triage.tsv
+# 旧快照的同两条（把 fixtures/global_triage.tsv 换成 git show HEAD:fixtures/global_triage.tsv 即可）
+
+# 4) 模块表合计：
+awk -F'\t' 'NR>5{a+=$2;b+=$3;c+=$4;d+=$5;e+=$6}END{printf "android=%d lin527=%d F1F2=%d F3=%d F3real=%d\n",a,b,c,d,e}' fixtures/global_triage_modules.tsv
+
+# 5) 三口径（本轮只读，`f3_triage.tsv` 一字未改）
+python3 tools/function_coverage.py --stats | sed -n "/三口径/,/口径 C/p"
+
+# 6) §142.6 源码级缺口（口径 M / S / 正对照 / A\L 的三段拆解）
+$PY - <<'PY'
+import sys, re, collections, subprocess
+sys.path.insert(0, "tools")
+import naming_android as NA
+e = NA.Elf64(".reference/steam/android-2.0.60/libgraphwarrust.so"); T = e.sec(".text")
+by = collections.defaultdict(set)
+for s in e.symtab():
+    if s["type"] == 2 and s["size"] and T["addr"] <= s["value"] < T["addr"] + T["size"]:
+        by[s["value"]].add(s["name"])
+game = [sorted(v)[0] for v in by.values() if any("graphwarrust" in n for n in v)]
+dm = [re.sub(r"::h[0-9a-f]{16}$", "", d) for d in subprocess.run(
+    ["c++filt", "--format", "rust"], input="\n".join(game), capture_output=True, text=True).stdout.strip().split("\n")]
+nonglue = [d for d in dm if "drop_in_place" not in d]
+def norm(n):
+    n = n.strip()
+    m = re.match(r"^<(.*) as ([^>]+)>::(.*)$", n)
+    if m: n = m.group(1) + "::" + m.group(3)
+    n = n.replace("graphwarrust::", "")
+    n = re.sub(r"\b([a-z0-9_]+)\.rs::", r"\1::", n)
+    n = re.sub(r"::h[0-9a-f]{16}", "", n)
+    return n
+A = {norm(x) for x in nonglue}
+rows = [l.rstrip("\n").split("\t") for l in open("fixtures/function_coverage.tsv") if l[:1] == "0"]
+f12 = [r for r in rows if r[6] in ("F1", "F2")]
+lnames = [r[1] for r in f12 if r[1] not in ("", "—")]
+L = {norm(x) for x in lnames}
+GLUE = re.compile(r"__(register|virtual|default_virtual|init|inner_init|to_string|godot|class_id|user_)"
+                  r"|::class_id$|::virtual_fn$|::draw$|::process$|::ready$|::_ready$")
+DERIVE = re.compile(r"::(clone|deserialize|serialize|expecting|visit_|from_tag|to_tag|default|fmt|eq|hash|deref|drop"
+                    r"|__Visitor|__Field|__Deserialize|from_str|to_string)$|__Visitor|__Field")
+diff = sorted(A - L); glue = [x for x in diff if GLUE.search(x)]
+serde = [x for x in diff if not GLUE.search(x) and DERIVE.search(x)]
+rest = [x for x in diff if x not in glue and x not in serde]
+print("Android 1244 游戏地址 = 280 drop glue + 964；去重名字 |A| = %d" % len(A))
+print("Linux F1+F2 %d 行（有名 %d）⇒ raw %d / 归一化 %d" % (len(f12), len(lnames), len(set(lnames)), len(L)))
+print("正对照 |L∩A| = %d/%d = %.1f%%" % (len(L & A), len(L), 100.0*len(L & A)/len(L)))
+print("M = 964 − %d = %d" % (len(f12), 964 - len(f12)))
+print("S 减法式 = %d − %d = %d（归一化）／ %d（raw）" % (len(A), len(L), len(A)-len(L), len(A)-len(set(lnames))))
+print("S 集合差 = %d − %d = %d = gdext壳 %d + serde产物 %d + 候选真源码函数 %d"
+      % (len(A), len(L & A), len(A)-len(L&A), len(glue), len(serde), len(rest)))
+PY
+
+# 7) §142.4.1 的级联归因（region 归属 + 调用图邻居链）
+$PY - <<'PY'
+import pickle, collections
+k, data = pickle.load(open(".agent-work/metric-total/text_index.pkl", "rb"))
+funcs, callers = data["funcs"], data["callers"]
+nbr = collections.defaultdict(set)
+for tgt, cs in callers.items():
+    for c in cs:
+        if tgt in funcs and c in funcs:
+            nbr[c].add(tgt); nbr[tgt].add(c)
+rows = [l.rstrip("\n").split("\t") for l in open("fixtures/global_triage_refresh_diff.tsv") if not l.startswith("#")]
+rows = [r for r in rows if r[0] != "kind"]
+seeds = {int(r[1], 16) for r in rows if r[0] in ("ledger-lost", "ledger-gain")}
+for r in rows:
+    if r[0] != "cascade": continue
+    a = int(r[1], 16)
+    same = sorted(x for x in seeds if x // 0x10000 == a // 0x10000)
+    nb = sorted(x for x in nbr[a] if x in seeds)
+    print("%#x region %s：同 region 种子 %d 条 / 直接邻居种子 %s"
+          % (a, "命中" if same else "无", len(same), [hex(x) for x in nb] or "无（靠级联行的链式投票）"))
+PY
+```
+
+### 142.9 遗留 / 我写错了什么 / 建议下一步
+
+#### 142.9.1 遗留（本轮不做，写清缺什么）
+
+1. **`T93_MANUAL_NA` 故意不反哺 L4/L5**：49 行改判发生在扩散**之后**，所以它们不当种子。
+   影响：它们的邻居若曾从它们那里拿到 `game` 族票，仍保留旧标签（那 19 行级联里有一部分是这类）。
+   要不要改：若把 `L1-t93` 加进 `HARD_LAYERS` 当 third 族种子重跑，级联会再动一批行 ⇒ **需要逐条复核**，本轮不做（会破坏"改判面恰好 49 行"的自校验）。
+2. **4 条 527 行的 L1-t82 被推断层覆盖**（`0x44e8f0`/`0x44f990` → `na:gdext-glue/region:gdext`；`0x5153f0` → `real-missing/region:game`；`0x520100` → `real-missing/prop:game`）。
+   **旧快照有 7 条同类**（本轮 7→4），所以不是本轮引入的回归；根因是 `apply_region_prior()` 里那行
+   `if now is not None and r["layer"] in HARD_LAYERS and fam in ("game",): pass` 是**空操作**（后面没有 `continue`）⇒ game 族的 region 会盖掉硬证据。
+   修它会改变判据语义（本轮预注册 §2.1 明确"一字不改"），登记给下一轮；**证据档**：这是"硬证据优先"原则未落实，不是数据问题。
+3. **`fixtures/global_triage_sampling.tsv` 已过期**：它是 T86 那次抽样人工复核的产物，抽样行是按**旧分类**抽的。本轮**没有**重新抽样（13,263 条里 `unknown` 还有 3199 条，重抽样是独立工作量），
+   ⇒ 引用抽样错误率时必须说明"基于 T86 旧分类"。**下一步**：按本轮新表重抽（费率照 T86 §E3：`real-missing` 10% / `na:*` 2% / `unknown` 1%）并做正/负对照。
+4. **`na:other / own-generic-mono` 只覆盖已取证的一族**：T93 取证的 49 条已改判；但同一失败模式（本 crate 泛型单态化被判成 real）在别的模块**可能还有**。
+   已知候选：`graphwar_game_client` 的 `get_module` 单态化 19 条（T62 落码过一批）、`setup_control`/`root_node` 的属性访问器壳。**下一步**：按 T93 的四条轴（块形态 / TypeId / 装配序 / L 键）逐块取证。
+
+#### 142.9.2 我写错了什么（预注册 vs 实测，四处）
+
+| # | 预注册写的 | 实测/更正 | 影响 |
+|---|---|---|---|
+| 1 | plan §5 S2：「`layer ∈ {L1-location, L1-t82}` ⇒ 必须在 527 里」 | **错**：走 registry/std/gdext Location 分支的行 `layer` 也是 `L1-location`（**2,579 条**不在 527）。正确写法 = 以 527 台账为循环对象 | 判据方向不变（仍是"台账 ⇒ 类"），只是原句把 `layer` 当成"在 527"的同义词；S2 已按正确写法实现并全过 |
+| 2 | plan §3.6：L1 确定性的六类期望 `implemented 390 / real-missing 530 / std 1499 / gdext 1475 / other 6161 / unknown 3208` | 实测基线（`--no-manual`）= **390 / 524 / 1497 / 1486 / 6161 / 3205** —— 差的 24 行是 **L4/L5 级联**（预注册 §3.5 说了"不可先验枚举"，但我仍把 §3.6 的算术当成了完整期望） | 级联 **19 行已逐条归因**（§142.4.1，10 条同 region + 9 条调用图邻居链）；`implemented` / `na:other` 两个数**逐值对上** |
+| 3 | plan §3.1.5：「只换 sub 的 20 行」（= T93 C 组） | 实测 **28 行**：C 组 18（另 2 条旧快照已是 F1）+ 3 `root_node` + 1 `game_server` + 5 `setup_control` + 1 `lan_vbox` | 少算的 10 行是 T87/T89 带来的 `F2→F1` 物证升档；已全列进 `global_triage_refresh_diff.tsv`（`kind=sub-refresh`） |
+| 4 | plan §5 S6：「`--control` rc=0，D 组按台账已变档豁免」 | A/B/B′ 组也会撞同一件事：**6 条**（3 `root_node` 闭包 + 3 `lan_vbox` 闭包）的期望是 T87/T89 落码**之前**的状态 | 给 A/B/B′ 加上 D 组那条**同一条豁免**（输出标 `△ 台账已变档`，独立列照旧），**没有改判据**；rc 从 1 回到 0 |
+
+> 反向核对（预注册**对了**的部分）：§4.1 的模块表预测 **82 个模块逐值全中**（含 `lin_F1F2` 390 / `lin_F3` 137 / `lin_F3_real` 39 与 15 行变化）；
+> §3.1.1 的 34 行、§3.1.2+3.1.3+3.1.4 的 15 行、§3.2 的 49 行、§3.3 的 5 行 —— **逐行逐值全中**。
+
+#### 142.9.3 任务书里今天不成立的两个数（本轮实测）
+
+| 任务书写的 | 实测 | 原因 |
+|---|---|---|
+| 「今天 `function_coverage.tsv` 的 F1+F2 = **384**（409 − 384 = 25）」 | **390**（409 − 390 = **19**） | 384 是 **T92 分支基线**的读数（313 + 71）；T94 合并后 +6（`docs/06` §140 的 6 个落码函数）⇒ 390。两个数都对，**基准时刻不同**（§142.2.3 逐行） |
+| 「改判后 `real-missing` 542→**约 499**、`unknown` 3208→**约 3202**」 | **481** / **3199** | 499 = 542 − 43 只在"只加人工裁决、不做台账刷新"时成立。台账刷新先把 `real-missing` 降到 524（−7 上抬 + −5 标签 + −6 级联），再 −43 ⇒ **481**；`unknown` 先 3208→3205（级联），再 −6 ⇒ **3199** |
+
+#### 142.9.4 建议下一步（给 lead 排活）
+
+1. **`fixtures/f3_triage.tsv` 的 6 条陈旧行归档**（§142.5）：T92 的 §10 E10 流程，把 6 行移到 `# [归档]` 段。这是**纯台账卫生**，不涉及判据。
+2. **重抽样复核**（§142.9.1 第 3 条）：按本轮新表重抽 `real-missing` / `na:*` / `unknown`，给新的错误率与 Wilson 区间——现在引用的还是 T86 那批样本。
+3. **`apply_region_prior()` 硬证据优先级那个空操作**（§142.9.1 第 2 条）：一行代码的修，但要先预注册"修完哪些行会变"，别偷偷改口径。
+4. **源码级缺口收口**（§142.6）：名字串对齐只能给 `≈215` 这个上界；要对到"可核清单"必须换轴（Location 键 / TypeId 常量 / 装配点调用序）。T93 的 `graphwar_module_container` 就是这套轴的样板。
+5. **`na:own-generic-mono` 扩面**（§142.9.1 第 4 条）：`graphwar_game_client` 的 `get_module` 19 条最像下一批。
+
+#### 142.9.5 本轮改了什么（范围核对）
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `fixtures/global_triage_refresh_plan.txt` | 新增（373 行） | 预注册，单独 commit `a8c7864` |
+| `fixtures/global_triage.tsv` | 190 行改（13,263 行总数不变） | 重跑生成物 |
+| `fixtures/global_triage_modules.tsv` | 16 行改（含 1 行表头文案） | 重跑生成物；82 行不变 |
+| `fixtures/global_triage_android_census.tsv` | **0 行改**（逐字节相同） | 它只读 Android `.symtab` ⇒ 是本轮"只动台账相关列"的自证 |
+| `fixtures/global_triage_refresh_diff.tsv` | 新增（190 行） | 逐行改判台账（kind 7 类） |
+| `tools/global_triage.py` | +~400 行（`T93_MANUAL_NA` / `apply_manual` / `--self-check` / `--write-diff` / `--no-manual` / `--out` / `--baseline`） | **判据/阈值一个没改**；另修 3 处**纯文案**（D 组硬编码"153 条"→实际行数、modules 表头过期口径、A/B/B′ 组的台账豁免标记） |
+| `docs/06-verification.md` | 追加本节 | 不动既有节 |
+| **没动** | `src/**`、`tests/**`、`client/**`、`fixtures/f3_triage*.tsv`、`fixtures/gap_*.tsv`、`fixtures/function_coverage.tsv`、`fixtures/boundary_audit.tsv`、`fixtures/guardrails.json`、门槛/护栏文件、`docs/00`/`HANDOVER`/`README`/`coverage-matrix.*` | 严格按任务书禁区 |
+
+**逐行改判台账的 7 类计数**（`fixtures/global_triage_refresh_diff.tsv`，共 **190 行**）：
+`manual-t93` **49** / `ledger-lost` **34** / `ledger-gain` **15** / `sub-refresh` **28** / `t82-label` **5** / `cascade` **19** / `name-refresh` **40**。
+（`name` 列另有 18 行的名字也变了，但它们同时改了类/子类，按"主因"归到上面 6 类里，不重复计数；全表 58 行名字变化可用 `old_name` 列逐行比。）
