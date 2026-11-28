@@ -287,6 +287,19 @@ impl ModeInfoEvent {
     }
 }
 
+/// `[ModeInfoEvent; 3]` 的别名。
+///
+/// ⚠️ **不是为了好看，是为了修掉一个扫描器假阴性**（T111 发现并登记）：
+/// `tools/function_coverage.py::scan_file` 判"函数有没有函数体"用的是
+/// `has_body = (nsc < 0) or (nob < nsc)` —— 它取函数名之后的**第一个 `{`** 与
+/// **第一个 `;`** 比先后。返回类型写成数组 `[T; 3]` 时，那个 `;` 在 `{` 之前 ⇒
+/// 这个函数被**误判成"只有声明没有体"**（`FnDef.has_body = False`），于是
+/// `function_coverage.tsv` 把它判成 `F3 / register-only`，
+/// 尽管函数体就在 `src/graphwar_mode_manager.rs` 里。
+/// 用一层类型别名把 `;` 挪出签名后，扫描器能看见函数体。
+/// **这不是新增复原**：函数体一个字都没动，只是让机判能看见它（见 `docs/06` §157.6）。
+pub type ModeInfoEvents = [ModeInfoEvent; 3];
+
 impl GraphwarModeManager {
     pub fn new(axis_mode: AxisMode, function_mode: FunctionMode, time_mode: TimeMode) -> Self {
         Self {
@@ -299,7 +312,7 @@ impl GraphwarModeManager {
     }
 
     /// `new_connection_event` 的处理（跳板 `0x5186a0` → `0x5185a0`）：三个模式全量重播。
-    pub fn handle_new_connection_event(&mut self) -> [ModeInfoEvent; 3] {
+    pub fn handle_new_connection_event(&mut self) -> ModeInfoEvents {
         let events = self.send_all_info_events();
         self.outbox.extend(events.iter().map(|e| e.event()));
         events
@@ -337,7 +350,7 @@ impl GraphwarModeManager {
     }
 
     /// 对应 `0x497f3c`：三个事件按 `45 / 46 / 48` 顺序全量广播。
-    pub fn send_all_info_events(&self) -> [ModeInfoEvent; 3] {
+    pub fn send_all_info_events(&self) -> ModeInfoEvents {
         [
             ModeInfoEvent::AxisModeInfo(self.axis_mode),
             ModeInfoEvent::FunctionModeInfo(self.function_mode),
