@@ -122,6 +122,8 @@
 use crate::events::Event;
 use crate::game::Match;
 use crate::graphwar_mode_manager::{AxisMode, FunctionMode, GraphwarModeManager, TimeMode};
+use crate::graphwar_player_manager::GraphwarPlayerManager;
+use crate::graphwar_soldier_manager::SoldierTable;
 use crate::turnstate::GameState;
 
 /// `tick_event` 的判别值（订阅 1；也是 [`Event::TickEvent`]）。
@@ -664,6 +666,259 @@ impl Match {
         }
         SkipVote::AllVoted
     }
+}
+
+// ---------------------------------------------------------------------------
+// 8. **本轮（T111）落码的 4 条 F3「确证缺函数边界」**
+//
+// 判据 = [`fixtures/f3_boundary_plan.txt`](../../fixtures/f3_boundary_plan.txt)（**先提交，后落码**）
+// + 清单 [`fixtures/f3_boundary_list.tsv`](../../fixtures/f3_boundary_list.tsv)。
+// 每条都写 **vaddr**（ELF vaddr 口径）+ 真名（`fixtures/boundary_audit.tsv` 的 `name_src=v2唯一锚`）
+// + 关键指令地址注释；单测期望值**全部来自反汇编**（tag word / 字段偏移 / 分支形状），
+// 没有一条来自我方输出。
+//
+// 这 4 条的**共同形状**（与第 7 节那 6 条同源、`观测`+`逐位`）：
+// **闸门（`[self+0x120]` 状态字节）→ `get_module_wk::<某 manager>(self+0xe0)` 取弱句柄并 upgrade →
+// 在 manager 的表上做一次收集（hashbrown 的单态化，`0x3bea40` 全收 / `0x3bf230` 按 value 过滤）
+// → 把 id 推进 `self+0x90` 那个 `Vec<u32>`（[`Match::removed_entities`]）→ 经 `[self+0xd8]`
+// 的队列 `add_event`**。
+//
+// ⚠️ **本文件/本仓库没有的东西（照实记，不拿代码掩盖）**：
+// * 原版的 `self+0xe0` 是 `GraphwarModuleContainer` 的弱句柄表，**我方没有这个容器**；
+//   所以三条 `get_module_wk` 在下面显式变成**入参**（`&mut SoldierTable` / `&GraphwarPlayerManager`），
+//   由接线层持有 —— 这与第 7 节 `request_*_mode_change` 拿 `&mut GraphwarModeManager` 同一手法。
+// * 原版 `0x3bea40` / `0x3bf230` 是 **hashbrown 的 `drain`-形状单态化**（`pmovmskb`/`tzcnt` 扫控制字节），
+//   它们**不写回**调用者的表（写回的是栈上的临时 view，见 `0x47380b`–`0x47381e` 的
+//   `[rsp+0x38..0x58]` 组装）⇒ 这两个函数**只收集、不删表**。我方用
+//   [`SoldierTable::get_soldiers_from_owner`] / [`GraphwarPlayerManager::players`] 的只读收集表达。
+// ---------------------------------------------------------------------------
+
+impl Match {
+    /// 原版 `GraphwarGameStateManager::remove_all_players`（**`0x4737a0`**，532 B）。
+    ///
+    /// ```text
+    /// 0x4737b4  add rdi, 0xe0                 ; ① self+0xe0 = 模块容器
+    /// 0x4737bb  call 0x46d8c0                 ;    get_module_wk::<GraphwarPlayerManager>（docs/02 §22.3 的 x86 `wk` 列）
+    /// 0x4737c0  test rax,rax / je panic       ;    None ⇒ `Option::unwrap` panic（loc 554:26）
+    /// 0x4737db..0x4737eb 是否超 i64::MAX 再加引用计数（loc 486:56 的 overflow panic）
+    /// 0x4737ef  rax = [rbx+0x30]              ; ② PlayerManager 的 hashbrown：ctrl 指针
+    /// 0x4737f3  rcx = [rbx+0x38]              ;    bucket_mask
+    /// 0x4737fd  pmovmskb / not               ;    从第 0 个 bucket 开始的控制字节掩码
+    /// 0x473807  rsi = [rbx+0x48]              ;    items 计数
+    /// 0x473832  call 0x3bea40                 ; ③ 收集**全部**条目（不带 key ⇒ 全收）→ Vec<u32>
+    /// 0x473864  add rbp, 0xf                  ;    rbp = 0x7fff…ff + 0xf ⇒ tag word = 0x800000000000000e = **14 EntityRemoved**
+    /// 0x473870  r13d = [rax + r12]            ; ④ 逐个 player id
+    /// 0x473879..0x4738a4  push 到 [self+0x90] 那个 Vec<u32>（cap/ptr/len = +0x90/+0x98/+0xa0）
+    /// 0x4738c5  [rsp+0x68] = r13d             ;    载荷 = player id（u32）
+    /// 0x4738ca  [rsp+0x60] = rbp (tag word)
+    /// 0x4738d4  call [slot 0x9bac80] → 0x3d3530  ; add_event，**每个玩家一条**
+    /// ```
+    ///
+    /// ⇒ **把玩家表里每一个人都当成"实体被移除"播一遍**（同时静默推进 `self+0x90` 那张表）。
+    /// 返回 `Vec<Event>` = 发出去报文的判别值列表（本层口径同 [`Match::set_lock`]）。
+    ///
+    /// 证据档：**逐位**（tag word `0x800000000000000e`、四个字段偏移 `+0xe0/+0x30/+0x38/+0x48`、
+    /// 三个 push 偏移 `+0x90/+0x98/+0xa0` 都是立即数）+ **观测**（"全部播出"是循环形状读出来的）。
+    pub fn remove_all_players(&mut self, players: &GraphwarPlayerManager) -> Vec<Event> {
+        // ③ 收集全部键（原版 `0x3bea40` 不带 key ⇒ 一个不滤）。用 BTreeMap 的迭代序，
+        //    原版是 hashbrown 的 `RandomState` 序 ⇒ **顺序不可复现**（与 PlayerManager 同款登记）。
+        let ids: Vec<u32> = players.players.keys().copied().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            self.removed_entities.push(id);
+            self.events.publish(Event::EntityRemoved);
+            out.push(Event::EntityRemoved);
+        }
+        out
+    }
+
+    /// 原版 `GraphwarGameStateManager::remove_soldier_from_player`（**`0x476830`**，487 B）。
+    ///
+    /// ```text
+    /// 0x476841  add rdi, 0xe0 / 0x476848 call 0x46e580   ; ① get_module_wk::<GraphwarSoldierManager>()
+    /// 0x476867  rax = [r14+0x10] / cmp i64::MAX / jae    ;    引用计数 +1（loc 559:26 的 overflow panic）
+    /// 0x47687f  rax = [r14+0x30] / rcx = [r14+0x38]      ; ② SoldierManager 的 hashbrown 视图
+    /// 0x4768ae  rax = [r14+0x48]                         ;    items 计数
+    /// 0x4768b7  rax = &[rsp+0xc] = &player_id            ;    ★ key 指针 = 入参 esi（**按 value 过滤**）
+    /// 0x4768cb  call 0x3bf230                            ; ③ 收集 **owner == player_id** 的士兵 id → Vec<u32>
+    /// 0x4768d4  rax = [rsp+0x20] = 收集到的条数
+    /// 0x4768e3  ebp = [r14 + rax*4 - 4]                  ; ④ 取**最后一个**
+    /// 0x4768e8..0x476913  push 到 [self+0x90] 那个 Vec<u32>
+    /// 0x476936  [rsp+0x30] = ebp；rbp = 0x7fff…ff + 0xf ;    tag word = 0x800000000000000e = **14 EntityRemoved**
+    /// 0x47694d  call [slot 0x9bac80] → 0x3d3530          ; add_event **只一条**
+    /// ```
+    ///
+    /// ⚠️ **只播最后一条**（不是每条）—— 这是**逐指令读出来的形状**，不是笔误：
+    /// `0x4768e3` 一步就把 `ebp` 定成末元素，`0x47694d` 只有**一处** `add_event`，
+    /// 中间没有循环（`0x4768d0`–`0x476953` 是直线代码）。
+    /// **未证**：`0x3bf230` 的返回是否真能 >1 元素（我只读了它自己的 FDE
+    /// `0x3bf230..0x3bf42a`，它在 `0x3bf2de` 之后确实会继续扫，但实际样本没跑过）
+    /// ⇒ "只播最后一条"在 `len > 1` 时的**游戏内后果**是**未知**，这里按指令照写。
+    ///
+    /// 哪个士兵算"最后"：原版是 hashbrown 迭代序 ⇒ **不可复现**；
+    /// 我方 [`SoldierTable::get_soldiers_from_owner`] 返回**升序**，所以"最后"= 最大 id
+    /// （**这是顺序上的我方差异，登记在此，不是结论**）。
+    ///
+    /// 证据档：**逐位**（`+0xe0`/`+0x30`/`+0x38`/`+0x48` 四个偏移、tag word、
+    /// `[rsp+0x20]` 的 len 偏移、`-4` 的末元素偏移）+ **观测**（"按 value 过滤"由 key 指针来源钉住）。
+    pub fn remove_soldier_from_player(
+        &mut self,
+        soldiers: &SoldierTable,
+        player_id: u32,
+    ) -> Vec<Event> {
+        let owned = soldiers.get_soldiers_from_owner(player_id);
+        let Some(&last) = owned.last() else {
+            // 收集为空 ⇒ 原版 `0x4768d9 je 0x476958` 直接跳过整段（**不发事件、不推表**）。
+            return Vec::new();
+        };
+        self.removed_entities.push(last);
+        self.events.publish(Event::EntityRemoved);
+        vec![Event::EntityRemoved]
+    }
+
+    /// 原版 `GraphwarGameStateManager::set_player_num_soldiers`（**`0x476320`**，398 B）。
+    ///
+    /// ```text
+    /// 0x47632e  cmpb $0x1, [rdi+0x120]        ; ① 只在状态 1 = GameState::Setup 里做
+    /// 0x47633b  ebp = edx                     ;    入参 3 = 想要的士兵数（u32）
+    /// 0x47633d  ebx = esi                     ;    入参 2 = player id
+    /// 0x476349  call 0x46e580                 ; ② get_module_wk::<GraphwarSoldierManager>()
+    /// 0x476380  rax = [r15+0x30] / rcx = [r15+0x38] / 0x4763af rsi = [r15+0x48]
+    /// 0x4763c2  call 0x3bf230                 ; ③ 收集 owner == player_id 的士兵 → Vec<u32>
+    /// 0x4763d6  r12 = [rsp+0x20] = **现有士兵数**
+    /// 0x4763f8  r15d = ebp (want)
+    /// 0x4763fb  cmp r12, r15 / jae 0x476421   ; ④ 现有 < 想要 ⇒ 进"加"循环
+    /// 0x476403  r13 = want - have; inc r13    ;    循环计数 = want - have
+    /// 0x476410  dec r13 / je；0x47641a call 0x474a10   ;    **add_soldier_to_player**（我方 `Match::register_player` 的接线形态）
+    /// 0x476421  sub r12, r15 / jbe 0x476441   ; ⑤ 现有 > 想要 ⇒ 进"删"循环
+    /// 0x476426  inc r12；0x476430 dec r12 / je；0x47643a call 0x476830  ; **remove_soldier_from_player**（上面那一条）
+    /// ```
+    ///
+    /// ⇒ 语义 = **把该玩家的士兵数调到 `want`：少了逐个加、多了逐个删、相等什么也不做**。
+    /// 两条循环的**次数都逐位来自反汇编**（`0x476403`/`0x476421` 的 `sub` + `inc/dec` 配对）。
+    ///
+    /// ⚠️ **"加"的一半不在本函数里**：原版加兵是调 [`Self::add_soldier_to_player`]（`0x474a10`，
+    /// 已 F1，我方落在 [`crate::game::Match::register_player`] 那条接线里，**发号在调用方**）。
+    /// 所以我方本函数**只执行"删"，把"加"的次数返回给接线层**（[`SoldierCountPlan::add`]）。
+    /// 这是**架构差异不是证据缺口**：原版 `0x474a10` 自己发号，我方发号在 `_scaffold` 的接线层。
+    ///
+    /// 证据档：**逐位**（闸门立即数 `1`、两个 `sub` 的循环计数、`call 0x474a10`/`0x476830`
+    /// 两个被调者地址）+ **观测**（"调到 want"的语义由两条循环的方向钉住）。
+    pub fn set_player_num_soldiers(
+        &mut self,
+        state: GameState,
+        soldiers: &SoldierTable,
+        player_id: u32,
+        want: u32,
+    ) -> SoldierCountPlan {
+        // ① 闸门：不在 Setup 就什么也不做（原版 `jne 0x476453` = 直接 ret）。
+        if state != GameState::Setup {
+            return SoldierCountPlan { have: 0, add: 0, remove: 0, events: Vec::new() };
+        }
+        // ③ 现有士兵数（原版 `[rsp+0x20]` = `0x3bf230` 收集结果的 len）。
+        let have = soldiers.get_soldiers_from_owner(player_id).len() as u32;
+        // ④ 加：`0x4763fb` `jae` ⇒ have >= want 时跳过；否则执行 (want - have) 次。
+        let add = want.saturating_sub(have);
+        // ⑤ 删：`0x476421` `jbe` ⇒ have <= want 时跳过；否则执行 (have - want) 次。
+        let remove = have.saturating_sub(want);
+        let mut events = Vec::new();
+        for _ in 0..remove {
+            events.extend(self.remove_soldier_from_player(soldiers, player_id));
+        }
+        SoldierCountPlan { have, add, remove, events }
+    }
+
+    /// 原版 `GraphwarGameStateManager::request_remove_player`（**`0x475590`**，790 B）。
+    ///
+    /// ```text
+    /// 0x47559e  cmpb $0x1, [rdi+0x120]        ; ① 只在状态 1 = Setup 里做
+    /// 0x4755b7  call 0x46d8c0                 ; ② get_module_wk::<GraphwarPlayerManager>()
+    /// 0x4755f0  rbp = [r15+0x48]              ;    items 计数；**为 0 ⇒ 跳到 ⑦**（`0x4755f7 je 0x47569e`）
+    /// 0x475609  call 0x47dec0                 ; ③ 算 hash(player_id)
+    /// 0x475666  cmp ebx, [r10-8]              ;    SwissTable 查 key = player_id；命中 ⇒ `0x475692`
+    /// 0x475695  eax = [rcx + r8*8 - 4]        ;    eax = 该玩家的**连接 id**（表的 value）
+    /// 0x47569a  mov dl, 1                     ;    "找到了"标志
+    /// 0x47575e  cmp eax, r8d / setne cl       ; ④ r8d = 全表 value 的**最小值**（`0x47572c cmovb`）
+    /// 0x475764  test dl, cl / je 0x4757a8     ;    只在 **找到 且 value ≠ 最小值** 时发下面那条
+    /// 0x47578f  lea rax, [r12+0x49]           ;    tag word = 0x8000000000000048 = **72 BanConnectionRequest**
+    /// 0x475786  [rsp+0x18] = eax (连接 id)    ; 载荷 +8 = 自己的连接 id
+    /// 0x47578a  [rsp+0x1c] = r8d (最小 id)    ; 载荷 +12 = leader 的连接 id
+    /// 0x47579e  call [slot 0x9bac80]          ;    add_event（**条件**一条）
+    /// 0x4757a8..0x4757d3 push ebx 到 [self+0x90]  ; ⑤ **无条件**推进那张 Vec<u32>
+    /// 0x4757f8  r12 += 0xf ⇒ tag 0x800000000000000e = **14 EntityRemoved**
+    /// 0x475806  call [slot 0x9bac80]          ; ⑥ **无条件**再发一条 EntityRemoved{player_id}
+    /// ```
+    ///
+    /// ⇒ **"移除这个玩家" = 先判定要不要请服务器踢掉它，再无条件宣布这个实体消失**。
+    /// 判定里的"最小值"就是 **leader = 连接 id 最小的那个玩家**（这与
+    /// [`crate::graphwar_remote_event_handler`] 里那个**尚未落码**的 `is_leader` 同源，
+    /// 见 `docs/06` §157 —— 那条本轮只登记、不落码，所以这里**故意不写它的地址**：
+    /// `function_coverage.py` 的 P2 规则会把我方注释里出现的地址当成"地址指认"，
+    /// 写上去就会给它造一个假命中（T111 已踩过一次并改正）。
+    ///
+    /// 证据档：**逐位**（闸门 `1`、tag word `…0048`/`…000e`、两个载荷偏移 `+0x18`/`+0x1c`、
+    /// `+0x49`/`+0xf` 两个加数、`+0x90` 三格）+ **观测**（"最小值 = leader"由
+    /// `0x47572c cmovb` 的 min 扫描 + `BanConnectionRequest` 的线上字段名 `leader_connection_id` 两条独立对上）。
+    pub fn request_remove_player(
+        &mut self,
+        state: GameState,
+        players: &GraphwarPlayerManager,
+        player_id: u32,
+    ) -> RemovePlayerRequest {
+        let mut events = Vec::new();
+        let mut ban = None;
+        // ① 闸门
+        if state != GameState::Setup {
+            return RemovePlayerRequest { ban, events };
+        }
+        // ② 表为空 ⇒ 跳过 ③④（原版 `0x4755f7 je 0x47569e`），但仍会做 ⑤⑥。
+        if !players.players.is_empty() {
+            // ③ 命中标志 + 该玩家的连接 id
+            let found = players.connection_of(player_id);
+            // ④ 全表 value 的最小值（`0x47572c cmovb` 的 min 扫描）
+            let min_conn = players.players.values().copied().min();
+            if let (Some(conn), Some(min)) = (found, min_conn) {
+                // `test dl, cl` ⇒ "找到" ∧ "conn != min" 才发
+                if conn != min {
+                    self.events.publish(Event::BanConnectionRequest);
+                    ban = Some((conn, min));
+                    events.push(Event::BanConnectionRequest);
+                }
+            }
+        }
+        // ⑤ 无条件推进 `self+0x90`；⑥ 无条件发 14。
+        self.removed_entities.push(player_id);
+        self.events.publish(Event::EntityRemoved);
+        events.push(Event::EntityRemoved);
+        RemovePlayerRequest { ban, events }
+    }
+}
+
+/// `set_player_num_soldiers`（`0x476320`）的判决 + 执行结果。
+///
+/// 三个数都是**反汇编读出来的**：`have` = `0x4763d6 [rsp+0x20]`（收集结果 len），
+/// `add` = `0x476403 r13 = want - have`，`remove` = `0x476421 r12 = have - want`。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SoldierCountPlan {
+    /// 现有士兵数（`0x4763d6`）。
+    pub have: u32,
+    /// 要**加**几个（`0x476403`–`0x47641f` 的循环次数）。执行由接线层做（发号在原版 `0x474a10` 里）。
+    pub add: u32,
+    /// 要**删**几个（`0x476421`–`0x47643f` 的循环次数）。本函数**已经执行**了。
+    pub remove: u32,
+    /// 删的过程中发出去的报文判别值（每条 [`Event::EntityRemoved`]）。
+    pub events: Vec<Event>,
+}
+
+/// `request_remove_player`（`0x475590`）的判决 + 载荷。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemovePlayerRequest {
+    /// tag 72 的载荷 `(player_connection_id, leader_connection_id)`
+    /// （原版 `0x475786 [rsp+0x18]` / `0x47578a [rsp+0x1c]`，**两个 u32**）。
+    /// `None` = 这一步没发（闸门没过 / 表空 / 找不到该玩家 / 它就是 leader）。
+    pub ban: Option<(u32, u32)>,
+    /// 发出去的报文判别值（顺序 = 原版 `add_event` 顺序：条件性的 72 在前，14 在后）。
+    pub events: Vec<Event>,
 }
 
 #[cfg(test)]
@@ -1711,5 +1966,188 @@ mod gap_f3_tests {
         // （立即数只有 5 个非 0 字节 ⇒ 第 6 次 `shr` 读到的是 0 = Timer30s）
         let time_bytes: Vec<u8> = TIME_MODE_CHANGE.iter().map(|m| *m as u8).collect();
         assert_eq!(time_bytes, 0x0504_0302_01u64.to_le_bytes()[..6].to_vec());
+    }
+}
+
+/// T111 落码的 4 条 F3 边界函数的单测。
+///
+/// **期望值来源**（每条都写在断言旁）：全部是反汇编里的立即数 / 表偏移 / 分支形状，
+/// 没有一条来自我方输出（`fixtures/f3_boundary_plan.txt` §1 第 4 条）。
+#[cfg(test)]
+mod f3_boundary_tests {
+    use super::*;
+    use crate::server::RoomState;
+
+    fn room() -> RoomState {
+        RoomState {
+            room_name: "gw2".into(),
+            game_state: "Setup".into(),
+            axis_mode: "XY".into(),
+            function_mode: "NormalFunction".into(),
+            turn_mode: "SequentialTurns".into(),
+            time_mode: "Timer1m".into(),
+        }
+    }
+
+    fn match_new() -> Match {
+        Match::new(room(), vec![], vec![], (0, 0))
+    }
+
+    /// `remove_all_players`（`0x4737a0`）：玩家表里每人**一条** `EntityRemoved`。
+    ///
+    /// 期望值来源：
+    /// * tag word `0x800000000000000e`（`0x473864 add rbp,0xf`，rbp = `0x7fffffffffffffff`）⇒ `14` = `EntityRemoved`；
+    /// * `0x473870` 起是**循环**（`0x4738e2 cmp rbx,r12 / jne 0x473870`，步长 4 = `u32`）⇒ 每个玩家一条，不是只一条。
+    #[test]
+    fn remove_all_players_emits_one_entity_removed_per_player() {
+        let mut m = match_new();
+        let mut pm = GraphwarPlayerManager::new();
+        pm.add_player(10, 100);
+        pm.add_player(20, 50);
+        pm.add_player(30, 200);
+        let _ = pm.take_outbox();
+
+        let out = m.remove_all_players(&pm);
+        // 3 个玩家 ⇒ 3 条（循环形状），且判别值都是 14
+        assert_eq!(out, vec![Event::EntityRemoved; 3]);
+        assert_eq!(m.take_outbox(), vec![Event::EntityRemoved; 3]);
+        // `+0x90` 那张 `Vec<u32>` 也推进了 3 条（`0x473879..0x4738a4` 的 push）
+        let mut ids = m.removed_entities.clone();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![10, 20, 30]);
+        assert_eq!(m.removed_entities.len(), 3);
+
+        // 空表 ⇒ 收集长度 0 ⇒ `0x473857 je 0x4738e7` 跳过整段循环（一条都不发）
+        let mut m2 = match_new();
+        let empty = GraphwarPlayerManager::new();
+        assert!(m2.remove_all_players(&empty).is_empty());
+        assert!(m2.removed_entities.is_empty());
+    }
+
+    /// `remove_soldier_from_player`（`0x476830`）：**只播最后一条**，且收集为空时一条不发。
+    ///
+    /// 期望值来源：
+    /// * `0x4768e3 ebp = [r14 + rax*4 - 4]` ⇒ 取**末**元素（不是第一个、不是全部）；
+    /// * `0x4768d9 test rax,rax / je 0x476958` ⇒ 收集长度 0 时整段跳过；
+    /// * `0x476948` 只有**一处** `add_event`（`call [slot 0x9bac80]`），中间无循环
+    ///   （`0x4768d0`–`0x476953` 是直线代码）⇒ 报文条数 ≤ 1。
+    #[test]
+    fn remove_soldier_from_player_emits_only_the_last_owned_soldier() {
+        let mut m = match_new();
+        let mut st = SoldierTable::new();
+        st.add_soldier(10, 7);
+        st.add_soldier(20, 7);
+        st.add_soldier(30, 8);
+
+        // 玩家 7 有两个兵（10、20）⇒ 只播**最后**一个（我方升序 ⇒ 20）
+        assert_eq!(m.remove_soldier_from_player(&st, 7), vec![Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![20]);
+        assert_eq!(m.take_outbox(), vec![Event::EntityRemoved]);
+
+        // 玩家 8 只有一个兵 ⇒ 就是它
+        assert_eq!(m.remove_soldier_from_player(&st, 8), vec![Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![20, 30]);
+        assert_eq!(m.take_outbox(), vec![Event::EntityRemoved], "清空发件箱再验下一条");
+
+        // 玩家 9 一个兵都没有 ⇒ 空了：一条不发、`+0x90` 也不推进（`0x4768d9 je`）
+        assert!(m.remove_soldier_from_player(&st, 9).is_empty());
+        assert_eq!(m.removed_entities, vec![20, 30]);
+        assert!(m.take_outbox().is_empty());
+    }
+
+    /// `set_player_num_soldiers`（`0x476320`）：闸门是**状态 1 = Setup**，两个方向都要对。
+    ///
+    /// 期望值来源：`0x47632e cmpb $0x1,[rdi+0x120] / jne 0x476453` ⇒ 非 Setup 直接 ret；
+    /// `0x4763fb cmp r12,r15 / jae` + `0x476403 r13 = want - have` ⇒ 加的次数 = `want − have`；
+    /// `0x476421 sub r12,r15 / jbe` ⇒ 删的次数 = `have − want`。
+    #[test]
+    fn set_player_num_soldiers_is_setup_gated_and_counts_both_directions() {
+        let mut m = match_new();
+        let mut st = SoldierTable::new();
+        st.add_soldier(10, 7);
+        st.add_soldier(20, 7);
+
+        // 想要 5、现有 2 ⇒ 加 3、删 0、一条报文都不发
+        let plan = m.set_player_num_soldiers(GameState::Setup, &st, 7, 5);
+        assert_eq!((plan.have, plan.add, plan.remove), (2, 3, 0));
+        assert!(plan.events.is_empty());
+        assert!(m.take_outbox().is_empty());
+
+        // 想要 1、现有 2 ⇒ 加 0、删 1（这一次真的删，发 1 条 EntityRemoved）
+        let plan = m.set_player_num_soldiers(GameState::Setup, &st, 7, 1);
+        assert_eq!((plan.have, plan.add, plan.remove), (2, 0, 1));
+        assert_eq!(plan.events, vec![Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![20]);
+
+        assert_eq!(m.take_outbox(), vec![Event::EntityRemoved], "清空发件箱再验闸门");
+        // 想要 = 现有 ⇒ 两条循环都跳过
+        let plan = m.set_player_num_soldiers(GameState::Setup, &st, 7, 2);
+        assert_eq!((plan.have, plan.add, plan.remove), (2, 0, 0));
+
+        // 闸门：只要不是 Setup，一律什么都不做（原版 `jne 0x476453` 直接 ret）
+        for st_state in [
+            GameState::Connecting,
+            GameState::WaitingForFunctions,
+            GameState::CalculatingResults,
+            GameState::SynchronizingResults,
+            GameState::ExecutingResults,
+            GameState::EndingGame,
+            GameState::Disconnected,
+        ] {
+            let plan = m.set_player_num_soldiers(st_state, &st, 7, 9);
+            assert_eq!(plan, SoldierCountPlan::default(), "{st_state:?}");
+        }
+        assert!(m.take_outbox().is_empty(), "闸门没过 ⇒ 一条报文都不该有");
+    }
+
+    /// `request_remove_player`（`0x475590`）：tag 72 只在"找到 ∧ 不是 leader"时发，
+    /// tag 14 **无条件**发。
+    ///
+    /// 期望值来源：
+    /// * `0x475764 test dl,cl / je 0x4757a8` ⇒ 72 是**条件**发的（dl = 找到，cl = conn ≠ min）；
+    /// * `0x47572c cmovb` 扫的是**最小值** ⇒ leader = 连接 id 最小者；
+    /// * `0x47578f lea rax,[r12+0x49]` ⇒ 72（`0x7fffffffffffffff + 0x49 = 0x8000000000000048`）；
+    /// * `0x475786/0x47578a` 载荷 = **两个 u32**（`+0x18`/`+0x1c`），顺序 = (自己的 conn, 最小的 conn)；
+    /// * `0x4757f8 add r12,0xf` ⇒ 14 且这条在 `0x4757a8` 之后**无条件**执行。
+    #[test]
+    fn request_remove_player_bans_only_non_leaders_and_always_announces() {
+        let mut m = match_new();
+        let mut pm = GraphwarPlayerManager::new();
+        pm.add_player(1, 100);
+        pm.add_player(2, 50); // ← 连接 id 最小 ⇒ leader
+        pm.add_player(3, 200);
+        let _ = pm.take_outbox();
+
+        // 玩家 1（conn 100，leader 是 50）⇒ 发 72 再从发 14
+        let r = m.request_remove_player(GameState::Setup, &pm, 1);
+        assert_eq!(r.ban, Some((100, 50)));
+        assert_eq!(r.events, vec![Event::BanConnectionRequest, Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![1]);
+
+        // 玩家 2 自己就是 leader（conn = min）⇒ **不发** 72，但仍发 14
+        let r = m.request_remove_player(GameState::Setup, &pm, 2);
+        assert_eq!(r.ban, None);
+        assert_eq!(r.events, vec![Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![1, 2]);
+
+        // 表里没有这个玩家 ⇒ 不发 72，仍发 14（`0x4757a8` 在条件块之后）
+        let r = m.request_remove_player(GameState::Setup, &pm, 99);
+        assert_eq!(r.ban, None);
+        assert_eq!(r.events, vec![Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![1, 2, 99]);
+
+        // 空表 ⇒ 跳过 ③④（`0x4755f7 je 0x47569e`），但 ⑤⑥ 照做
+        let empty = GraphwarPlayerManager::new();
+        let r = m.request_remove_player(GameState::Setup, &empty, 5);
+        assert_eq!(r.ban, None);
+        assert_eq!(r.events, vec![Event::EntityRemoved]);
+        assert_eq!(m.removed_entities, vec![1, 2, 99, 5]);
+
+        // 闸门（`0x47559e cmpb $0x1`）：非 Setup ⇒ 一条都不发、表也不推进
+        let mut m2 = match_new();
+        let r = m2.request_remove_player(GameState::WaitingForFunctions, &pm, 1);
+        assert_eq!(r, RemovePlayerRequest::default());
+        assert!(m2.removed_entities.is_empty());
+        assert!(m2.take_outbox().is_empty());
     }
 }
