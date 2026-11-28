@@ -28482,7 +28482,8 @@ x86 同形：`0x3ad5c7` 取子数组 → `0x3ad5e5` len → `0x3ad5f7` 第 i 个
 4. **11 个 `T` 是什么类型仍未解**（缺 `godot_core::meta::class_id` 的表）。这不影响"1 个泛型 fn"的结论，
    但影响"这 11 个薄壳分别服务哪个界面控件"的语义 —— 那是 `docs/16` §28 的节点名表已经覆盖的部分。
 5. **`player_showcase` 的 7 条分母外宏产物在 x86 侧没有落地址**（`__default_virtual_call` / `class_id` 的
-   悬案，与 T97 在 `src/player_showcase.rs` 的 `NAME_BRIDGE_CONFLICTS` 里登记的完全一致）——
+   悬案，与 `src/player_showcase.rs` **既有登记**的 `NAME_BRIDGE_CONFLICTS` 第 1/2 条完全一致 ——
+   本轮独立复算与之逐值相同：arm64 `0x438088`、`st_size` 86（= 0x56）、`CLASS_ID` 槽 `0x8b40b0`）——
    本轮没有更好的证据，**不动**。
 6. ⚠️ **工具口径提醒（建议给 `function_coverage.py` / `global_triage.py` 提）**：
    现有"缺口"列只看 527 台账，**看不见 `real-missing / denom:no-loc` 这一类**
