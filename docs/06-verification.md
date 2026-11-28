@@ -30913,3 +30913,264 @@ cargo run --release --offline -q --example batch_conv   -- --dir .reference/repl
 ⚠️ 更严的口径要求：`global_triage` 的 `implemented` 判据只是"同名 fn + 模块级文件映射"，
 **不是**逐位证据 —— 本批 7 条里 3 条有值级对拍（S1/S2/S3）、4 条是"指令级 + 单测"（M1/E1/E2/F1），
 这与 §156.1 的档位列一致，别把整批都当成逐位。
+
+## 157. T110 分母外台账**刷新 + 审计**：`real-missing` **43 → 10**、`X` 仍 **132**、四口径独立复算与工具**逐项吻合**、§152 那条「没有 MANUAL 层」**确认成立并已修**（2026-11-28，任务 `task-106` / 分支 `agent/ledger-audit`）
+
+> 预注册：[`fixtures/denom_outside_refresh_plan.txt`](../fixtures/denom_outside_refresh_plan.txt)（commit `303841c`，**先单独提交、后跑**；
+> 跑完只在 §9 追加 **4 条勘误 E1–E4**，§1–§8 **一字未改**）。
+> 逐行留痕：[`fixtures/denom_outside.tsv`](../fixtures/denom_outside.tsv) **文件尾 `§MANUAL-T110`**（行号 | vaddr | 原值 | 新值 | 依据）
+> + [`fixtures/denom_outside_refresh_diff.tsv`](../fixtures/denom_outside_refresh_diff.tsv)（刷新前后**全部 47 行**差异）。
+> 审计脚本（可复跑，只读）：[`fixtures/denom_outside_audit_t110.py`](../fixtures/denom_outside_audit_t110.py)
+> （`--calibers` 四口径复算 / `--contradictions` 矛盾扫描 / `--serde` derive 判据 / `--impl` 逐条落码核对 / `--refresh-diff`）。
+> 本节只**审计**：`src/**`、`tests/**`、`client/**`、`fixtures/function_coverage.tsv`、门槛/护栏**一行未动**。
+
+### 157.0 一页结论
+
+| # | 问题 | 答案 |
+|---|---|---|
+| ① | 台账刷新后 `real-missing/denom:no-loc` 从 43 降到多少？ | **10 条 / 10 组**（43 − 31 落码被工具自动识别 − 1 弱证据 alt − 1 分层落码人工表）。**其中 32 条是真落码**，另 1 条（`0x4c3408`）只是跨模块同名，**不算落码**、已单独点名（§157.2.3）。 |
+| ② | `X`（分母外源码函数数）到底是多少？ | **132 组 / 194 条机器码**（= T107 改判后的值，**本轮没变**）。任务书「落码后 X 应该更少」是**概念错误**：落码只在 X 内部搬行，不动 X 本身（§157.3）。 |
+| ③ | 四口径能否独立复算出来、与 `--stats` 对不对得上？ | **逐项全中（7/7 + 4 项输入）**：A `336/527=63.8 %`、B `336/438=76.7 %`、B′ `336/445=75.5 %`、D_A `336/659=51.0 %`、D_B `336/570=58.9 %`、D_B′ `336/577=58.2 %`、D_A+ `458/659=69.5 %`；`F1/F2/F3/F4 = 336/72/119/0` 逐行 0 行不一致；`n=527`、`na 143/89/82`、`X 132/194` 全同（§157.4）。**没有人错。** |
+| ④ | 台账内部矛盾扫出来多少？ | **S1–S5 全部 0 条**（T107 抓过的「real-missing 却填了 ours_src」这类，刷新后 0）；**S6 = 26 条**（`implemented` 只靠通用名 `new`/`init`/… 命中 ⇒ 弱证据，已登记）；**S7 = 1 条**且正是我们**已知**的分层落码（不是假阳性）⇒ 工具自身的 `implemented` 假阳性 **0**（§157.5）。 |
+| ⑤ | §152 那条「`--denom-outside` 没有 MANUAL 层 ⇒ 重跑会把 13 行冲回 real-missing」还成立吗？ | **成立**（实测：无 MANUAL 重跑 13 行全部冲回，且顺带冲掉 2 条落码核对）。**已修**：加 `T107_MANUAL_NA`（13 行）+ `T110_MANUAL_IMPL`（2 行）两张表 + 三条自校验，位置在 L4/L5 判决之后（§157.6）。 |
+| ⑥ | 门槛读数？ | `cargo test --offline` **1765 / 0 failed / 1 ignored**（基线一致）；`check_doc_refs.py` rc=0；`docsec.py check docs/06` 通过；`coverage_matrix.py --check` OK；三轴 **fire 647 / batch 647 / batch_conv 637**（快照 403 条目）（§157.9）。 |
+
+### 157.1 三条任务书前提的核查（**两条要纠正**）
+
+| 前提 | 核查 | 结论 |
+|---|---|---|
+| **P-1**「`global_triage.py --denom-outside` 全 .text 特征抽取 **>40 min**，T108 跑一次被 kill」 | 本机实测（AMD Ryzen 9 7945HX / 32 核，本提交的 `tools/`）：`--control-only` 两次 **15.716 s / 15.519 s**；完整跑（含写文件）同样 **~16 s** | **不成立（本机 + 本提交）**。台账长期过期**不是性能问题**，是没人跑。⇒ 建议把这条命令纳入常规门槛（§157.7-④）。可证伪边界：只对本机/本提交成立，别的机器没测。 |
+| **P-2**「43 条 real-missing 没回写；T106 8 条、T108 7 条、T109 14 条落的码台账看不见」 | 成立。台账 verdict 与头部计数停在 T107（`ba3950c`）；而 `src/` 里那批落码**都在**（31 条逐条给了 `file:line`，见 plan §2.1） | **成立**，本轮刷新掉 |
+| **P-3**「台账里 143 → T107 后 132 → **现在落码后应该更少**」 | 不成立。见 §157.3 | **概念错误**，先纠正再算 |
+
+### 157.2 刷新结果：43 → 10（逐行归因）
+
+三条计数（`form × verdict`，机器码行数）：
+
+| verdict | 刷新前（T107 版） | 刷新后 | 差 |
+|---|---|---|---|
+| `denom:in` | 365 | 365 | 0 |
+| `implemented/denom:no-loc` | 142 | **176** | **+34** |
+| `implemented-alt/denom:no-loc` | 9 | **8** | −1 |
+| `real-missing/denom:no-loc` | **43** | **10** | **−33** |
+| `na:gdext-glue` | 176 | 176 | 0 |
+| `na:other` | 504 | 504 | 0（**13 条靠 MANUAL 层保住**，见 §157.6） |
+| `unknown` | 5 | 5 | 0 |
+| 合计 | 1244 | 1244 | 0 |
+
+`real-missing` 43 → 10 的**逐行归因**（`fixtures/denom_outside_refresh_diff.tsv` 47 行差异的分类计数）：
+
+| 类别 | 条数 | 说明 |
+|---|---|---|
+| **AUTO（工具重跑自己判出来的）** | **31** | `real-missing → implemented/denom:no-loc`，判据 = 本模块映射文件里有同名 `fn`（T105 原判据 C-IMPL-1）。**没有人工介入**，是 T106/T108/T109（+ 中间并进的分支）的落码在 `src/` 里生效后重跑的自然结果。每条都有 `vaddr + fn file:line` 双证据（plan §2.1 表）。 |
+| **AUTO 但只到 alt（弱证据）** | **1** | `0x4c3408 graphwar_plane::GraphwarPlane::clear_state` ⇒ `implemented-alt`，命中的是**别的模块**的 `GraphwarPlayScreenControl::clear_state`（`src/graphwar_play_screen_control.rs:2038`）。**不算落码**（T105 台账自己写「alt 只算弱证据」），只是不再算 real-missing。 |
+| **MANUAL-IMPL（人工表）** | **1** | `0x4becec backtracer::Backtracer::install_panic_log_hook`，T106 的**分层落码**（详见 §157.2.2 + plan §9-E1）。 |
+| **不变** | **10** | 见 §157.2.3 |
+| 合计 | 43 | ✓ |
+
+#### 157.2.1 正对照：31 条 AUTO 逐条都对得上（P1 = 31/31）
+
+plan §2.1 预注册的那张表**一条不差**：31 条每条都能给出「同名 `fn`（`src/…:行`）+ 指到该 vaddr 的注释」。
+其中 T106 §154 的 backend 8 条（`stop_client`/`stop_server`/`start_server`/`stop_lan_broadcaster`/`start_lan_broadcaster`/
+`get_next_clip_checkpoint`/`stop_server_broker_handler`/`start_server_broker_handler`）、crash_reporter 2 条
+（`clear_report`/`send_pending_report`）、T108 §156 的 7 条（`calculate_function`/`calculate_corrected_function`/
+`calculate_function_offset_str`/`adjust_tokens`/`step_effect`/`update_name_label`/`draw_offset_triangle`）、
+T109 §153 的一批（`graphwar_version_get_full_version`/`get_current_level`/`save_current_level`/`show_pop_up`/
+`print_help_and_exit_if_requested`/`load_game`/`clear_state`(play_screen)/`get_level_data`/`is_connection_banned`/
+`clear`/`get_server_port`/`computer_function_thread`/`soldier_info_event`/`entity_removed_event`）**全部命中**。
+⚠️ **一处落空**：T106 §154 的 `backtracer` 那条**不是**同名 fn 落码，是分层落码 ⇒ AUTO 抓不到，
+只能进人工表（§157.2.2）。这说明「T106 8+3 条」里 **10 条落在 AUTO、1 条要人工**，不是台账漏了 11 条。
+
+#### 157.2.2 `0x4becec` 分层落码：为什么机判抓不到（plan §9-E1 的由来）
+
+`src/backtracer.rs:100` 的模块横幅写着「T106 落码：`Backtracer::install_panic_log_hook`（arm64 `0x4becec` / 876 B）」，
+但**没有同名 `fn`**：本体被拆成 `install_panic_log_hook_steps`(:186) / `panic_log_line`(:206) / `version_line`(:224) /
+`merged_panic_log`(:248) + 5 条单测（副作用「装全局 panic hook」按 T106 的预注册 P1/P2 **故意不落**）。
+⇒ 「同名 fn」判据（C-IMPL-1/2）和「vaddr 注释 ±8 行内有函数体」判据（C-IMPL-3 原文）**双双落空**（实测相距 **86 行**）。
+处理：**两种读数都写清**（plan §9-E1）——严格按原文 ⇒ `real-missing` = **11**；按勘误的放宽判据 ⇒ **10**。
+本节取 **10**（理由：台账的用途是「还剩什么要干」，留着它会让下一个人重做 T106 已完成的工作），
+subclass 记 `no-loc:layered` 以便和同名命中的 `implemented` 区分。
+
+#### 157.2.3 剩下的 10 条（负对照全过：都是「注释/表格有、函数体没有」）
+
+| vaddr | 组 | 为什么还是 real-missing |
+|---|---|---|
+| `0x3ab2bc` | `graphwar_root_node::GraphwarRootNode::user_args` | 注释**自述**「本轮没有落码」，缺 clap 依赖 + 5752 B derive 展开 |
+| `0x3deec8` | `PlayScreenControl::append_debug_text` | `src/` 里**连 vaddr 都没有** |
+| `0x3df07c` | `PlayScreenControl::append_function_entry` | 同上 |
+| `0x4475fc` | `FunctionRandomizer::mutate_function` | 只在 `src/math_function.rs:573` 的**地址表一行**里 |
+| `0x448160` | `FunctionRandomizer::create_random_region` | 同上（:574）；T108 已证随机源 `rand::thread_rng` ⇒ 值级对拍原理上做不到 |
+| `0x44fa48` | `PlayerScreenControl::insert_button_in_vbox` | 只在模块文档的缺口清单里（:57） |
+| `0x450020` | `PlayerScreenControl::update_buttons_background_in_vbox` | 同上（:58） |
+| `0x4691a4` | `GraphwarEvent::deserialize`（**固有方法·手写**） | 有逐指令注释、无函数体；T107 C 组结论，缺 serde/serde_json/chrono + 72 个载荷结构体 |
+| `0x46947c` | `GraphwarEvent::serialize`（**固有方法·手写**） | 同上 |
+| `0x4c378c` | `GraphwarPlane::GraphwarPlane::update_entities` | 只在 `src/graphwar_plane.rs:182` 的 `FuncAddr{arm64: 0x4c378c}` 表格里 |
+
+⚠️ 这 10 条里 **6 条正是 t113（`task-103`）本轮正在落码的对象**（`user_args`/`append_debug_text`/
+`append_function_entry`/`insert_button_in_vbox`/`update_buttons_background_in_vbox`/`print_help` 复核）——
+不同分支，本节台账是**基点 `696e513` 的快照**，t113 合进来之后台账会**再次过期**；
+这正是 §157.7-④ 建议「把这条 16 秒的命令放进门槛」的理由。
+
+### 157.3 `X` 到底是多少，以及「落码后 X 应该更少」为什么不对
+
+`X` = **分母外真实源码函数总数** = `real-missing` + `implemented` + `implemented-alt` + `scaffold-only`（按源码组计）。
+它是**分母**，不是缺口。**落码**只把同一条源码函数从 `real-missing` 挪到 `implemented`
+（**挪完还在 X 里**），所以：
+
+* 本轮：`X` = 10 + 114 + 8 + 0 = **132 组 / 194 条机器码**（= T107 改判后的值，**一位没动**）；
+* 变的只有 X 的**内部构成**：`real-missing` 43 → 10、`implemented` 80 → 114 组（142 → 176 条）、`alt` 9 → 8 组；
+* `X` 只会被**分类改判**改变（T107 把 13 条 serde derive 展开体移出 X ⇒ 143 → 132；本轮照旧保住）。
+
+⇒ 分母：`527 + 132 = 659`；`D_A = 336/659 = 51.0 %`。**如果谁把「落码」当成「分母变小」，D 会假涨。**
+（本轮唯一会动的 D 数是**敏感度 D_A+**：分子含分母外已实现 ⇒ `(336+122)/659 = 458/659 = 69.5 %`，原 64.5 %。
+它**混档**（分母外的 implemented 只是名字命中、无逐位/观测档），**不许当招牌数**。）
+
+### 157.4 四口径**独立复算** vs `tools/function_coverage.py --stats`（逐项比对，全中）
+
+复算方法（`--calibers`，**不复用**生成器的 `stats()`/`classify()`）：
+`n` ← `files/boundary_audit.tsv` 行数；`F1..F4` ← 从 `fixtures/function_coverage.tsv` 的**证据列**
+（指认方式 × 模块档位 × 我方实现位置 × `ADDR_MANUAL` 闸门）重新判档，再与生成器的「判档」列**逐行**比；
+`n_na/n_strong` ← `fixtures/f3_triage.tsv` **主表**（读到 `# ----` 横幅为止）；`X` ← 刷新后台账的源码组。
+
+| 项目 | 独立复算 | `--stats` 输出 | 一致？ |
+|---|---|---|---|
+| `n`（分母 527） | 527 | 527 | ✓ |
+| `F1 / F2 / F3 / F4` | 336 / 72 / 119 / 0 | 336 / 72 / 119 / 0 | ✓（**逐行 0 行不一致**，527 行统判） |
+| na 台账（主表 143 条） | `na:*` 89 / 强 na 82 | 89 / 82 | ✓ |
+| `X` | **132 组 / 194 条** | 132 / 194 | ✓ |
+| 口径 **A**（含 na） | `336 / 527 = 63.8 %` | `336 / 527 = 63.8 %` | ✓ |
+| 口径 **B**（剔 na，招牌） | `336 / 438 = 76.7 %` | `336 / 438 = 76.7 %` | ✓ |
+| 口径 **B′**（只剔强 na） | `336 / 445 = 75.5 %` | `336 / 445 = 75.5 %` | ✓ |
+| 口径 **D_A** | `336 / 659 = 51.0 %` | `336 / 659 = 51.0 %` | ✓ |
+| 口径 **D_B** | `336 / 570 = 58.9 %` | `336 / 570 = 58.9 %` | ✓ |
+| 口径 **D_B′** | `336 / 577 = 58.2 %` | `336 / 577 = 58.2 %` | ✓ |
+| 敏感度 **D_A+**（混档） | `458 / 659 = 69.5 %` | `458 / 659 = 69.5 %` | ✓ |
+
+**恒等式复核**：`D_A 分母 659 == 527 + X(132)` ✓；`F1+F2+F3+F4 == 527` ✓。
+**⇒ 结论：`--stats` 与独立复算没有分歧，这一轮没有人错。**
+（唯一要提醒的：`f3_triage.tsv` 若天真整文件读，`na:*` 会数成 102 / 强 95 ⇒ B 分母 425、B=80.2 %
+—— 那是**假数**，见 plan §9-E3 与 `--calibers` 的告警行。）
+
+### 157.5 台账内部矛盾扫描 S1–S7（用 T107 的手法扫全 1244 行）
+
+T107 抓 13 条错判靠的就是「台账自相矛盾」（`real-missing` 却填了 `ours_src`）。本轮把这类扫描**扩到 7 条**：
+
+| 扫描 | 判据 | 结果 |
+|---|---|---|
+| **S1** | `real-missing` 但 `ours_src ≠ —` | **0 条**（T107 当年是 13 条；现在被 MANUAL 层钉住，重跑不再复现） |
+| **S2** | 同一 `src_fn_group` 的 `form=business` 行 verdict 不一致 | **0 条** |
+| **S3** | `business` + no-loc 且 `owner=_`、`method∈{serialize,deserialize}`（= serde trait impl 形态） | **0 条**（13 条已全部带 `subclass=serde-derive`，见 §157.5.1） |
+| **S4** | `note` 自称 `own-module` 但 verdict 不是 `implemented` | **0 条** |
+| **S5** | 头部计数块 vs 逐行统计 | **0 条**（刷新后头部是**生成**的，不是手改） |
+| **S6** | `implemented` 但 `method` 是通用名（`new`/`init`/`process`/…） | **26 条**（弱证据，见下） |
+| **S7** | `implemented` 但 `src/` 里扫不到同名 `fn`（工具假阳性） | **1 条**，且就是 §157.2.2 那条分层落码 ⇒ 工具自身的假阳性 **0 条** |
+
+**S6 的含义（26/176 条机器码 = 14.8 %）**：`implemented` 的判据是「同名 `fn`」，而 `new`/`init` 这种名字在
+哪个模块里都有一堆 ⇒ 这部分只是**名义命中**，不是「同一个函数已复原」的证明。台账头部那句
+⚠️「`implemented` 不是逐位/行为证据」就是这条的注脚。**不改判**（判据是预注册的），只登记。
+
+#### 157.5.1 T107 那 13 条 serde derive 裁决的**独立复核**（不读 T107 的证据 tsv）
+
+判据（`--serde`，直接扫 Android 未 strip `.symtab`）：
+**D1** 符号是 `<impl serde::ser|de::… for M::T>`（手写固有方法不带 `<impl … for`）；
+**D2** **同一类型** M::T 在本构建里有 serde_derive 硬编码私有名兄弟
+（`…<impl serde::de::Deserialize for M::T>::deserialize::__Visitor|__FieldVisitor|__Field`）⇒ 只有 `#[derive]` 生成这些名字。
+
+| 项 | 读数 |
+|---|---|
+| 本构建带 derive 私有名的类型 | **86** |
+| 台账里是 serde trait impl 的机器码行 | **105** |
+| 其中 D1∧D2 成立 | **105/105**（全成立） |
+| 已按 `macro-derive` 判 na 的 | 92 |
+| **漏判（`form=business`）：** | **13** —— 恰好等于 T107 的 A 组，**没有第 14 条** |
+| 负对照（T107 C 组 3 条手写固有方法 `0x4691a4`/`0x46947c`/`0x4693c0`） | 3/3 **不在** trait impl 集里（D1 不成立）⇒ 没被吞 ✓ |
+
+⇒ T107 的裁决**独立成立**。T107 当年漏的机制也定位了：`DENOM_FORM_CLASS` 的 `macro-derive` 只认
+`<… as serde::de::Visitor|Expected>` 与 `Clone::clone`，**不认** `<impl serde::ser::Serialize for T>::serialize`
+这种 trait impl 本体 ⇒ 13 条落进 `business`。「台账自相矛盾」（同类型的 `__FieldVisitor` 兄弟判了
+`na:other/macro-derive`、本体却判 `real-missing`）正是 T107 的抓手。
+
+### 157.6 §152/MANUAL 层那条结论：**仍然成立**，本轮把它修掉
+
+`docs/06` §152（T105）原文：「**工具缺陷（登记，不修）**：`--denom-outside` 没有 MANUAL 层
+（对比 T93 的 `T93_MANUAL_NA` 有）⇒ 重跑该工具会把这 13 行冲回 `real-missing`。」
+
+**实测证实（不是推论）**：本轮先跑了一次**无 MANUAL** 的刷新（`--no-manual`），结果
+`real-missing` = **25 条** = 10（真缺）+ **13（T107 那 13 条被冲回）** + 2（`0x4693c0`/`0x4becec` 的落码核对被冲掉）。
+⇒ 那条结论**到今天仍然成立**，而且影响面比 §152 写的**更大**（多了 2 条落码）。
+
+**修法（本轮唯一动 `tools/` 的地方，判据/阈值一条没改）**：
+
+| 表 | 条数 | 作用 | 自校验（不过就整体退出，不静默覆盖） |
+|---|---|---|---|
+| `T107_MANUAL_NA` | 13 | `na:other` + `subclass=serde-derive` | S1 前置 verdict 必须是 `real-missing/denom:no-loc`；S2(D1) 必须是 serde trait impl；S3(D2) 同类型必须有 derive 私有名兄弟 |
+| `T110_MANUAL_IMPL` | 2 | `implemented/denom:no-loc`（`no-loc:module-file-split` / `no-loc:layered`）+ 写 `ours_src` 锚点 | S1 同上；锚点文件存在、`module-file-split` 要求锚点行是 `fn <method>`、`layered` 要求锚点行含 vaddr 标记且同文件其后有 `fn` |
+
+* 应用位置 = **L4/L5 判决之后**（与 `T93_MANUAL_NA` 同款），改动面恰好 15 行（13+2），**没有副作用**；
+* `--no-manual`（既有开关，原属 T93，本轮让它同时控制这两张表）可复现无 MANUAL 算式：
+  `real-missing 25 / X=143 / implemented 174`，用于出对照数；
+* 逐行留痕写进台账文件尾 `§MANUAL-T110`（行号 | vaddr | 原值 | 新值 | 依据），重跑不会丢。
+
+### 157.7 顺带查出的 5 个缺陷（都只登记，**不改判据**；改了要说清谁付账）
+
+| # | 缺陷 | 影响 | 建议 |
+|---|---|---|---|
+| ① | **`_denom_ours_lookup` 的同名文件盲区**：`_denom_ours_index` 按 `docs/coverage-matrix.tsv` 把模块 `graphwar_event.rs` 映射到 `src/events.rs`，而 `all_idx` 循环有 `if mod == module: continue` ⇒ **同名文件 `src/graphwar_event.rs` 被跳过** | 已落码的 `0x4693c0`（`src/graphwar_event.rs:207`）被判 real-missing | 本轮用 `T110_MANUAL_IMPL` 兜住 1 条；根治要改查找逻辑（让「映射文件 ∪ 同名文件」都查）。**属于工具语义变更，需单独立项 + 重跑全台账** |
+| ② | **serde trait impl 形态漏判**（§157.5.1）：`DENOM_FORM_CLASS` 不认 `<impl serde::… for T>::serialize/deserialize` | 13 条 derive 展开体落进 `business` ⇒ 只在人工表里被改判 | 建议给 `_denom_form()` 加一条 D1∧D2 判据（需要同类型私有名兄弟，工具里现成有 `.symtab`）；加之前**必须**先重跑确认没有别的行被误伤 |
+| ③ | **`ADDR_MANUAL` 有两条永不生效**（`0x4f44c0`/`0x4f4a60`）：闸门是 `if pin == "addr"`，而这两行实际 pin 是 `name-soft` ⇒ 人工裁决从不触发 | 结果**恰好是对的**（`src/graphwar_function_input.rs:965/:979` 有同名 fn + vaddr 注释 + 函数体 ⇒ F1），但表里给的理由「该原版函数体不存在」**与源码矛盾** | 登记。⚠️ 若日后有人「修好闸门」让两条生效，`F1` 会 336 → **334**、A/B/B′/D 的**分子一起变**，必须同时复算四行（plan §9-E2） |
+| ④ | **这条命令只要 16 秒，却从来没进门槛** | 台账反复过期（本轮之前停在 T107） | 把 `$PY tools/global_triage.py --denom-outside` 加进合并前机器检查（`merge_check.py`）或轮次收口清单；它自身的 C0–C5 正/负对照已经足够当自检 |
+| ⑤ | **`--stats` 的 D 段提示语与本轮台账会短暂不一致**：`--stats` 里那句「其中 2 组是 serialize/deserialize（serde 派生 vs 手写名字上分不开）⇒ X ∈ [130,132]」是 T105 的措辞，本轮 13 条已判 na、剩下的是 **2 条手写固有方法**（`0x4691a4`/`0x46947c`） | 只是措辞，数值没错 | 下次动 `function_coverage.py` 时一并改措辞 |
+
+### 157.8 正/负对照实跑（预注册 plan §2/§3，**全过**）
+
+| 组 | 对象 | 期望 | 实测 |
+|---|---|---|---|
+| **P1** | plan §2.1 预注册的 31 条 | 全部 `implemented`，每条有「同名 fn + vaddr 注释」 | **31/31 ✓** |
+| **P2** | T106/T108/T109 三节点名的**分母外**落码 | 必须落在 P1 集合内 | T106 的 11 条里 **10/11**（落空 1 条 = `0x4becec` 分层落码，见 §157.2.2）；T108 的 7 条、T109 的分母外条目**全中**。⚠️ 三节里另有落在 527 分母内的落码，不在本表范围，**不逐条断言归属** |
+| **P3** | `0x4693c0`（T107 B 组） | 由 C-IMPL-2 判 `implemented`（落点 `src/graphwar_event.rs:207`） | ✓（人工表；工具因缺陷 ① 判不到） |
+| **P4** | T107 A 组 13 条 | 全部满足 C-NA 且**不得多出第 14 条** | **13/13 ✓**，无第 14 条（§157.5.1） |
+| **N1** | `0x3ab2bc user_args`（注释自述「本轮没有落码」） | 维持 real-missing | ✓ |
+| **N2** | `0x4c378c update_entities`（只在 `FuncAddr` 表里） | 维持 real-missing | ✓ |
+| **N3** | `0x4475fc` / `0x448160`（只在地址表里） | 维持 real-missing | ✓ |
+| **N4** | `0x4691a4` / `0x46947c`（手写固有方法） | 必须维持 `business`+real-missing，不被 C-NA 吞 | ✓（D1 不成立） |
+| **N5** | `ADDR_MANUAL` 死条目两条 | 按工具实际闸门 ⇒ 仍 F1（336 不变） | ✓（并登记缺陷 ③） |
+| **N6** | `0x4c3408 graphwar_plane::clear_state` | 命中别模块同名 ⇒ **只到 alt，不算落码** | ✓（已在 §157.2 点名） |
+
+### 157.9 门槛读数（本轮只动台账/工具人工表/文档，`src/` 一行未动）
+
+| 项 | 读数 |
+|---|---|
+| `cargo test --offline` | **1765 passed / 0 failed / 1 ignored**（与基线一致） |
+| `python3 tools/check_doc_refs.py` | rc=0 |
+| `python3 tools/docsec.py check docs/06-verification.md` | 通过（155 节、范围 1..157、历史缺口 §43/§89 不算错） |
+| `python3 tools/coverage_matrix.py --check` | OK |
+| 三轴（快照 403 条目 / 401 份回放） | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（`结算批 1080`，内容命中 637） |
+
+复跑命令（全部**只读**，除 ①③ 会写台账/生成物）：
+```bash
+PY=.reference/venv/bin/python
+$PY tools/global_triage.py --denom-outside                 # ① 刷新台账（~16 s；含 MANUAL 层）
+$PY tools/global_triage.py --denom-outside --no-manual     # ② 无 MANUAL 对照（real-missing 25 / X 143）
+$PY tools/function_coverage.py --stats                      # ③ 四口径（D 段读 ① 的台账）
+$PY fixtures/denom_outside_audit_t110.py --calibers         # ④ 独立复算（应逐项等于 ③）
+$PY fixtures/denom_outside_audit_t110.py --contradictions   # ⑤ S1–S7
+$PY fixtures/denom_outside_audit_t110.py --serde            # ⑥ serde derive 判据 + 正/负对照
+$PY fixtures/denom_outside_audit_t110.py --impl             # ⑦ 逐条落码核对（real-missing 的 10 行）
+```
+
+### 157.10 遗留 / 未做 / 给 lead 的决定点
+
+1. **`docs/HANDOVER.md` 的四口径段落在 T105**（`D 336/670 = 50.1 %`、`D_B 336/581`、`D_A+ 424/670`、
+   「分母 143 / 机器码 207」）—— T107 把 `X` 改成 132 时**没同步**它。本节按本轮读数**已改**
+   （659 / 570 / 577 / 458-659=69.5 % / 132-194），但 HANDOVER 同时被 `task-105`（模块分母）动，合并时注意。
+2. **`docs/00-status.md` 的第四口径行**没核对（不在本任务写范围）；若它写着 670/50.1 % 也要一起改。
+3. **t113（`task-103`）正在落码本节点的 6 条 real-missing**（`user_args`/`append_debug_text`/
+   `append_function_entry`/`insert_button_in_vbox`/`update_buttons_background_in_vbox` + `print_help` 复核）。
+   本轮台账是**基点 `696e513` 的快照**；t113 合并后 `real-missing` 会从 10 再降到 5–6，
+   **别把 10 当成「本轮之后仍然真缺 10」**。
+4. **节号冲突**：本轮用 §157；`task-103`（t113）、`task-104`（t111）、`task-105`（t112）的任务书也都写着「下一个空号 §157」
+   ⇒ **四条分支都会写 §157**，合并时必须由 lead 重新编号（本轮内容自成一个整节，可整体挪号）。
+5. **没做的事**：`implemented` 的 26 条通用名命中（S6）**没有**逐条去做「同名是否同一函数」的判定
+   ——那需要拿 `panic::Location` 行号或值级对拍才能定，属于下一轮；本轮只把它标成弱证据。
+6. **`_denom_ours_lookup` 的盲区（缺陷 ①）没修**：修它会让「implemented」的判定面变化，
+   必须单独立项 + 重跑全台账 + 与 `fixtures/function_coverage.tsv` 的口径一起对齐。

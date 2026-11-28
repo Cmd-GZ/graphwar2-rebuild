@@ -1803,10 +1803,172 @@ def _denom_control(rows, by_verdict, verbose=True):
     return ok, out, c5
 
 
+# ---------------------------------------------------------------------------
+# T110 MANUAL 层（预注册 `fixtures/denom_outside_refresh_plan.txt` §4，**先提交后跑**）
+#
+#   为什么：`--denom-outside` 原本**没有** MANUAL 层（对比 `--android-census` 有 `T93_MANUAL_NA`）
+#   ⇒ 人工裁决一重跑就被冲掉。`docs/06` §152 登记的「重跑会把这 13 行冲回 real-missing」
+#   **T110 实测证实**（无 MANUAL 重跑：13 行 na:other → real-missing/denom:no-loc）。
+#
+#   两张表都在判决（L4/L5 = `_denom_verdicts`）**之后**应用，风格与 `T93_MANUAL_NA` 一致：
+#   命中数 ≠ 表长、或任一条前置 verdict 不符 ⇒ **直接退出**（不许静默覆盖）。
+#   `--no-manual` 复现无 MANUAL 的算式（用于出对照数）。
+# ---------------------------------------------------------------------------
+DENOM_MANUAL_LAYER = "L1-t107+t110"
+
+# T107（任务 `task-99`；判据 `fixtures/denom_serde_plan.txt` §1，commit cabe0b6）：
+#   13 条 = `#[derive(Serialize/Deserialize)]` 的**展开体** —— 不是「原版源码函数」，不该进 X 的分母。
+#   T110 独立复核（**不读** T107 的证据 tsv，直接扫 Android 未 strip `.symtab`，脚本见
+#   `fixtures/denom_outside_audit_t110.py --serde`）：
+#     D1 13/13 是 `<impl serde::ser|de::… for M::T>` trait impl（手写固有方法不带 `<impl … for`）；
+#     D2 13/13 的**同一类型**有 serde_derive 硬编码私有名兄弟
+#        `…<impl serde::de::Deserialize for M::T>::deserialize::__Visitor|__FieldVisitor|__Field`
+#        （只有 `#[derive]` 生成这些私有名；本构建 86 个类型带它）；
+#     负对照：T107 C 组两条**手写固有方法** `0x4691a4`/`0x46947c` 不带 `<impl … for` ⇒ D1 不成立、没被吞；
+#     全台账 105 条 serde trait impl **全部** D1∧D2 成立（其中 92 条工具已按 `macro-derive` 判 na，
+#     漏的恰好这 13 条）⇒ 没有第 14 条。
+T107_MANUAL_NA = {
+    0x40b834: ("serde-derive", "graphwar_effect_manager::EffectType D2=__FieldVisitor"),
+    0x4695ac: ("serde-derive", "graphwar_event::GraphwarEvent D2=__FieldVisitor"),
+    0x469c54: ("serde-derive", "graphwar_event::GraphwarEvent D2=__FieldVisitor"),
+    0x46b210: ("serde-derive", "graphwar_game_info::GameInfo D2=__Field/__FieldVisitor/__Visitor"),
+    0x4981c8: ("serde-derive", "graphwar_mode_manager::FunctionMode D2=__FieldVisitor"),
+    0x49849c: ("serde-derive", "graphwar_mode_manager::TimeMode D2=__FieldVisitor"),
+    0x498574: ("serde-derive", "graphwar_mode_manager::AxisMode D2=__FieldVisitor"),
+    0x498860: ("serde-derive", "graphwar_mode_manager::TimeMode D2=__FieldVisitor"),
+    0x4999a0: ("serde-derive", "graphwar_team_manager::GraphwarTeam D2=__FieldVisitor"),
+    0x49be14: ("serde-derive", "graphwar_turn_manager::TurnMode D2=__FieldVisitor"),
+    0x49c0e8: ("serde-derive", "graphwar_color_manager::GraphwarColor D2=__Visitor"),
+    0x4a52f4: ("serde-derive", "graphwar_game_state_manager::GraphwarGameState D2=__FieldVisitor"),
+    0x4a53e8: ("serde-derive", "graphwar_game_state_manager::GraphwarGameState D2=__FieldVisitor"),
+}
+
+# T110（任务 `task-106`；判据 = 预注册 §1 的 C-IMPL-2 / C-IMPL-3）：2 条**已落码但工具检测不到**的。
+#   格式：addr -> (subclass, 锚点 "path:line", 依据)
+T110_MANUAL_IMPL = {
+    0x4693c0: ("no-loc:module-file-split", "src/graphwar_event.rs:207",
+               "T107 B 组落码 `pub fn make_new_connection_request_event()`（vaddr 注释在同文件 :176）。"
+               "工具查不到 = C-IMPL-2 盲区：`_denom_ours_index` 按 `docs/coverage-matrix.tsv` 把模块 "
+               "graphwar_event.rs 映射到 src/events.rs，而 `all_idx` 循环 `if mod == module: continue` "
+               "把**同名文件** src/graphwar_event.rs 跳过了"),
+    0x4becec: ("no-loc:layered", "src/backtracer.rs:100",
+               "T106 分层落码（C-IMPL-3）：模块注释「T106 落码：Backtracer::install_panic_log_hook"
+               "（arm64 0x4becec / 876 B）」+ 紧随其后 4 个带单测的函数体 "
+               "`install_panic_log_hook_steps` / `panic_log_line` / `version_line` / `merged_panic_log`"
+               "（副作用「装全局 panic hook」按预注册 P1/P2 故意不落）"),
+}
+
+_DENOM_SERDE_IMPL = re.compile(r"<impl\s+serde::(ser|de)::\w+\s+for\s+([A-Za-z0-9_:]+)>")
+_DENOM_SERDE_SIB = re.compile(
+    r"<impl\s+serde::de::\w+\s+for\s+([A-Za-z0-9_:]+)>\s*::\s*(?:deserialize|serialize)\s*::\s*"
+    r"(__Visitor|__FieldVisitor|__Field|__SerdeRenamed)\b")
+
+
+def _denom_serde_privtypes(dems_all):
+    """D2 的索引：{类型全路径: {私有名}}（只对带 serde_derive 私有名的符号建索引）。"""
+    out = collections.defaultdict(set)
+    for d in dems_all:
+        m = _DENOM_SERDE_SIB.search(d)
+        if m:
+            out[m.group(1)].add(m.group(2))
+    return out
+
+
+def _denom_manual_check(rows, by_verdict, dems_all):
+    """自校验（预注册 §4.1/§4.2 的 S1–S3）。返回错误列表（空 = 通过）。"""
+    errs = []
+    priv = _denom_serde_privtypes(dems_all)
+    for a in T107_MANUAL_NA:
+        r = by_verdict.get(a)
+        if r is None:
+            errs.append("%#x 不在 G 里" % a)
+            continue
+        if r["verdict"] != "real-missing/denom:no-loc":
+            errs.append("%#x 前置 verdict 应为 real-missing/denom:no-loc，实为 %s" % (a, r["verdict"]))
+        m = _DENOM_SERDE_IMPL.search(r["d"])
+        if not m:
+            errs.append("%#x S2(D1) 符号不是 `<impl serde::… for …>` trait impl：%s" % (a, r["d"][:80]))
+        elif not priv.get(m.group(2)):
+            errs.append("%#x S3(D2) 类型 %s 没有 serde_derive 私有名兄弟" % (a, m.group(2)))
+    for a, (sub, anchor, _why) in T110_MANUAL_IMPL.items():
+        r = by_verdict.get(a)
+        if r is None:
+            errs.append("%#x 不在 G 里" % a)
+            continue
+        if r["verdict"] != "real-missing/denom:no-loc":
+            errs.append("%#x 前置 verdict 应为 real-missing/denom:no-loc，实为 %s" % (a, r["verdict"]))
+        path, _, line = anchor.rpartition(":")
+        if not os.path.exists(os.path.join(ROOT, path)):
+            errs.append("%#x 锚点文件不存在：%s" % (a, path))
+            continue
+        lines = open(os.path.join(ROOT, path), encoding="utf-8", errors="replace").read().splitlines()
+        i = int(line)
+        if not (1 <= i <= len(lines)):
+            errs.append("%#x 锚点 %s 越界" % (a, anchor))
+            continue
+        fnre = re.compile(r"\bfn\s+\w+\s*(?:<|\()")
+        if sub == "no-loc:module-file-split":
+            # C-IMPL-2：锚点行本身必须是 `fn <method>` 定义
+            if not fnre.search(lines[i - 1]) or r["ident"][2] not in lines[i - 1]:
+                errs.append("%#x 锚点 %s 不是 `fn %s` 定义行：%r"
+                            % (a, anchor, r["ident"][2],
+                               lines[i - 1][:90] if 0 < i <= len(lines) else ""))
+        elif sub == "no-loc:layered":
+            # C-IMPL-3：锚点行含该 vaddr 标记，且**同文件**其后存在函数体定义。
+            #   ⚠️ 预注册 §1 原写「注释 ±8 行内有函数体」，实测分层落码是 +86 行 ⇒ 见该文件 §9 勘误 E1。
+            hexmark = "%06x" % a
+            if hexmark not in lines[i - 1].lower():
+                errs.append("%#x 锚点 %s 的行里没有 vaddr 标记 %s：%r"
+                            % (a, anchor, hexmark, lines[i - 1][:90]))
+            bodies = [j for j in range(i + 1, len(lines) + 1) if fnre.search(lines[j - 1])]
+            if not bodies:
+                errs.append("%#x 锚点 %s 之后同文件没有任何 fn 定义（分层落码证据不成立）" % (a, anchor))
+        else:
+            errs.append("%#x 未知 subclass %s" % (a, sub))
+    return errs
+
+
+def apply_denom_manual(rows, by_verdict, dems_all, verbose=True):
+    """把两张人工表落到 `rows` 上（**在 L4/L5 之后**）。返回 [(addr, 原值, 新值, subclass)] 供留痕。"""
+    errs = _denom_manual_check(rows, by_verdict, dems_all)
+    if errs:
+        raise SystemExit("A.6/T110 MANUAL 层自校验失败（%d 条）：\n  - %s"
+                         % (len(errs), "\n  - ".join(errs)))
+    changes = []
+    for r in rows:
+        a = r["addr"]
+        if a in T107_MANUAL_NA:
+            sub, why = T107_MANUAL_NA[a]
+            pre = r["verdict"]
+            r["verdict"], r["subclass"] = "na:other", sub
+            r["layer"] = DENOM_MANUAL_LAYER
+            r["note"] = ("T107 裁决 + T110 独立复核（%s）：serde derive 展开体，源码层没有独立手写 fn "
+                         "⇒ 不算「原版源码函数」，不进 X 的分母" % why)
+            changes.append((a, pre, r["verdict"], sub, why))
+        elif a in T110_MANUAL_IMPL:
+            sub, anchor, why = T110_MANUAL_IMPL[a]
+            pre = r["verdict"]
+            r["verdict"], r["subclass"], r["ours_hint"] = "implemented/denom:no-loc", sub, anchor
+            r["layer"] = DENOM_MANUAL_LAYER
+            r["note"] = "T110 落码核对（%s）：%s" % (sub, why)
+            changes.append((a, pre, r["verdict"], sub, why))
+    if len(changes) != len(T107_MANUAL_NA) + len(T110_MANUAL_IMPL):
+        raise SystemExit("T110 MANUAL 层只命中 %d/%d 行"
+                         % (len(changes), len(T107_MANUAL_NA) + len(T110_MANUAL_IMPL)))
+    if verbose:
+        print("\n=== MANUAL 层（%s；L4/L5 之后应用；--no-manual 可关）===" % DENOM_MANUAL_LAYER)
+        print("  T107_MANUAL_NA   %2d 条 → na:other/serde-derive（自校验 S1/S2/S3 全过）"
+              % len(T107_MANUAL_NA))
+        print("  T110_MANUAL_IMPL %2d 条 → implemented/denom:no-loc（自校验 S1 + 锚点 fn 存在）"
+              % len(T110_MANUAL_IMPL))
+    return changes
+
+
 def cmd_denom_outside(argv=None):
-    """`--denom-outside`：跑 C0–C5 → 全量判决 → 写 `fixtures/denom_outside.tsv`。"""
+    """`--denom-outside`：跑 C0–C5 → 全量判决 → （可选）MANUAL 层 → 写 `fixtures/denom_outside.tsv`。"""
     import naming_android as NA
     control_only = bool(getattr(argv, "control_only", False))
+    use_manual = not bool(getattr(argv, "no_manual", False))
     print("=== T105 分母外量化（预注册 fixtures/denom_outside_plan.txt）")
     side, by, size, nxt, addrs = _denom_android()
     dems = _denom_demangle(by, addrs)
@@ -1822,11 +1984,19 @@ def cmd_denom_outside(argv=None):
     rows, grp_loc, grp_ours = _denom_verdicts(rows, own_idx, all_idx)
     by_verdict = {r["addr"]: r for r in rows}
 
-    print("\n=== 正/负对照（预注册 §5）")
+    print("\n=== 正/负对照（预注册 §5；**MANUAL 层之前**，验的是工具自己的机器）")
     ok, ctl, c5 = _denom_control(rows, by_verdict)
     if not ok:
         print("\n✗ 对照未全过 ⇒ 按预注册 **不写文件**、不出全量数。")
         return 2
+
+    # ---- T110 MANUAL 层（预注册 §4；判决之后、计数之前）----
+    manual_changes = []
+    if use_manual:
+        dems_all = [d for vs in dems.values() for d in vs]
+        manual_changes = apply_denom_manual(rows, by_verdict, dems_all)
+    else:
+        print("\n（--no-manual：不应用 T107/T110 人工表 ⇒ 复现无 MANUAL 的算式）")
 
     # ---- 计数 ----
     groups = collections.defaultdict(list)
@@ -1909,19 +2079,25 @@ def cmd_denom_outside(argv=None):
                    len(g_scaf), sum(len(v) for v in g_scaf.values())))
     head.append("⚠️ 「implemented」= 我方 `src/` 里有同名 `fn`（名义 + 模块级文件映射），**不是**逐位/行为证据；")
     head.append("   「implemented-alt」名字命中的是**别的模块**的 fn，只算弱证据（可能不是同一个函数）。X（分母）与二者的拆分无关。")
-    head.append("正/负对照（本轮实跑，全过）：")
+    head.append("MANUAL 层（T110 新增）：%s；本轮%s应用（T107_MANUAL_NA 13 条 + T110_MANUAL_IMPL 2 条，"
+                "逐行留痕见文件尾 §MANUAL-T110；关掉用 --no-manual）"
+                % (DENOM_MANUAL_LAYER, "" if use_manual else "**未**"))
+    head.append("正/负对照（本轮实跑，全过；**MANUAL 层之前**）：")
     for tag, msg, good_ in ctl:
         head.append("  %-4s %s %s" % (tag, "✓" if good_ else "✗", msg))
     head.append("按模块（X 组数 / 机器码 / 其中已实现）：")
     for m, n in per_mod.most_common():
         head.append("  %-34s %3d 组 / %4d 条 / 已实现 %d" % (m, n, per_mod_mc[m], per_mod_impl[m]))
+    lineno = {}                                 # addr -> 本表里的**行号**（留痕用）
     with open(DENOM_TSV, "w", encoding="utf-8") as fh:
         for ln in head:
             fh.write("# " + ln + "\n")
         fh.write("android_addr\tst_size\treal_span\tmodule\towner\tmethod\tform\tn_sym\tgame_loc"
                  "\tother_loc\trel32\tslot\tlinux_pair\tverdict\tsubclass\tsrc_fn_group\tours_src"
                  "\tevidence\tnote\n")
-        for r in sorted(rows, key=lambda x: x["addr"]):
+        n_head = len(head) + 1                  # = 列头行的行号；数据行从 n_head+1 起
+        for i, r in enumerate(sorted(rows, key=lambda x: x["addr"]), 1):
+            lineno[r["addr"]] = n_head + i
             if r["k_join"]:
                 pair = "K-join:" + ";".join("0x%06x" % x for x in r["k_join"])
             elif r["n_join"]:
@@ -1940,6 +2116,44 @@ def cmd_denom_outside(argv=None):
                 "%s::%s::%s" % (mod, own, meth), r.get("ours_hint") or "—",
                 ev, r.get("note", ""),
             ]) + "\n")
+        # ---- §MANUAL-T110 改判留痕（**逐行**：行号 | vaddr | 原值 | 新值 | 依据）----
+        if manual_changes:
+            bychange = {c[0]: c for c in manual_changes}
+            fh.write("\n" + "# " + "=" * 76 + "\n")
+            fh.write("# §MANUAL-T110 改判留痕 —— 经 lead 授权的台账刷新（本文件头原写 do not edit）\n")
+            fh.write("# " + "=" * 76 + "\n")
+            fh.write("# 出处：任务 T110（`task-106`，分支 agent/ledger-audit）；预注册 "
+                     "fixtures/denom_outside_refresh_plan.txt（**先提交后跑**）\n")
+            fh.write("# 判据：plan §1 的 C-IMPL-2 / C-IMPL-3（落码核对）+ C-NA（serde derive 独立复核）\n")
+            fh.write("# 机制：以下是**人工表**（tools/global_triage.py::T107_MANUAL_NA / T110_MANUAL_IMPL），"
+                     "在 L4/L5 判决之后应用；\n")
+            fh.write("#      自校验不过就整体退出（不静默覆盖）；`--no-manual` 可复现无 MANUAL 的算式。\n")
+            fh.write("# 格式：台账行号 | android vaddr | 原值 | 新值 | 依据\n")
+            fh.write("# ---- A 组：T107_MANUAL_NA（13 行 / 11 组）= serde derive 展开体 ⇒ na:other/serde-derive ----\n")
+            for a in sorted(T107_MANUAL_NA):
+                if a not in bychange:
+                    continue
+                _p, pre, post, sub, why = bychange[a]
+                fh.write("# L%d\t0x%06x\t%s\t%s（subclass=%s）\tP1 trait impl（`<impl serde::… for M::T>`）+ "
+                         "P2 同类型 serde_derive 私有名兄弟（%s）+ T110 独立扫 .symtab 复算：105 条 serde trait impl "
+                         "全部 D1∧D2 成立，缺的恰好这 13 条\n" % (lineno[a], a, pre, post, sub, why))
+            fh.write("# ---- B 组：T110_MANUAL_IMPL（2 行 / 2 组）= 已落码但工具检测不到 ⇒ implemented ----\n")
+            for a in sorted(T110_MANUAL_IMPL):
+                if a not in bychange:
+                    continue
+                _p, pre, post, sub, why = bychange[a]
+                fh.write("# L%d\t0x%06x\t%s\t%s（subclass=%s，ours_src=%s）\t%s\n"
+                         % (lineno[a], a, pre, post, sub, T110_MANUAL_IMPL[a][1], why))
+            fh.write("# ---- C 组：口径后果 ----\n")
+            fh.write("# X 不变（落码不改变分母）：%d 组 / %d 条机器码；real-missing %d 组 / %d 条、"
+                     "implemented %d 组 / %d 条、implemented-alt %d 组 / %d 条\n"
+                     % (x_total, x_mc, len(g_miss), sum(len(v) for v in g_miss.values()),
+                        len(g_impl), sum(len(v) for v in g_impl.values()),
+                        len(g_alt), sum(len(v) for v in g_alt.values())))
+            fh.write("# D 口径分母 = 527 + X = %d（`tools/function_coverage.py --stats` 的第四口径 D）；"
+                     "A/B/B′ 的分母 527/438/445 一个都不动。\n" % (527 + x_total))
+            fh.write("# ⚠️ 本轮**没变**的东西：判据/阈值（VOL_CAP、group 归并、na 形态规则）一条没改；\n")
+            fh.write("#   工具只多了一张人工表 + 它在判决之后应用。重跑该工具**不再**冲掉 T107 那 13 行。\n")
     print("\n写出 %s（%d 行）" % (DENOM_TSV, len(rows)))
     return 0
 
@@ -2417,7 +2631,9 @@ def main(argv=None):
     p.add_argument("--seed", type=int, default=20261127)
     p.add_argument("--no-write", action="store_true")
     p.add_argument("--no-manual", action="store_true",
-                   help="不应用 T93 人工裁决表（复现\"未人工改判\"的基线，自校验 S3 用）")
+                   help="不应用人工裁决表：--android-census 不应用 T93_MANUAL_NA（复现\"未人工改判\"的"
+                        "基线，自校验 S3 用）；--denom-outside 不应用 T107_MANUAL_NA/T110_MANUAL_IMPL"
+                        "（T110；复现无 MANUAL 的算式，见 fixtures/denom_outside_refresh_plan.txt §4.3）")
     p.add_argument("--out", metavar="PATH", help="TSV 写到别处（默认 fixtures/global_triage.tsv）")
     p.add_argument("--self-check", action="store_true",
                    help="自校验 S1/S2/S3（只读，不写 fixtures）；可配 --baseline <--no-manual 的输出>")

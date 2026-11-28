@@ -1,0 +1,53 @@
+# denom_outside_refresh_diff.tsv —— T110：分母外台账**刷新前后**的逐行差异（改判留痕）
+# 生成：$PY fixtures/denom_outside_audit_t110.py --refresh-diff <旧台账> --out <本文件>
+#   旧 = 刷新前入库版（commit 696e513，T107 后）；新 = 本次刷新（T107_MANUAL_NA + T110_MANUAL_IMPL 生效）
+# 列：行号(新台账) | android vaddr | module | method | 原值 verdict | 新值 verdict | 新 subclass | 新 ours_src | 类别
+# 类别说明：AUTO = 工具自身按「同名 fn / 组级」判出来的（本轮没人工介入，是 T106/T108/T109 落码后重跑的结果）；
+#           MANUAL-* = 人工表命中（依据见台账尾部 §MANUAL-T110 + 预注册 plan §4）
+L112	0x3911b4	function_drawer	draw	implemented-alt/denom:no-loc	implemented-alt/denom:no-loc	denom:no-loc	src/effect_drawer.rs:959	ours_src 更新
+L113	0x3913e4	graphwar_version	graphwar_version_get_full_version	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_version.rs:68	AUTO（工具重跑检测到落码）
+L123	0x392f18	graphwar_campaign_control	get_current_level	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_campaign_control.rs:772	AUTO（工具重跑检测到落码）
+L124	0x393128	graphwar_campaign_control	save_current_level	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_campaign_control.rs:796	AUTO（工具重跑检测到落码）
+L191	0x3a5d60	graphwar_root_node	show_pop_up	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_root_node.rs:3406	AUTO（工具重跑检测到落码）
+L199	0x3ab19c	graphwar_root_node	print_help_and_exit_if_requested	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_root_node.rs:3473	AUTO（工具重跑检测到落码）
+L245	0x3b5374	graphwar_shot_calculator	calculate_function	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_shot_calculator.rs:288	AUTO（工具重跑检测到落码）
+L247	0x3b79a8	graphwar_shot_calculator	calculate_corrected_function	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_shot_calculator.rs:346	AUTO（工具重跑检测到落码）
+L248	0x3b7c70	graphwar_shot_calculator	calculate_function_offset_str	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_shot_calculator.rs:315	AUTO（工具重跑检测到落码）
+L327	0x3da190	graphwar_replay_reader	load_games	implemented/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_replay_reader.rs:157	ours_src 更新
+L328	0x3da370	graphwar_replay_reader	load_game	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_replay_reader.rs:236	AUTO（工具重跑检测到落码）
+L344	0x3deb08	graphwar_play_screen_control	clear_state	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_play_screen_control.rs:2038	AUTO（工具重跑检测到落码）
+L403	0x3fc6d4	graphwar_level_manager	get_level_data	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_level_manager.rs:1715	AUTO（工具重跑检测到落码）
+L426	0x406b4c	graphwar_backend	setup_level	implemented-alt/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:791	其它
+L427	0x406ba4	graphwar_backend	stop_client	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:829	AUTO（工具重跑检测到落码）
+L428	0x406c0c	graphwar_backend	stop_server	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:867	AUTO（工具重跑检测到落码）
+L429	0x406c64	graphwar_backend	start_server	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:906	AUTO（工具重跑检测到落码）
+L432	0x407068	graphwar_backend	stop_lan_broadcaster	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:1085	AUTO（工具重跑检测到落码）
+L434	0x407220	graphwar_backend	start_lan_broadcaster	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:1033	AUTO（工具重跑检测到落码）
+L436	0x40745c	graphwar_backend	get_next_clip_checkpoint	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:970	AUTO（工具重跑检测到落码）
+L437	0x4074f8	graphwar_backend	stop_server_broker_handler	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:1182	AUTO（工具重跑检测到落码）
+L440	0x4077bc	graphwar_backend	start_server_broker_handler	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:1128	AUTO（工具重跑检测到落码）
+L443	0x407d08	graphwar_backend	new	implemented/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:716	ours_src 更新
+L445	0x408460	graphwar_ban_list	is_connection_banned	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_ban_list.rs:168	AUTO（工具重跑检测到落码）
+L446	0x4086a0	graphwar_ban_list	new	implemented-alt/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_ban_list.rs:152	其它
+L609	0x43b400	axis_drawer	draw	implemented-alt/denom:no-loc	implemented-alt/denom:no-loc	denom:no-loc	src/effect_drawer.rs:959	ours_src 更新
+L682	0x444d2c	effect_drawer	step_effect	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/effect_drawer.rs:575	AUTO（工具重跑检测到落码）
+L689	0x447390	math_function	adjust_tokens	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/math_function.rs:635	AUTO（工具重跑检测到落码）
+L732	0x44daec	graphwar_function_input	clear	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_function_input.rs:2330	AUTO（工具重跑检测到落码）
+L778	0x4691a4	graphwar_event	deserialize	real-missing/denom:no-loc	real-missing/denom:no-loc	denom:no-loc	—	ours_src 更新
+L779	0x4693c0	graphwar_event	make_new_connection_request_event	implemented/denom:no-loc	implemented/denom:no-loc	no-loc:module-file-split	src/graphwar_event.rs:207	ours_src 更新
+L780	0x46947c	graphwar_event	serialize	real-missing/denom:no-loc	real-missing/denom:no-loc	denom:no-loc	—	ours_src 更新
+L865	0x48297c	graphwar_game_server	setup_level	implemented-alt/denom:no-loc	implemented-alt/denom:no-loc	denom:no-loc	src/graphwar_backend.rs:791	ours_src 更新
+L866	0x482a5c	graphwar_game_server	get_server_port	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_game_server.rs:921	AUTO（工具重跑检测到落码）
+L1137	0x4afef0	graphwar_computer_player_manager	computer_function_thread	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_computer_player_manager.rs:858	AUTO（工具重跑检测到落码）
+L1199	0x4ba8e4	entity_drawer	init	implemented/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/entity_drawer.rs:1676	ours_src 更新
+L1216	0x4becec	backtracer	install_panic_log_hook	real-missing/denom:no-loc	implemented/denom:no-loc	no-loc:layered	src/backtracer.rs:100	MANUAL-IMPL（T110）
+L1219	0x4bf690	entity_drawer	update_name_label	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/entity_drawer.rs:1986	AUTO（工具重跑检测到落码）
+L1220	0x4bf880	entity_drawer	draw_offset_triangle	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/entity_drawer.rs:2015	AUTO（工具重跑检测到落码）
+L1243	0x4c3308	graphwar_plane	on_resized	implemented/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_plane.rs:2650	ours_src 更新
+L1244	0x4c3408	graphwar_plane	clear_state	real-missing/denom:no-loc	implemented-alt/denom:no-loc	denom:no-loc	src/graphwar_play_screen_control.rs:2038	AUTO（工具重跑检测到落码）
+L1252	0x4c439c	graphwar_audio_control	set_hidden_muted	implemented/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_audio_control.rs:484	ours_src 更新
+L1254	0x4c46f4	graphwar_audio_control	soldier_info_event	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_audio_control.rs:408	AUTO（工具重跑检测到落码）
+L1259	0x4c488c	graphwar_audio_control	entity_removed_event	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_audio_control.rs:423	AUTO（工具重跑检测到落码）
+L1286	0x4ca340	graphwar_crash_reporter	clear_report	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_crash_reporter.rs:252	AUTO（工具重跑检测到落码）
+L1287	0x4ca444	graphwar_crash_reporter	send_pending_report	real-missing/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_crash_reporter.rs:386	AUTO（工具重跑检测到落码）
+L1288	0x4ca8b4	graphwar_crash_reporter	resolve_default_address	implemented/denom:no-loc	implemented/denom:no-loc	denom:no-loc	src/graphwar_crash_reporter.rs:127	ours_src 更新
