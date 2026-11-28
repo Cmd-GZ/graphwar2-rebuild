@@ -19,7 +19,7 @@
 | 文档 | 解决什么问题 |
 |---|---|
 | [01-architecture.md](01-architecture.md) | 三层结构：Godot 外壳 / GDExtension 内核 / 资源包 |
-| [02-module-map.md](02-module-map.md) | 原版 **78 个模块**（`scope=graphwar` **62** + `scope=other` **16**）↔ 我们 `src/` 的对照（§17；含对局元信息 8 模块）。**两条「按域读」的口径在这里**：结构指纹盲区 §35.12、顺序轴分域结论 **§35.12b（族内 84% / 族外 11%）** |
+| [02-module-map.md](02-module-map.md) | 原版 **82 个模块**（`scope=graphwar` **62** + `scope=other` **16**）↔ 我们 `src/` 的对照（§17；含对局元信息 8 模块）。**两条「按域读」的口径在这里**：结构指纹盲区 §35.12、顺序轴分域结论 **§35.12b（族内 84% / 族外 11%）** |
 | [03-function-language.md](03-function-language.md) | 玩家输入的函数语言：文法、优先级、怪癖、**token → 文本** |
 | [04-path-sampling.md](04-path-sampling.md) | 等弦长二分采样（核心算法、全部常量、复检的逐条指令） |
 | [05-shot-pipeline.md](05-shot-pipeline.md) | 一次开火的完整链路 + 端到端串讲 + `Mode::Ode` |
