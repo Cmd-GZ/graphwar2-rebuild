@@ -2091,6 +2091,9 @@ impl GraphwarPlane {
     #[func]
     fn tick_connected(&mut self) -> i64 {
         self.tick_source.handle_connected_to_server_event();
+        // 新的联机会话开始 ⇒ **有意**丢掉上一局还没被取走的计数（否则会把旧局的 `TickRequest`
+        // 当成新局的发出去）。连接这一下的那条由返回值给出、**不留在** `frame_tick_requests` 里，
+        // 免得下一次 `take_tick_requests()` 把它再发一遍。
         self.frame_tick_requests = 0;
         for e in self.tick_source.take_outbox() {
             if matches!(e, crate::events::Event::TickRequest) {
