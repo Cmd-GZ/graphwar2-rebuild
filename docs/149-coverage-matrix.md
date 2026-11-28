@@ -110,7 +110,7 @@
 | `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 21 | 观测 |
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
 | `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 17 | 观测 |
-| `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 30 | 观测 |
+| `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 50 | 观测 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/graphwar_obstacle_manager.rs` | 20 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
 | `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 128 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（120 个文件、4138 条 `fn`） | `bd693496bff2554ece5244d447d737968fdbace59bf66c5dd14fa13c69a13914` |
+| `src/` 树（120 个文件、4158 条 `fn`） | `fed2cc408c0c4ca6595168ecafb8dda5c450c6ddb68e0cd5e2dbcbab1c676745` |
 

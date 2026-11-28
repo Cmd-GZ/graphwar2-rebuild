@@ -20,6 +20,17 @@
 //! 真正遍历孩子的是 `_rec`。`get_node_by_type_rec` 多一条 `RawVec::grow_one`（往 `Vec` 里塞
 //! 命中的节点）而**没有** `get_name` ⇒ 它按**类型**收集、返回**多个**。
 //!
+//! # T101：`_rec` / `_type_rec` 的函数体已落码（它们**不在 527 分母里**）
+//!
+//! 上表的 **17 + 1** 两条入口此前只有"名字 + 调用关系"，函数体从未落码 ——
+//! 因为 Linux 侧这两族 **没有任何 `panic::Location`**（`tools/addr_probe.py locs` 对那 18 个
+//! Linux 地址**全部**返回 "no panic::Location referenced"，而 11 个薄壳都指向
+//! `src/graphwar_nodes.rs:8:62`）⇒ 它们进不了 527 分母，"没进分母"于是看起来像"不是缺口"。
+//! 本轮把这两条**业务函数**写出来（[`get_node_by_name_rec`] / [`get_node_by_type_rec`]），
+//! 类别登记为 `real-missing / denom:no-loc`：**18 条机器码 = 2 个源码函数**
+//! （17 条 `_rec` 是同一个泛型 fn 的 17 次单态化，同 T80 对 11 个薄壳的合并口径）。
+//! ⚠️ 落码**不改变** 527 口径的任何数字（分母不收、分子也不收）—— 这正是要写清的地方。
+//!
 //! 名字本身不在这三个函数里：`name: &str` 由调用方放进 `%rcx`/`%r8`（x86）或 `x1`/`x2`（arm64），
 //! 见 [`NODE_NAMES`] / [`NAMES_BY_ACCESSOR`]。
 //!
@@ -475,26 +486,36 @@ pub const ARM64_GET_NODE_BY_TYPE_REC: (u64, u32) = (0x003a_5ae4, 636);
 ///    唯一的旁证是**用法**：`0x3aafa0` 的 4 个实参全是 `*Vbox` + `Team1Container`（容器类），
 ///    `0x3a_b190` 的实参全是 `*Grid` / `*Block` / `FireContainer`（控件类），
 ///    `0x3a_b590` 的 18 处里 15 处是 `GraphwarRootNode`（游戏类）。这是**推断**，不是结论。
-/// 2. **`get_node_by_name` 与 `get_node_by_name_rec` 谁是"公开 API"**——arm64 侧两个名字都在，
-///    且 `get_node_by_name` 体内 `bl` 点名了 `get_node_by_name_rec` ⇒ **薄壳关系是观测**；
-///    但"这 11 个 x86 函数对应哪一半"目前靠"11 == 11"这条计数论证，属**推断**。
-///    缺的证据：x86 侧没有能与 arm64 一一对齐的指纹（`Location` 键在本模块只有一个）。
+/// 2. **「11 个 x86 函数是薄壳还是 `_rec`」——T101 已从「计数论证（推断）」升到「观测」**：
+///    11 个 x86 函数的**尾调目标全部落在** [`GET_NODE_BY_NAME_REC`] 的 17 个 `_rec` 实例里，
+///    而 `_rec` 实例**每个都自递归** ⇒ 它们只能是薄壳（`_rec` 不会尾调另一个 `_rec`）。
+///    原位说明保留在此，便于对照旧结论。
 /// 3. **5 个实参的名字已读出、所属单态化未配对**（`lea rcx` 与 `mov r8d` 之间隔了别的 `lea`）。
-/// 4. **`StringName` 比较的确切语义**——`get_node_by_name_rec` 里 `Node::get_name` 之后走
-///    `StringName::fmt`（`Display`），再比较；是 `==` 还是 `format!` 之后比较**未知**。
-///    缺的证据：`0x44ccc0` / `0x844d00` 这两个被调者没有符号。
+/// 4. **`StringName` 比较的确切语义——T101 已从「未知」升到「观测」**：arm64 `0x3a273c`
+///    `bl <StringName as Display>::fmt` → `0x3a274c cmp x8,x20`（长度）→ `0x3a2760 bl memcmp@plt`
+///    ⇒ 是 **`Display` 渲染成 `String` 后按长度 + 字节比较**，**不是** `StringName` 的 `PartialEq`。
+///    仍未定的只是 Rust 源码里写成 `format!` 还是 `to_string()`（两者语义相同，**推断**）。
 /// 5. **`0x9bb310` / `0x9bb318`（[`GD_OP_WRAPPER_A`] 内部两个槽）的引擎侧成员名**——
 ///    需要运行时读 GOT（`frida` 本轮不可用）。
 /// 6. **`0x3a_b0a0` 的 3 个实参**——全部落在 `GraphwarRootNode` 的命令总线 `0x3b0830` 里，
 ///    配对窗口被挤掉，名字未读出。
+///
+/// **T101 新增两条**（原第 2 / 第 4 条升档后空出的位置，替换成新发现的未知）：
+/// 7. **`_rec` 的 x86 实参分解**：5 个实参寄存器（`rdi` / `rsi:rdx` / `rcx:r8`），
+///    其中只有 `rcx:r8` = `name` 的 `(ptr,len)` 被 `0x3ad6e3` 的比较**直接证实**；
+///    `rsi:rdx` 是 16 B 的 `Gd`（arm64 侧 `x0:x1` 是 16 B 且入口就 `check_rtti("upcast_ref")`）
+///    属**推断** —— 缺的证据：能区分"16 B 句柄"与"第二个字符串"的独立指纹。
+/// 8. **`_type_rec` 里 `0x4490a0` 的语义**：它把 `Option` 写到 `[rsp+0x18]`，但
+///    `RawGd::check_rtti` → `Gd::owned_cast` 这条链在 arm64 是分开两个 `bl`、在 x86 却是
+///    `0x4068f0`（"clone" 包装）+ `0x4490a0` 两步 ⇒ 两跳的一一对应是**推断**。
 pub fn unknowns() -> &'static [&'static str] {
     &[
         "11 个单态化的 T 是什么类型（缺 class_id 表）",
-        "11 个 x86 函数对应 get_node_by_name 还是 _rec（只有计数论证）",
         "5 个实参所属单态化未配对",
-        "节点名比较是 == 还是 format! 后比较（0x44ccc0 / 0x844d00 无符号）",
         "0x9bb310 / 0x9bb318 的引擎侧成员名（需运行时读 GOT）",
         "0x3ab0a0 的 3 个实参名字未读出",
+        "_rec 的 x86 实参分解：只有 name=(rcx,r8) 由 0x3ad6e3 比较证实，rsi:rdx=16B Gd 是推断",
+        "_type_rec 里 0x4490a0 与臂64 的 check_rtti+owned_cast 两跳的一一对应是推断",
     ]
 }
 
@@ -670,7 +691,230 @@ pub fn get_node_by_name_mono_07<Root, T>(
     get_node_by_name(root, name, rec)
 }
 
+// ---------------------------------------------------------------------------
+// T101. `get_node_by_name_rec::<T>`（17 个单态化）与 `get_node_by_type_rec::<T>`（1 个）
+// ---------------------------------------------------------------------------
+//
+// 这两条是**原版有、我方此前没有**的业务函数（real-missing），但它们在 Linux 侧
+// **一条 `panic::Location` 都没有** ⇒ 永远进不了 527 分母。
+// 判据（可复算）：`tools/addr_probe.py locs <linux_va>` 对本节 18 个地址全部返回
+// "no panic::Location referenced"；而 11 个薄壳（`get_node_by_name::<T>`）都指向
+// `src/graphwar_nodes.rs:8:62`。⇒ 本轮登记的类别是 `real-missing / denom:no-loc`。
+//
+// ## 为什么此前只有"薄壳"没有"递归"（就地更正 T80 的占位说明）
+//
+// T80 落 11 个薄壳时，`_rec` 的语义还没解出来，于是把尾调写成了**调用方注入的闭包形参**
+// `rec: impl FnOnce(Root, &str) -> T`（见 [`get_node_by_name`]）。那**不是**原版形状：
+// 原版那段尾调是**直接调**同名递归函数（arm64 `.symtab` 逐字 `bl …get_node_by_name_rec`，
+// x86 侧对应 `call <tail>`）。本轮把 `_rec` 解出来并落码之后，`rec` 这个形参的物理含义
+// 就是 `get_node_by_name_rec::<T>` 本身（组合见测试
+// `the_thin_shell_composes_with_the_real_rec`）；薄壳 11 个 fn 的签名**未改**（避免动既有断言）。
+//
+// ## 语义（**观测**：arm64 有完整符号名，x86 只有指令；两侧结构逐条对上）
+//
+// `get_node_by_name_rec::<T>(node, name) -> Option<Gd<T>>`（arm64 `0x3a2638` 系列，17 个实例）：
+//
+// ```text
+// 3a2688  bl Node::get_children_full            ; 取子节点数组（AnyArray）
+// 3a26a0  bl AnyArray::len ; 3a26a4 cmp x23,x0  ; for i in 0..len
+// 3a26b0  bl core::builtin::to_i64              ; 下标转 i64（AnyArray::get 的实参）
+// 3a2704  bl Node::get_name                     ; 子节点的 StringName
+// 3a273c  bl <StringName as Display>::fmt       ; ★ 名字先按 Display 写进一个 String
+// 3a274c  cmp x8,x20 / 3a2760 bl memcmp@plt     ; ★ 再与 name 比 **长度 + 字节**（不是 StringName ==）
+// 3a27f8  bl RawGd::<T>::check_rtti("clone",5) ; 名字命中的分支里才做 RTTI 检查
+// 3a2818  bl Gd<T>::owned_cast                  ; （字符 "clone" 5 B，在 .rodata）
+// 3a281c  ldr w8,[sp,#0x40] / tbnz w8,#0,<递归> ; ★ cast **失败**就继续往下递归，不返回
+// 3a27a8  bl 0x3a2638（自己）                   ; ★ 自递归：拿子节点当根再找一遍
+// 3a27ac  ldr w8,[x19] / tbnz w8,#0,<返回>      ; 子递归成功 ⇒ 直接向上返回
+// ```
+//
+// x86 侧同形（`0x3ad570` = 薄壳 `0x3aaea0` 的尾调，FDE `0x3ad570..0x3ad8fb`，`0x38b`）：
+// `0x3ad5c7` 取子数组 → `0x3ad5e5` 取 len → `0x3ad5f7` 取第 i 个 → `0x3ad5e0` 循环边界，
+// `0x3ad6cf` 比长度 → `0x3ad6e3` `call *0x9baa10`（比较）→ `0x3ad73d` **`call 0x3ad570`（自递归）**。
+// 17 个实例**每个都自递归**（`tools/addr_probe.py callers <va>` 里每个都有"调用点在自身区间内"一条），
+// 这也正是"它是递归函数"的独立证据（不依赖名字）。
+//
+// ⚠️ **不检查根自己**：两侧都是"先取子节点再比"，根节点的名字从不参与比较
+// （x86 `0x3ad581` 起就把实参存栈，第一个 `call` 是 `get_children_full`）。
+//
+// `get_node_by_type_rec::<T>(node) -> Vec<Gd<T>>`（arm64 `0x3a5ae4`，x86 `0x3af430`）：
+// 同一条子节点循环，但**没有** `get_name` / `Display::fmt` / `memcmp`，多一条
+// `alloc::raw_vec::RawVec::grow_one`（arm64 逐字）⇒ 按**类型**收集、返回 `Vec`。
+// 顺序是**先序**：x86 `0x3af544` 先 `owned_cast` + `0x3af57b` 压栈，**之后**才
+// `0x3af5b7 call 0x3af430`（自递归）并把子结果 `0x3af5f2` memcpy 追加。
 
+/// `_rec` 需要的**场景树操作**：原版用的是 Godot `Node` + `AnyArray` 的四个方法。
+///
+/// 本层按本文件既有约定**不碰引擎**（同 [`get_node_by_name`] 把根节点当参数传递的做法），
+/// 只把递归**算法**表达出来。四个方法到原版真名的映射是**观测**（arm64 `.symtab` 逐条）：
+///
+/// | 本 trait | 原版 | 依据 |
+/// |---|---|---|
+/// | [`SceneTree::child_count`] | `AnyArray::len` | arm64 `0x3a26a0` `bl …AnyArray3len` |
+/// | [`SceneTree::child`] | `AnyArray` 下标取 + `Node` 的 `FromGodot::from_variant` | arm64 `0x3a26b0` `to_i64` + `0x3a26dc` `from_variant` |
+/// | [`SceneTree::node_name`] | `Node::get_name` → `StringName as Display::fmt` → `String` | arm64 `0x3a2704` + `0x3a273c` |
+/// | （子节点的 `Gd<T>` 转换） | `RawGd::<T>::check_rtti` + `Gd<T>::owned_cast` | arm64 `0x3a27f8` + `0x3a2818` |
+pub trait SceneTree: Sized {
+    /// 子节点个数（`Node::get_child_count` / `AnyArray::len`）。
+    ///
+    /// ⚠️ 本层把每一层节点都当成**同一个类型** `Self`：原版子节点一律是 `Gd<Node>`
+    /// （arm64 `0x3a26dc` `FromGodot::from_variant` 之后就是 `Gd<Node>`），类型参数 `T`
+    /// 只影响末尾那一次 `Gd<T>::owned_cast`。做成 `type Child: SceneTree` 的关联类型
+    /// 会让递归需要另一层 bound，且不增加任何信息。
+    fn child_count(&self) -> usize;
+    /// 第 `index` 个子节点 **按值**返回（原版 `AnyArray` 取出来的是 `Variant`，再转成 `Gd<Node>`）。
+    fn child(&self, index: usize) -> Self;
+    /// 节点名（`Node::get_name()` 的 `StringName` **先按 `Display` 渲染成 `String`**）。
+    fn node_name(&self) -> String;
+}
+
+/// `get_node_by_name_rec::<T>` 的 **17** 个 x86 单态化地址（ELF vaddr，按地址升序）。
+///
+/// 档位：**观测**（FDE 起点 + 每个都自递归 + 每个都被某个薄壳尾调或别的模块直接 `call`）。
+/// 其中 **11** 个正是 [`TYPE_TAILS`] / [`ACCESSORS`] 里的尾调目标（薄壳 → `_rec` 的链是两侧独立可验的：
+/// x86 `call <tail>`；arm64 薄壳体内 `bl …get_node_by_name_rec`）。
+/// 另外 6 个（`0x3abd20` / `0x3ad900` / `0x3adfe0` / `0x3ae320` / `0x3ae9e0` / `0x3aed10`）
+/// 由**别的模块**直接调用（例如 `0x3a2e10` = `GraphwarRootNode::_ready` 调 4 个、
+/// `0x3b0830` 命令总线调 1 个、`0x4e3f20` 调 1 个）。
+pub const GET_NODE_BY_NAME_REC: [u64; 17] = [
+    0x3a_b990,
+    0x3a_bd20,
+    0x3a_c050,
+    0x3a_c3e0,
+    0x3a_c770,
+    0x3a_cb00,
+    0x3a_ce90,
+    0x3a_d220,
+    0x3a_d570,
+    0x3a_d900,
+    0x3a_dc50,
+    0x3a_dfe0,
+    0x3a_e320,
+    0x3a_e650,
+    0x3a_e9e0,
+    0x3a_ed10,
+    0x3a_f0a0,
+];
+
+/// `get_node_by_type_rec::<T>` 的唯一 x86 单态化（FDE `0x3af430..0x3af6fd`，`0x2cd` = 717 B）。
+///
+/// 档位：**观测**（自递归 `0x3af5b7` + 无 `get_name`/`memcmp` + `RawVec::grow_one` 走 `0x9baa18`）；
+/// 跨构建定名 `fp:高置信同源 score=0.8405 margin=0.4417`（`fixtures/hybrid_names.tsv` 全表最高的一条）。
+pub const GET_NODE_BY_TYPE_REC: u64 = 0x3a_f430;
+
+/// `_rec` 的 arm64 `.symtab` 被调者（逐字；`graphwar_nodes` 模块里 `_rec` 与 `_type_rec` 共用大部分）。
+///
+/// 档位：**观测**。这张表是"名字比较语义"的判据来源：`Display::fmt` + `memcmp@plt`
+/// 同时出现 ⇒ 比较走的是**字符串**，不是 `StringName` 的 `PartialEq`。
+pub const REC_CALLEES: [&str; 8] = [
+    "Node::get_children_full",
+    "AnyArray::len",
+    "Node::get_name",
+    "<StringName as core::fmt::Display>::fmt",
+    "memcmp@plt",
+    "RawGd<T>::check_rtti",
+    "Gd<T>::owned_cast",
+    "alloc::raw_vec::RawVec<T,A>::grow_one",
+];
+
+/// 一个 `_rec` 实例在 arm64 侧的 `st_size` 区间（1906…2070，即 17 个实例**大小相近**）。
+///
+/// 档位：**观测**（`.symtab` 逐条）。用途：说明 17 条是**同一泛型 fn 的 17 次单态化**，
+/// 源码层只该有**一个** `fn`（同 T80 对 11 个薄壳的处理：11 条机器码 = 1 个源码 fn）。
+pub const REC_ARM64_SIZE_RANGE: (u32, u32) = (1906, 2070);
+
+/// 一个 `_rec` 实例在 x86 侧的 FDE 区间（`0x328`…`0x38d`），同上。**观测**。
+pub const REC_X86_SIZE_RANGE: (u32, u32) = (0x328, 0x38d);
+
+/// `get_node_by_name_rec::<T>` 的**源码层本体**：在 `node` 的子树里按**名字**找第一个能 cast 成 `T` 的节点。
+///
+/// 语义逐条来自反汇编（见本节开头的指令表），三处**容易写错**的地方各自钉死：
+///
+/// 1. **不检查 `node` 自己** —— 只遍历子节点（原版第一个动作就是 `get_children_full`）。
+/// 2. **名字比较 = 长度 + 字节**（`StringName` 先 `Display::fmt` 成 `String`，再 `memcmp`）。
+///    ⇒ 本函数对 `node_name()` 的返回值做 `== &str`，等价于原版那条 `cmp len` + `memcmp`。
+/// 3. **名字命中但 cast 失败 ⇒ 继续递归**（不是返回 `None`，也不是跳过该子树）。
+///    依据：arm64 `0x3a281c` `ldr w8,[sp,#0x40]` + `tbnz w8,#0x0,0x3a2794`（`Option` 判别为
+///    `None` 时跳到**递归块**）；`0x3a2824`–`0x3a283c` 才是"cast 成功 ⇒ 写返回值"。
+///
+/// 档位：**观测**（控制流 + 被调者名两侧都对上）。`T` 是什么类型 = **未知**（缺 `class_id` 表）。
+pub fn get_node_by_name_rec<N, T>(
+    node: &N,
+    target: &str,
+    cast: impl Fn(&N) -> Option<T>,
+) -> Option<T>
+where
+    N: SceneTree,
+{
+    // 递归体收 `&F`（而不是 `impl Fn`）：否则 `&cast` 每递归一层就多一层引用，
+    // 单态化会无限展开（E0275 / "reached the recursion limit"）。
+    fn rec_impl<N, T, F>(node: &N, target: &str, cast: &F) -> Option<T>
+    where
+        N: SceneTree,
+        F: Fn(&N) -> Option<T>,
+    {
+    let mut index = 0;
+    while index < node.child_count() {
+        // 0x3a26b0 bl to_i64 / 0x3a26dc bl FromGodot::from_variant / 0x3ad5f7 call *0x9ba818
+        let child = node.child(index);
+        // 0x3a2704 bl Node::get_name → 0x3a273c bl <StringName as Display>::fmt
+        //   → 0x3a274c cmp x8,x20（长度）→ 0x3a2760 bl memcmp@plt（字节）
+        if child.node_name() == target {
+            // 0x3a27f8 bl RawGd::<T>::check_rtti("clone",5) → 0x3a2818 bl Gd<T>::owned_cast
+            // 0x3a2820 tbnz w8,#0x0（None）→ 落到下面的递归；否则 0x3a2834 写返回值
+            if let Some(found) = cast(&child) {
+                return Some(found);
+            }
+        }
+        // 0x3a27a8 bl 0x3a2638（自递归）/ x86 0x3ad73d call 0x3ad570
+        if let Some(found) = rec_impl(&child, target, cast) {
+            // 0x3a27ac ldr w8,[x19] / tbnz w8,#0,0x3a2840（子递归成功 ⇒ 直接往上返回）
+            return Some(found);
+        }
+        index += 1;
+    }
+    None
+    }
+    rec_impl(node, target, &cast)
+}
+
+/// `get_node_by_type_rec::<T>` 的**源码层本体**：按**类型**收集子树里所有能 cast 成 `T` 的节点。
+///
+/// 与 [`get_node_by_name_rec`] 的差别（arm64 被调者表逐条）：**没有** `Node::get_name` /
+/// `StringName as Display::fmt` / `memcmp@plt`，而多一条 `alloc::raw_vec::RawVec::grow_one`
+/// ⇒ 不比较名字、往 `Vec` 里塞、返回多个。
+///
+/// **顺序是先序**（父节点的命中项在前，子树的命中项随后）：x86 `0x3af544` 先
+/// `owned_cast` → `0x3af57b` 压栈，**之后**才 `0x3af5b7 call 0x3af430` 自递归、
+/// `0x3af5f2` memcpy 追加。
+///
+/// 同样**不检查 `node` 自己**。档位：**观测**。
+pub fn get_node_by_type_rec<N, T>(node: &N, cast: impl Fn(&N) -> Option<T>) -> Vec<T>
+where
+    N: SceneTree,
+{
+    fn rec_impl<N, T, F>(node: &N, cast: &F) -> Vec<T>
+    where
+        N: SceneTree,
+        F: Fn(&N) -> Option<T>,
+    {
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < node.child_count() {
+        // 0x3af4c8 call *0x9ba818（取第 i 个子节点）/ 0x3af4b6 call *0x9ba810（len）
+        let child = node.child(index);
+        // 0x3af544 bl Gd<T>::owned_cast → 0x3af54e cmp 判别 → 0x3af57b 压栈（先压）
+        if let Some(found) = cast(&child) {
+            out.push(found);
+        }
+        // 0x3af5b7 bl 0x3af430（自递归，后递归）→ 0x3af5f2 memcpy（extend 追加子结果）
+        out.extend(rec_impl(&child, cast));
+        index += 1;
+    }
+    out
+    }
+    rec_impl(node, &cast)
+}
 
 #[cfg(test)]
 mod tests {
@@ -862,5 +1106,176 @@ mod tests {
     #[test]
     fn unknowns_are_listed() {
         assert_eq!(unknowns().len(), 6);
+    }
+
+    // ---- T101：`_rec` / `_type_rec` 落码的自校验 -------------------------------------------
+    //
+    // 期望值来源**只有反汇编**（`AGENTS.md` §0.5）：
+    //   * 地址表 = FDE 起点 + 自递归 `call` + 薄壳尾调（`tools/addr_probe.py fde|callers`）；
+    //   * 遍历顺序 / "不检查根自己" / "cast 失败继续递归" = arm64 `0x3a2688…0x3a285c` 的控制流，
+    //     与 x86 `0x3ad5c7…0x3ad73d` 逐条对上；
+    //   * 名字比较 = `Display::fmt` + `memcmp`（arm64 `0x3a273c` / `0x3a2760`）。
+
+    /// 一棵最小的假场景树（原版是 Godot `Node`；这里只提供 `SceneTree` 的四个操作）。
+    #[derive(Clone, Copy)]
+    struct FakeNode {
+        name: &'static str,
+        kind: u8,
+        children: &'static [FakeNode],
+    }
+
+    impl FakeNode {
+        const fn leaf(name: &'static str, kind: u8) -> Self {
+            Self { name, kind, children: &[] }
+        }
+    }
+
+    impl SceneTree for FakeNode {
+        fn child_count(&self) -> usize {
+            self.children.len()
+        }
+        fn child(&self, index: usize) -> FakeNode {
+            self.children[index]
+        }
+        fn node_name(&self) -> String {
+            self.name.to_string()
+        }
+    }
+
+    /// cast 的模型：只有 `kind == WANT` 的节点才"能 cast 成 T"（原版是 `Gd<T>::owned_cast`）。
+    const WANT: u8 = 7;
+    fn cast_want(node: &FakeNode) -> Option<&'static str> {
+        if node.kind == WANT {
+            Some(node.name)
+        } else {
+            None
+        }
+    }
+
+    /// 搜索**不会**命中根自己：原版第一个动作就是 `Node::get_children_full`（`0x3a2688`）。
+    #[test]
+    fn rec_never_matches_the_root_itself() {
+        const KIDS: &[FakeNode] = &[FakeNode::leaf("Other", WANT)];
+        const TREE: FakeNode = FakeNode { name: "Target", kind: WANT, children: KIDS };
+        // 根叫 Target 且能 cast，但根从不参与比较 ⇒ 只会命中它的子节点 "Other"。
+        assert_eq!(get_node_by_name_rec(&TREE, "Target", cast_want), None);
+        assert_eq!(get_node_by_name_rec(&TREE, "Other", cast_want), Some("Other"));
+    }
+
+    /// 名字命中但 **cast 失败** ⇒ 继续递归（arm64 `0x3a2820 tbnz` 那条支路），
+    /// 所以能拿到**同名但层级更深**的那个可 cast 节点。
+    #[test]
+    fn rec_keeps_searching_when_the_name_matches_but_the_cast_fails() {
+        // 外层 "Target" 的 kind 不是 WANT（cast 必失败），它自己还有一个同名的可 cast 子节点。
+        const DEEP: &[FakeNode] = &[FakeNode::leaf("Target", WANT)];
+        const MID: FakeNode = FakeNode { name: "Target", kind: 9, children: DEEP };
+        const TREE: FakeNode = FakeNode { name: "root", kind: 0, children: &[MID] };
+        // 先序遍历里第一个 "Target" 就是外层那个（cast 失败）⇒ 必须继续走下去才拿得到。
+        assert_eq!(get_node_by_name_rec(&TREE, "Target", cast_want), Some("Target"));
+        // 反面对照：若实现是"名字命中就返回 cast 结果"，这里会返回 None。
+        assert_eq!(cast_want(&MID), None, "外层那个确实 cast 不了");
+    }
+
+    /// 先序：浅层的命中先返回（`0x3a27ac` 子递归成功即往上返回）。
+    #[test]
+    fn rec_prefers_the_shallow_match_in_preorder() {
+        const DEEP: &[FakeNode] = &[FakeNode::leaf("dup", WANT)];
+        const SHALLOW: FakeNode = FakeNode { name: "dup", kind: WANT, children: DEEP };
+        // 第一个子节点自己就命中 ⇒ 命中它（它也是它自己子树里"最浅"的那个）。
+        const TREE: FakeNode = FakeNode { name: "root", kind: 0, children: &[SHALLOW] };
+        assert_eq!(get_node_by_name_rec(&TREE, "dup", cast_want), Some("dup"));
+    }
+
+    /// 找不到就是 `None`（原版末尾的 `None` 路径）。
+    #[test]
+    fn rec_returns_none_when_nothing_matches() {
+        const TREE: FakeNode = FakeNode {
+            name: "root",
+            kind: 0,
+            children: &[FakeNode::leaf("a", 1), FakeNode::leaf("b", 2)],
+        };
+        assert_eq!(get_node_by_name_rec(&TREE, "c", cast_want), None);
+        assert_eq!(get_node_by_name_rec(&TREE, "a", cast_want), None, "名字对但 cast 不了");
+    }
+
+    /// 名字比较是**字符串**：`Display` 渲染后的名字必须与目标**逐字节相等**才算命中
+    /// （arm64 `0x3a274c cmp len` + `0x3a2760 memcmp@plt` ⇒ 不是前缀、不是忽略大小写）。
+    #[test]
+    fn rec_name_match_is_byte_equality() {
+        const TREE: FakeNode = FakeNode {
+            name: "root",
+            kind: 0,
+            children: &[FakeNode::leaf("TimerLabel", WANT)],
+        };
+        assert_eq!(get_node_by_name_rec(&TREE, "TimerLabel", cast_want), Some("TimerLabel"));
+        assert_eq!(get_node_by_name_rec(&TREE, "Timer", cast_want), None, "不许前缀匹配");
+        assert_eq!(get_node_by_name_rec(&TREE, "timerlabel", cast_want), None, "不许忽略大小写");
+        assert_eq!(get_node_by_name_rec(&TREE, "TimerLabel ", cast_want), None, "长度必须相等");
+    }
+
+    /// `get_node_by_type_rec` 是**先序**收集（`0x3af544` 先压栈、`0x3af5b7` 后递归）。
+    #[test]
+    fn type_rec_collects_in_preorder_without_comparing_names() {
+        // 结构：root → [A(WANT) → [A1(WANT)], B(非 WANT) → [B1(WANT)]]
+        const A1: &[FakeNode] = &[FakeNode::leaf("A1", WANT)];
+        const B1: &[FakeNode] = &[FakeNode::leaf("B1", WANT)];
+        const A: FakeNode = FakeNode { name: "A", kind: WANT, children: A1 };
+        const B: FakeNode = FakeNode { name: "B", kind: 0, children: B1 };
+        const TREE: FakeNode = FakeNode { name: "root", kind: WANT, children: &[A, B] };
+        // 期望 = 先序：A（父）→ A1（A 的子树）→ B1（B 的子树）；root 自己**不算**。
+        assert_eq!(
+            get_node_by_type_rec(&TREE, cast_want),
+            vec!["A", "A1", "B1"],
+            "先序：父命中项在前，子树命中项随后（0x3af57b 先、0x3af5b7 后）"
+        );
+        // 名字完全不参与：把 A 改名不影响结果。
+        const A_RENAMED: FakeNode = FakeNode { name: "zzz", kind: WANT, children: A1 };
+        const TREE2: FakeNode = FakeNode { name: "root", kind: WANT, children: &[A_RENAMED] };
+        assert_eq!(get_node_by_type_rec(&TREE2, cast_want), vec!["zzz", "A1"]);
+    }
+
+    /// 17 个 `_rec` 单态化 = 同一个泛型 fn 的实例：地址升序、互不相同、且
+    /// **11 个薄壳的尾调目标全在这 17 个里**（薄壳 → `_rec` 的链两侧独立可验）。
+    #[test]
+    fn rec_instances_cover_every_shell_tail() {
+        assert_eq!(GET_NODE_BY_NAME_REC.len(), 17);
+        for w in GET_NODE_BY_NAME_REC.windows(2) {
+            assert!(w[0] < w[1], "必须是升序：{:#x} !< {:#x}", w[0], w[1]);
+        }
+        for tail in TYPE_TAILS {
+            assert!(
+                GET_NODE_BY_NAME_REC.contains(&tail),
+                "薄壳尾调 {tail:#x} 必须是一个 _rec 实例"
+            );
+        }
+        // `_type_rec` 不属于 `_rec` 那一族（它在 0x3af0a0 之后、紧跟的下一个地址）。
+        assert!(!GET_NODE_BY_NAME_REC.contains(&GET_NODE_BY_TYPE_REC));
+        assert_eq!(GET_NODE_BY_TYPE_REC, 0x3a_f430);
+        // 两侧尺寸区间必须落在臂64/ x86 各自读出的范围里（19xx / 0x3xx 量级）。
+        let (lo, hi) = REC_ARM64_SIZE_RANGE;
+        assert!(lo < hi && lo >= 1900 && hi <= 2100);
+        let (lo, hi) = REC_X86_SIZE_RANGE;
+        assert!(lo < hi && lo >= 0x300 && hi <= 0x400);
+    }
+
+    /// 薄壳的占位形参 `rec` **就是** `get_node_by_name_rec::<T>`：两者组合起来跑得通
+    /// （这就是本轮"接线"的最小证据 —— 不改 11 个 mono fn 的签名）。
+    #[test]
+    fn the_thin_shell_composes_with_the_real_rec() {
+        const TREE: FakeNode = FakeNode {
+            name: "root",
+            kind: 0,
+            children: &[FakeNode::leaf("Team1Container", WANT)],
+        };
+        // `get_node_by_name(root, name, rec)` 里 rec 的物理含义 = 尾调 `_rec`（0x3aaf47 等 11 条）。
+        let got = get_node_by_name(&TREE, "Team1Container", |root: &FakeNode, name: &str| {
+            get_node_by_name_rec(root, name, cast_want)
+        });
+        assert_eq!(got, Some("Team1Container"));
+        // 换一个单态化入口，结果必须一致（11 个实例行为相同：只是 T 不同）。
+        let got = get_node_by_name_mono_01(&TREE, "Team1Container", |root: &FakeNode, name: &str| {
+            get_node_by_name_rec(root, name, cast_want)
+        });
+        assert_eq!(got, Some("Team1Container"));
     }
 }
