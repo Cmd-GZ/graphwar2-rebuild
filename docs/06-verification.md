@@ -27482,3 +27482,240 @@ git diff --exit-code $MAIN/fixtures/frame_diff_thresholds.txt $MAIN/fixtures/fra
 `missing_if_kept` 列；本轮**没有**需要改动它的搬迁）、`src/graphwar_*.rs`、`tools/frame_capture.py`、
 `tools/frame_diff.py`、`fixtures/frame_diff_thresholds.txt`、`fixtures/frame_capture_freeze_plan.txt`、
 `fixtures/guardrails.json`。
+
+## 145. T97 `root_node` / `button` 双模块 gap_proxy 逐条分诊：`button` 的 **29 条差 = gdext 宏产物**（+4 drop glue）、`root_node` 唯一 `real-missing` 落码（`get_media_storage_path`）/ 三个悬案结案（`+0xb0` 6 写点、`+0x1f8` 本模块 0 写点、`GATE_B` 闭环）（2026-11-28，任务 T97 / 分支 `agent/gap-rootnode`）
+
+> 预注册：[`fixtures/gap_rootnode_button_plan.txt`](../fixtures/gap_rootnode_button_plan.txt)（commit `61db638`，**先单独提交、后跑**；跑完只允许在文件末尾追加 §9 勘误，不改 §1–§8）。
+> 逐条产物：[`fixtures/gap_rootnode.tsv`](../fixtures/gap_rootnode.tsv)（45 行）/ [`fixtures/gap_button.tsv`](../fixtures/gap_button.tsv)（35 行），两文件末尾各有「映射自校验」小节。
+> 本节所有读数都能用 §145.9 的命令复跑；地址一律 **ELF vaddr**（Ghidra/REA 地址 = 本节 + 0x100000，**Linux 列才加**）。
+> **本轮没有新立任何阈值**：五类定义（T82）、`VOL_CAP=0x800`（T85）、调用形态闸（T89 §137.5）、落码口径（T95 §4）全部继承，`--stats` 的判法一行未改。
+
+### 145.0 一页结论
+
+| # | 交付 | 结果 |
+|---|---|---|
+| ① | 两个模块的差集**是什么** | `button`（Android 35 / Linux 6）：**29 条差全是 gdext 宏产物 + drop glue**（25 `na:gdext-glue` + 4 `na:other/drop-glue`），另 6 条真业务我方**早已实现** ⇒ **`real-missing = 0`**。`root_node`（45 / 23）：28 条宏/AST 产物（`na:gdext-glue` 20 + `clap-derive` 1 + drop glue 6 **+ `unknown` 1**：`augment_args` 5752 B 撞体积闸，按预注册 §2.4 **不许**判 na ⇒ 保守落 `unknown`，见 plan §9 勘误 E1）+ **17 条真业务**，其中 **1 条真缺口**（`0x3b00d0`）已在 527 内、**3 条真缺口在分母外**（§145.5）。 |
+| ② | `real-missing` 落码 | **1 处**：`GraphwarRootNode::get_media_storage_path`（Linux `0x3b00d0` / FDE `0x754`）⇒ 527 台账 **F3 → F1**（§145.4）。 |
+| ③ | 三个悬案（T71 §123.3.1 / §123.8 第 4 条） | `+0xb0` 写点 **6 条全找到**（含哨兵写入点 `0x3b2e1d`）；`+0x1f8` 在**本模块归属内 0 条写点**（⇒ 闸门语义仍未解，缺什么写清）；`GATE_B(+0x1703)` **闭环**（写 3 / 读 2）（§145.6）。 |
+| ④ | 三个数的口径 | 机器码 **333/527 = 63.2 %**（332→333）；招牌 B **333/438 = 76.0 %**（332→333，分母剔 89 条 `na:*`）；严格 1:1 **261/527 = 49.5 %**（260→261）；源码级 **+1 个不同我方函数**（§145.7）。 |
+
+### 145.1 为什么这两个模块的「缺口」先要判性质：`gap_proxy` 是**两个分母相减**
+
+`fixtures/global_triage_modules.tsv` 的 `gap_proxy = android_fns − lin_F1F2`：
+
+* 左边 `android_fns` = Android 2.0.60 `.symtab` 里**名字带该模块 token 的 FUNC 条数**（有名字，答案在手）；
+* 右边 `lin_F1F2` = Linux 2.0.60 里**`panic::Location` 指向该模块 `.rs` 行**的函数条数（527 台账）。
+
+一个函数**没有 `unwrap/expect/越界` 就没有 Location** ⇒ 它**永远进不了 527 分母**，
+于是「没进分母」会伪装成「没实现」。这两个模块正是这种伪装最重的地方（宏产物 + 不 panic 的虚函数）。
+本轮做的事是**把差集逐条判成它到底是什么**，而不是把 30 / 34 当工作量去写代码。
+
+口径自校验（预注册 §8 **S0**）：按「demangle 名含 `graphwarrust::<mod>::` 的 `.text` FUNC、按 `st_value` 去重」
+重算 = **45 / 35**，与 `fixtures/global_triage_android_census.tsv` 的 `game_module graphwar_root_node 45` /
+`game_module graphwar_button 35` **逐值相同**（差一条就说明口径不同，先对齐再跑 —— 见 §145.9 ①）。
+
+### 145.2 `graphwar_button.rs`：35 − 6 = **29 条差全部是 gdext 宏产物 / drop glue**，`real-missing = 0`
+
+`fixtures/gap_button.tsv` 的 35 行按名字形态分组（**每行都带 rel32 / slot / LOC / 依据**）：
+
+| 类 | 子类 | 条数 | Android 名形态（`.symtab` 逐字） |
+|---|---|---|---|
+| `na:gdext-glue` | `call-shim` | **14** | `__register_exports::{ptrcall_fn,varcall_fn}` ×8 + `_::__init::__inner_init::{{closure}}::{ptrcall_fn,varcall_fn}` ×6 |
+| `na:gdext-glue` | `ctor-shell` | **4** | `_::__init::__inner_init`（404–512 B，`rel32=0`、`slot=1`） |
+| `na:gdext-glue` | `reg-table` | **3** | `__register_methods` / `__register_constants` / `__register_exports` |
+| `na:gdext-glue` | `virtual-shim` | **3** | `ImplementsGodotVirtual::{__virtual_call,__default_virtual_call}::virtual_fn` |
+| `na:gdext-glue` | `class-id` | **1** | `GodotClass::class_id`（56 B 常量返回壳） |
+| `na:other` | `drop-glue` | **4** | `core::ptr::drop_in_place<GraphwarButton>` ×3 + `…<InstanceStorage<GraphwarButton>>` |
+| `implemented` | `denom:no-loc` | **6** | `IButton::{init,ready,process}` + `GraphwarButton::{button_down,pressed,button_up}` |
+| **合计** | | **35** | `na:*` **29** / 真业务 **6** / `real-missing` **0** |
+
+**证据（每条至少两个独立证据，预注册 §2.6）**：
+
+1. **名字形态**（观测：`.symtab` 未剥离，demangle 逐字）：上表右列。
+2. **机器特征**（本轮实测，写在 TSV 里）：例如 `ctor-shell` 四条 `rel32=0` / `slot=1` / LOC=1
+   （Location 落在 `#[godot_api]` 属性行 `src/graphwar_button.rs:83`、`:111`、`:14`）；
+   `call-shim` 全部 152–192 B、`rel32=0`；`reg-table` 族的 `Location` 与 527 台账里
+   已被 T82 判 `na:gdext-glue` 的 Linux 行**同键**（`0x4e0e60`/`0x4e0fe0`/`0x4e8230`/`0x4e83d0`）。
+3. **体积闸**（T85 `VOL_CAP=0x800`）：29 条全部 ≤ 0x200；而真业务的 6 条在 280–868 B 之间 ——
+   体积**不是**本模块的区分器（这条如实写，**没拿体积当判据**）。
+
+> ⚠️ **并列陷阱（本轮最要紧的一句话）**：Linux 侧 `graphwar_button.rs` 的 527 行**恰好也是 6 条**，
+> 但它们**不是**那 6 条业务函数 —— 它们是**宏壳**（`__register_methods` ×2、`__init::__inner_init` ×1、
+> 3 条 `?::_`），L 轴反查出来的 Android 对应物是 `0x43be9c`/`0x43c02c`/`0x442378`/`0x442724`（§145.2 表里 na 的地址）。
+> ⇒ **「两边都等于 6」是巧合，两个 6 的集合不相交**。任何拿 `lin_F1F2 = 6` 去暗示"业务函数只做了 6 个"的读法都是错的。
+> 这也解释了为什么本模块的 `gap_proxy = 34` 是**纯分母假象**：它同时高估了缺口（业务 6 条不在分母里）
+> 又错认了对象（分母里那 6 条本来就不该手写）。
+
+### 145.3 `graphwar_root_node.rs`：45 条 = 26 条宏/AST 产物 + 17 条真业务（其中 1+3 条真缺口）
+
+| 类 | 子类 | 条数 | 说明 |
+|---|---|---|---|
+| `na:gdext-glue` | `call-shim` / `ctor-shell` / `virtual-shim` / `reg-table` / `class-id` | **20** | 10 / 4 / 3 / 2 / 1（`ready` 那 4 个 `{{closure}}` **不**在这一类，见下） |
+| `na:other` | `clap-derive` | **1** | `Args as clap_builder::derive::FromArgMatches::from_arg_matches_mut`（860 B，**在 VOL_CAP 内**） |
+| `unknown` | `volcap:past-cap` | **1** | `Args as clap_builder::derive::Args::augment_args`（**5752 B > 0x800** ⇒ 预注册 §2.4 硬闸不许判 `na:*`，保守落 `unknown`；plan §9 勘误 E1） |
+| `na:other` | `drop-glue` | **6** | `drop_in_place<GraphwarRootNode>` ×4 + `drop_in_place<…ready::{{closure}}>` ×2（28 / 4 B） |
+| `implemented` | `pinned` | **12** | 在 527 台账里且 F1：`ready` / 4 个 `ready::{{closure}}` / `process` / `purchase_denied` / `check_save_level` / `purchase_confirmed` / `process_button_pressed` / `request_permissions_result` / `get_media_storage_path`（本轮 F3→F1） |
+| `implemented` | `denom:no-loc` | **2** | `init`（2336 B，LOC 只有 `local.rs:428`）、`show_screen`（612 B，LOC 空）—— 我方 `src/graphwar_root_node.rs:2712` / `:2793` **已有同名实现**，但 Linux 侧无 `.rs` Location ⇒ 进不了 527 |
+| `real-missing` | `denom:no-loc` | **3** | `show_pop_up`（328 B）/ `print_help_and_exit_if_requested`（288 B）/ `user_args`（672 B）—— 我方**没有**同名实现，见 §145.5 |
+| **合计** | | **45** | `na` **27** / `unknown` **1** / 真业务 **17** |
+
+* 527 的 23 行 → 12 条 A 行逐一指到 + 其余 11 行是宏壳/无名行（每行都在 TSV 末尾「映射自校验」里列出，
+  其中 `0x426430` / `0x433c00` 写明**无 A 对应**：T87 已定它们只被 `godot_core` 的具名函数引用 ⇒ `na:gdext-glue`）。
+* 与 §143 的 `lin_F3_real = 1` 一致：本轮之前 8 条 F3 里只有 `0x3b00d0` 是 `real-missing`（其余 7 条 `na:*`）。
+
+### 145.4 落码：`GraphwarRootNode::get_media_storage_path`（Linux `0x3b00d0`，FDE `0x754`）
+
+* **身份**（观测）：Android `.symtab` 真名 `graphwar_root_node::GraphwarRootNode::get_media_storage_path`
+  （`0x3a670c`，`st_size=1596`）；Linux `0x3b00d0` 的 `panic::Location` **唯一**一条
+  = `src/graphwar_root_node.rs:904:9`，与 Android 侧同名函数体的**唯一**游戏键相同 ⇒ 配对成立。
+* **实参**（观测）：调用者 3 处**全在 `process`（`0x3a5760`）** —— `0x3a59d8` / `0x3a6ec3` / `0x3a7c2a`，
+  准备序列逐条相同：`mov rax,[rbx+0x16b0]; inc qword ptr [rax]`（`Rc` 克隆 + 溢出闸）→
+  `mov rsi,[rbx+0x16b0]` → `lea rdi,[rsp+0xb0]`（sret）⇒ 第 1 实参 = `self+0x16b0` 的 `Rc<RefCell<Vec<String>>>`。
+* **返回值用途**（观测）：三处调用之后都紧跟 `call 0x3ea170` = `DirAccess::make_dir_recursive_absolute`
+  （该函数 `.rodata` 串 `'make_dir_'`、`fixtures/callgraph_roles.tsv:411` 标 `io-file`）
+  ⇒ 返回**目录路径**，不是文件名。
+* **落点**：`src/graphwar_root_node.rs` 新增 §9（`media_path` 常量模块 + `MediaPathHost` 宿主 trait +
+  纯逻辑体 `compose_media_storage_path` + 11 条单测），方法体挂在 `impl GraphwarRootNode`
+  的**关联函数** `get_media_storage_path`（同 T71 `check_save_level` 的做法：
+  判档工具要求「同名函数在同一个 impl 类型下」才算 F1，见 `tools/function_coverage.py` 的 `name` / `name-free` 之分）。
+  **档位：观测**（身份/二分支/常数/调用链）＋三条明写的**推断**。
+* **14 条关键指令**（完整表在源码 `§9` 模块注里，这里给结论）：
+  `0x3b0119 esi=6` + `0x3b011e edx=0` ⇒ `Os::get_system_dir_full(6 /*PICTURES*/, false)`；
+  `0x3b0305..0x3b031f`（`len==3` + `xor 0x4f69` + `xor 0x53`）⇒ 与 `"iOS"` 逐字节比较；
+  `0x3b0489` + `0x3b0495 edx=0x16` ⇒ `ProjectSettings::globalize_path("user://graphwar_media/")`
+  （**22 B 且带尾斜杠** —— 21 B 会与 `edx` 矛盾，这条是落码时被单测逼出来的，见 §145.11 ①）；
+  `0x3b03cc movabs 0x617768706172472f` + `0x3b03da 'r'` ⇒ 追加 `"/Graphwar"`（9 B，**只在非 iOS 分支**）；
+  `0x3b0644 edx=9` ⇒ `reserve(9)`；`0x3b0235 lea rcx,[rbp*2]; add rcx,rbp` ⇒ `Vec<String>` 元素步长 24 B；
+  `0x3b05c5/0x3b05fa/0x3b062f esi=0x37` ⇒ panic 串 55 B（`"a Display implementation returned an error unexpectedly"`）。
+* **单测 11 条**，期望值**全部来自立即数/`.rodata` 字节**（不是本实现的输出）：六条常数钉死
+  （`SYSTEM_DIR=6`、`"iOS"` 的三个立即数反解、`"/Graphwar"` 的 `movabs` 小端展开、`EDX=0x16` 的 22 B、
+  `esi=0x37` 的 55 B、元素步长 24 = `size_of::<String>()`）+ 三条行为
+  （iOS 走 `globalize_path` 且**不**追加前缀、非 iOS 走系统目录、平台名必须逐字节 `"iOS"`）+ 两条一致性
+  （返回值 = push 进缓存的那一条；`cache` 只多 1 条）。
+* **三条推断（明写在源码 §9，不装成结论）**：①`"/Graphwar"` 与时间戳串的先后（本模型取 `base + "/Graphwar" + stamp`）；
+  ②那个 `Vec<String>` 是「已建目录缓存」还是「日志行缓冲」（同一字段 `+0x16b0` 在 `request_permissions_result`
+  里被当**日志缓冲**用 ⇒ 本轮按缓存建模，不声称两者同时成立）；③三处 `write!` 的 pieces 内容
+  （`.rodata 0x1a602c` 是**日志记录表**不是纯 `&str`：它写着 `src/graphwar_root_node.rs:904`，正是本函数自己的行号）。
+
+### 145.5 分母外的 3 条 `real-missing`（**未落码**，缺什么写清）
+
+`root_node` 的 17 条业务里有 3 条**我方没有同名实现**、且 **Linux 侧无 Location**（⇒ 不在 527 分母，也不在
+`--stats` 的任何分子里）。它们是真缺口，登记如下（**没有落码**，理由在「缺什么」列）：
+
+| Android 地址 | 真名 | 体积 | 已知语义（观测） | 缺什么 / 为什么不落码 |
+|---|---|---|---|---|
+| `0x3a5d60` | `GraphwarRootNode::show_pop_up` | 328 B | `rel32=1`，参数形态 = 屏名/弹窗名 | 缺被打开的那个弹窗节点类型与 `set_visible` 目标；我们的 `show_screen`/`apply_show_screen` 已覆盖 15 屏 + 7 弹窗的可见性，**多出的"打开弹窗"这一跳没有指令级读通** |
+| `0x3ab19c` | `GraphwarRootNode::print_help_and_exit_if_requested` | 288 B | `rel32=2`，与 `user_args` 成对（都在 `init` 里被调） | 缺 `Args` 结构的字段表：它消费的是 `clap` 解析结果，而字段集合只能从 `Args::augment_args`（**5752 B** 的 derive 展开）里读 —— 本轮没读完就**不写**（红线：不许编语义） |
+| `0x3ab2bc` | `GraphwarRootNode::user_args` | 672 B | `rel32=2`，返回 `Args`（clap `FromArgMatches`） | 同上；另需 `print_help_and_exit_if_requested` 的退出码/文案真值 |
+
+> ⇒ 这三条是**下一轮最该接手的 F4 级真缺口**（在本模块；`--stats` 看不见它们）。
+> 建议做法：先把 `Args::augment_args` 的 5752 B 按「`add::<T>(…, "name", "help")` 调用序列」过一遍
+> （那是 clap derive 的确定性形状），把字段名/短长选项/默认值全部读出来，再落 `user_args` 与 `print_help…`。
+
+### 145.6 三个悬案结案（T71 §123.3.1 的 `+0xb0` / `+0x1f8`，§123.8 第 4 条的写入点扫描）
+
+扫法（复跑见 §145.9 ③）：capstone 线性解全 `.text`（**1,520,816 条**指令），
+对 `mem.disp ∈ {0xb0, 0x1f8, 0x1703}` 的**写操作**按 `.eh_frame` FDE 归属到 527 函数。
+**正对照**：已知的 `0x3b50d4 mov byte [rax+0x1703], 0` 必须被扫到 —— 命中（并且被正确判成「写」而不是「读」）。
+
+| 字段 | 本轮扫到什么 | 结论 |
+|---|---|---|
+| **`+0xb0`**（关卡标识 / 哨兵） | **本模块归属内 6 条写点**：`0x3a2ae9`（在构造器 `0x3a22f0`，**初值**）、`0x3b2e1d`（**哨兵**：`0x3b2df0 movabs r14,0x8000000000000000` 给出值）、`0x3b0dc7` / `0x3b2db2` / `0x3b401a` / `0x3b418d`（写新值的 ptr，紧跟 `mov [rbx+0xb8], …`） | **结案**：哨兵写入点 = `0x3b2e1d`；`0x3b2e01..0x3b2e17` 是「旧值是哨兵就不 dealloc」的闸（`mov rax,rsi; neg rax; jo/jae`）⇒ 哨兵语义 = **「还没有关卡标识」**；`+0xb0` 是 **16 字节 `String`**（`+0xb0` ptr / `+0xb8` cap·len），不是裸 8 字节字。**5 条业务写点全在 `process_button_pressed`（`0x3b0830`）** ⇒ 关卡标识只由命令总线写（`check_save_level` **只读不写**：全 `.text` 只有 `0x3afd0a cmp`）。**仍缺**：那 5 处写的是**哪个键**（要运行时读 `[+0xb0]` 字节）。 |
+| **`+0x1f8`**（`check_save_level` 的闸门，载荷 `+0x1e0`） | 全 `.text` 写 `[reg+0x1f8]` 共 **19 条**（已排除栈槽），其中落在 527 归属里的**只有 1 条且不是本模块**（`graphwar_setup_control.rs` 的 `0x4d4b99`）⇒ **本模块归属内 0 条写点** | **仍未解**（如实写）：`check_save_level` 读的那个 qword 是**别人写进去的**（`Rc` 载荷里的对象指针）。缺：`[+0x1f8]` 那个 `Rc` 的类型与构造点 ⇒ 需要 `0x3afd27` 的 `Rc` 来源逐条追（或运行时 frida 读该字段）。 |
+| **`GATE_B`（`+0x1703`）** | 写 **3 条**：`0x3b2130` / `0x3b3ad4`（都 `=1`，都在 `process_button_pressed`）、`0x3b50d4`（`=0`，在 `request_permissions_result`，T71 已落码）；读 **2 条**：`0x3a57ad` / `0x3a61ec`（都在 `process`） | **闭环**：置位 = 命令总线（两处，都是 `mov byte […+0x1703], 1`），清零 = 权限回调。三写两读全部指名到函数。 |
+
+### 145.7 三个数（**分开报，别混**）
+
+| 口径 | 本轮 | 上轮（HEAD 前） | 差 | 定义 |
+|---|---|---|---|---|
+| **机器码条数** A | **333 / 527 = 63.2 %** | 332 / 527 = 63.0 % | **+1** | `tools/function_coverage.py --stats` 的 `F1`（分母 527 = `boundary_audit.tsv` 的 527 行） |
+| **招牌 B（剔 `na:*`）** | **333 / 438 = 76.0 %** | 332 / 438 = 75.8 % | **+1** | 分母 = 527 − 89 条 `na:*` 行 = 438；分子同口径剔 `na` |
+| **严格 1:1** | **261 / 527 = 49.5 %** | 260 / 527 = 49.3 % | **+1** | `--stats` 的 `R6：F1 只指向 N 个不同我方函数` |
+| 源码级（不同我方函数） | **+1** | — | +1 | 本轮新增 1 个源码函数（`get_media_storage_path`；`::{{closure}}`/单态化副本按 0 计，本轮没有这类行） |
+| 附：F2 / F3 | 71 / **123** | 71 / 124 | F3 **−1** | `0x3b00d0` 从 F3 进 F1 |
+
+> 三个数**通常不等**（T87：+30 机器码 = +4 源码级；T89：+3 机器码 = +0 源码级）。本轮恰好都 +1。
+> `fixtures/function_coverage.tsv` / `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` 是**重跑生成物**
+> （`src_fns 4077 → 4099`），不是手改。
+
+### 145.8 门槛读数（全部本轮实跑）
+
+| 闸 | 读数 |
+|---|---|
+| `cargo test --offline` | **1623 passed / 0 failed / 1 ignored**（74 个目标 = 818 lib + 72 个 `tests/*.rs` + doc-tests；**76 条 `test result` 行全部 ok**）。⚠️ **基线口径**：本分支基线（`61db638`，本轮第一个 commit）实测 = **1612 / 0 / 1ignored**，本轮 **+11**（`src/graphwar_root_node.rs` 的 `#[test]` 36→47）；任务书写的 **1620** 比本分支基线多 8 条 —— 差的是**基线时刻**（不是本轮丢测试），需 lead 侧复核那时是哪 8 条。 |
+| `cargo test --offline --features gdext-bindings` | **1780 passed / 0 failed / 1 ignored**（基线 1769 ⇒ **+11**，与任务书一致） |
+| `coverage_matrix.py --check` | **OK**（生成物已重跑，`src_fns 4077 → 4099`） |
+| `check_doc_refs.py` | **rc=0**（无死链） |
+| `docsec.py check docs/06-verification.md` | 节数 **142**｜范围 `1..144`｜断号 `43/89`（历史缺口）｜**无重号/无冲突标记/无空心节** |
+| 三轴 `bit_exact_attrib --check-baseline` | `fire` **647** / `batch` **647** / `batch_conv` **637**，三条都「校验结果：全部一致」（语料 403 条目 / 401 回放，指纹一致） |
+| `boundary_audit.py --check` | **OK**：527 个可归属函数 **match 441 / mismatch 0 / multi 86** |
+
+### 145.9 复跑命令
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t97 ; cd $WT
+PY=$WT/.reference/venv/bin/python
+# ① 口径自校验 S0（45 / 35 必须逐值等于普查表）
+$PY tools/arm64_sym.py mod graphwar_root_node   # 45
+$PY tools/arm64_sym.py mod graphwar_button      # 35
+grep -E 'graphwar_root_node|graphwar_button' fixtures/global_triage_android_census.tsv
+# ② 落码那条的原始取证
+$PY tools/addr_probe.py fde 0x3b00d0 && $PY tools/addr_probe.py locs 0x3b00d0
+$PY tools/addr_probe.py dis 0x3b00d0            # 389 行；关键行见源码 §9 的表
+$PY tools/addr_probe.py callers 0x3b00d0        # 3 处，全在 0x3a5760（process）
+$PY tools/addr_probe.py dis 0x3ea170 | head -25 # 返回值去向 = make_dir_recursive_absolute
+# ③ 字段写点扫描（§145.6；正对照 0x3b50d4 必须命中）
+$PY - <<'EOF'   # 见本节正文：capstone 线性解 .text，按 disp ∈ {0xb0,0x1f8,0x1703} 收写操作，FDE 归属
+EOF
+# ④ 三个数 + 生成物 + 文档自检
+python3 tools/function_coverage.py --stats
+python3 tools/function_coverage.py            # 重写 fixtures/function_coverage.tsv
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream $PY tools/coverage_matrix.py
+python3 tools/check_doc_refs.py ; python3 tools/docsec.py check docs/06-verification.md
+$PY tools/boundary_audit.py --check
+# ⑤ 全门槛（口径同 docs/06 §123.7 ⑥；三轴逐条对基线）
+export CARGO_HOME=$WT/.reference/cargo-home CARGO_TARGET_DIR=$WT/.reference/cargo-home/target
+cargo test --offline                            # 1623 / 0 / 1ignored（本分支基线 1612 ⇒ +11）
+cargo test --offline --features gdext-bindings  # 1780 / 0 / 1ignored（基线 1769 ⇒ +11）
+R=/home/CG/Myprojects/graphwar2-rebuild/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+$PY tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $R
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+$PY tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $R
+cargo run --release --offline -q --example batch_conv -- --dir $R --policy strict --drive batch --json c.jsonl
+$PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
+```
+
+### 145.10 遗留 / 下一轮
+
+1. **§145.5 的 3 条分母外真缺口未落码**（`show_pop_up` / `print_help_and_exit_if_requested` / `user_args`）：
+   前者缺弹窗目标节点，后两者缺 `Args` 字段表（要读 `Args::augment_args` 的 5752 B derive 展开）。
+   ⚠️ 这三条 **`--stats` 完全看不见**（无 Location）⇒ "函数级复原率"这个量表对本模块的剩量是**盲的**，
+   报告口径时要说清（本轮已把它们写进 `fixtures/gap_rootnode.tsv` 的 `real-missing` 行）。
+2. **`+0x1f8` 的闸门语义仍未解**（§145.6）：本模块归属内 0 条写点 ⇒ 得追 `0x3afd27` 那个 `Rc` 的来源，
+   或者 frida 读 `[+0x1f8]` 的类型指针。
+3. **`+0xb0` 那 5 处写点写的是哪个键**：需要运行时观测（进不同屏/发不同命令后 dump `[+0xb0]` 的 16 字节）。
+4. **本模块的 `init` / `show_screen` 在 527 里永远是 F2 之外的"看不见"**：它们无 Location ⇒
+   想在台账里体现，只能给 `function_coverage.py` 加一列「分母外已实现」（本轮**没有**动判法）。
+5. `clap` 那 2 条 `na:other / clap-derive` 是**本仓没有的依赖**（`Cargo.toml` 无 clap）⇒
+   这不是"少写了函数"，是**运行期参数解析整块缺失**；要不要补 clap、还是手写等价解析，属需要 lead 决定的事。
+
+### 145.11 本轮我写错了什么（自查，按 §0.6 就地记）
+
+1. **第一次把 `MEDIA_DIR` 写成 21 字节**（`"user://graphwar_media"`），单测立刻红了：
+   `0x3b0495 mov edx,0x16` 是 **22**。回读 `.rodata 0x1bda84` =
+   `"user://graphwar_media/level_replay"`，前 22 字节切在 `/` 上 ⇒ 字面量**带尾斜杠**。
+   这条同时解释了「`"/Graphwar"` 只在非 iOS 分支追加」——**推断被一条长度立即数修正成了观测**。
+2. **第一次把需求写成自由函数**（`pub fn get_media_storage_path`），`--stats` 判 **F2 / `free-fn-name`**：
+   原版是 `GraphwarRootNode::` 的方法，判档工具要求「同名函数在同一个 impl 类型下」才认 F1。
+   已改成 `impl GraphwarRootNode` 的**关联函数**（纯逻辑体另名 `compose_media_storage_path`，理由同 T71）。
+3. 预注册 §6 的 **P2** 里我写「~11 在 527（F1）、1 条 real-missing」，实测是 **12 / 1**
+   （多个 `ready::{{closure}}` 的 Location 在 Android 侧被 4 个闭包共享、在 Linux 侧摊成 7 行 ⇒ 数不平）。
+   预注册的**方向**对（真缺口 1 条），**计数**偏差 1 条，在此记明。
+4. 预注册 §2.6 的 `na:*` 需要「≥2 个独立证据」，本轮 `drop-glue` 那 10 条的第 2 个证据是
+   `.symtab` 名字形态 + 无 Location 的形态一致性，**不是**逐条读了 `drop_in_place` 的内部结构 ——
+   属**观测级**，不是逐位。若要求逐位，得对 `0x394150` 一类做逐条反汇编比对（本轮没做）。
+5. **自审时抓到一处会"偷偷豁免硬闸"的写法**：`clap` 的 `augment_args`（5752 B）名字形态几乎确定是 derive 产物，
+   但它的体积**超过**预注册 §2.4 的 `VOL_CAP = 0x800`。第一版 TSV 里生成器把「≤VOL_CAP ✓」这句**无条件**印上去
+   （对着 5752 B 也印），属**假陈述**。已改成：>0x800 的 `na` 候选**一律降 `unknown`** 并在「依据」里写明原因；
+   要翻成 `na` 得由 lead 认「名字形态可单独豁免体积闸」（理由与清单写在 plan §9 勘误 E1）。

@@ -124,7 +124,7 @@
 | `graphwar_replay_control.rs` | 2 | 9 | `src/graphwar_replay_control.rs` | 6 | 观测 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 87 | 观测 |
 | `graphwar_replay_reader.rs` | 0 | 0 | `src/graphwar_replay_reader.rs` | 11 | 观测 |
-| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 119 | 观测 |
+| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 141 | 观测 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | `src/graphwar_server_broker_handler.rs` | 19 | 观测 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/graphwar_server_connection_handler.rs` | 31 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 185 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（120 个文件、4097 条 `fn`） | `3d8bb7304428fb454d0d34bdb715f8ded7db8f4b10e9aed4866efa54d4a641db` |
+| `src/` 树（120 个文件、4119 条 `fn`） | `59d166fd1100a9fe5b7f39ada46a5a5bf8fa24c5a706cb137968c310ee7a22f1` |
 

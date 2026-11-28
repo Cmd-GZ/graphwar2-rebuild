@@ -957,6 +957,28 @@ pub fn apply_show_screen<H: ScreenHost + ?Sized>(
 //    8 / 0x14 / 0xf / 6 / 3… 等长度分支没过完。缺：131 KB 反编译的逐分支审计。
 // 3. `background` 这个键从哪来：全库无独立字面量、无重定位引用（见 [`SPECIAL_MAP_KEYS`]）。
 //    ⇒ 该分支可能是死分支/防御性代码，也可能屏表的键不是取自 `.rodata` 的 `&'static str`。
+// 4a. 【T97 结案】**`+0xb0` 的写入点**（T71 §123.8 第 4 条要的 `mov …,0xb0(%reg)` 全 `.text` 扫描）：
+//    在 `graphwar_root_node.rs` 归属的函数内**共 6 条**（脚本：`python3` 逐条 capstone 解 `.text`
+//    152 万条指令，按 `.eh_frame` FDE 归属；正对照命中已知的 `0x3b50d4`）：
+//    * `0x3a2ae9 mov qword [r15+0xb0], rbp` —— 在构造器 [`FN_CONSTRUCT`]（`0x3a22f0`）里 ⇒ **初值**；
+//    * `0x3b2e1d mov qword [rbx+0xb0], r14` —— `r14` 由 `0x3b2df0 movabs r14,0x8000000000000000`
+//      给出 ⇒ **就是哨兵**（= [`save_level::LEVEL_KEY_SENTINEL`]）；且 `0x3b2dfa..0x3b2e17` 是
+//      「旧值是哨兵就不 dealloc」的闸（`0x3b2e01 mov rax,rsi; neg rax; jo 0x3b2e1d`）
+//      ⇒ 哨兵语义 = **"还没有关卡标识"**，不再需要额外证据；
+//    * `0x3b0dc7` / `0x3b2db2` / `0x3b401a` / `0x3b418d` —— 写新值的 ptr，紧跟一条
+//      `mov qword [rbx+0xb8], …` ⇒ `+0xb0` 是一个 **16 字节 `String`**（`+0xb0` ptr、`+0xb8` cap/len），
+//      不是裸 8 字节字。
+//    前五条全部落在 [`FN_COMMAND_BUS`]（`0x3b0830` = `process_button_pressed`）里 ⇒
+//    **关卡标识只由「命令总线」写**（`check_save_level` 只读不写：全 `.text` 只有 `0x3afd0a cmp`）。
+//    ⚠️ 仍未证：那 5 处写的是**哪个**键（要靠运行时观测 `[+0xb0]` 的字节内容）。
+// 4b. 【T97】**`+0x1f8` 的写入点在**本模块归属内是 **0 条**：全 `.text` 写 `[reg+0x1f8]` 共 19 条
+//    （排除栈槽），其中唯一落在 527 归属里的是 `graphwar_setup_control.rs` 的 `0x4d4b99`
+//    （另一个类）⇒ `check_save_level` 读的那个 qword 是**别人写进去的**（Rc 载荷里的对象指针）。
+//    ⇒ 该闸门**语义仍未解**（缺：`[+0x1f8]` 的 Rc 是谁的、谁在构造它）。
+// 4c. 【T97】**`GATE_B`（`+0x1703`）写点已闭合**：全 `.text` 写 3 条 ——
+//    `0x3b2130` / `0x3b3ad4`（都 `=1`，都在 [`FN_COMMAND_BUS`] 里）；
+//    `0x3b50d4`（`=0`，在 `request_permissions_result`，T71 已落码）。
+//    读 2 条：`0x3a57ad` / `0x3a61ec`（都在 `process`）。⇒ 置位 = 命令总线，清零 = 权限回调。
 // 4. `0x9ba978` / `0x9baa20` / `0x9baa10` / `0x9ba720` / `0x39fe10` 的引擎侧符号：
 //    只能确认「收 bool」「返回 bool」「收 (out, gd, name, len, 8, 0)」「收一个临时值」。
 // 5. `[+0x15d8]` 构造期写 `1e9` 与 §15.3 的「String + 长度落点」两说未合。
@@ -1097,6 +1119,334 @@ pub struct PermissionsResult {
     pub permission: String,
     /// 第 3 实参的低字节（`0x3b4ed9` `mov [rsp+6], dl`）：是否授予。
     pub granted: bool,
+}
+
+// ---------------------------------------------------------------------------
+// 9. `get_media_storage_path`（Linux `0x3b00d0`，FDE `0x754` / **Android `0x3a670c`，
+//    1596 字节**）—— 2026-11-28（T97）按指令落码
+// ---------------------------------------------------------------------------
+//
+// 这是 `docs/06` §123.8 第 2 条挂了两轮的那条「引擎耦合最重」的真缺口：527 台账的
+// F3 `named-miss`（**全模块唯一 `real-missing`**，`fixtures/gap_rootnode.tsv` 的第 21 行）。
+//
+// ## 身份（观测）
+// * 真名 = `graphwar_root_node::GraphwarRootNode::get_media_storage_path`
+//   —— Android 2.0.60 `.symtab`（未剥离）的 demangle 名逐字如此，`st_size = 1596`；
+//   Linux 侧对应 **`0x3b00d0`**：`panic::Location` 只有一条 `src/graphwar_root_node.rs:904:9`
+//   （`tools/addr_probe.py locs 0x3b00d0`），与 Android 侧同名函数体的唯一 `.rs` 键相同 ⇒ 配对。
+// * 调用者 **3 处、全在 `process`（`0x3a5760`）**：`0x3a59d8` / `0x3a6ec3` / `0x3a7c2a`
+//   （`tools/addr_probe.py callers 0x3b00d0`）。三处的实参准备**逐条相同**：
+//   `mov rax,[rbx+0x16b0]; inc qword ptr [rax]`（`Rc` 克隆+溢出闸）→ `mov rsi,[rbx+0x16b0]`
+//   → `lea rdi,[rsp+0xb0]`（sret）⇒ **第 1 实参 = `self+0x16b0` 那个 `Rc<RefCell<Vec<String>>>`**。
+// * 返回值**立刻被 `DirAccess::make_dir_recursive_absolute` 用掉**：`0x3a6ed8 call 0x3ea170`
+//   （该函数 `.rodata` 串 `'make_dir_'`，`fixtures/callgraph_roles.tsv:411` 标 `io-file`）
+//   ⇒ 本函数返回的是**目录路径**，不是文件名。
+//
+// ## 已钉死的指令（每条都是一个常数或一次引擎调用；地址 = ELF vaddr）
+//
+// | # | 指令 | 读数 |
+// |---|---|---|
+// | 1 | `0x3b00ee call *0x9ba748` → `0x8ba080` | `Os::singleton()`（`0x8ba080` = `lea rdi,[0x9c1750]; jmp 0x8a2a80`，16 字节纯壳） |
+// | 2 | `0x3b00fe lea rsi,[0x1bd8f2]` + `edx=0xa` + `call 0x4072a0` | `RawGd::check_rtti("upcast_ref")`（**长度 10** = `edx`；串 `'upcast_ref'`） |
+// | 3 | `0x3b0119 mov esi,6` / `0x3b011e xor edx,edx` / `0x3b0120 call *0x9baa38` → `0x8b5bc0` | `Os::get_system_dir_full(dir=**6**, shared_storage=**false**)`（`0x8b5bc0` 800 B，串 `'get_system_dir'`） |
+// | 4 | `0x3b0133 call *0x9ba768` → `0x74b510` | `chrono::Utc::now()`（Android 侧同名 `bl` 目标逐个对上） |
+// | 5 | `0x3b0197 call *0x9ba718` → `0x91ded0` | `core::fmt::format`（`Arguments{pieces,args}` → String） |
+// | 6 | `0x3b02a3 call *0x9ba8e0` → `0x8b6140` | `Os::get_name()` → String（688 B，串 `'get_name'`） |
+// | 7 | `0x3b0305..0x3b031f` | `len==3` ∧ `word[0]^0x4f69==0` ∧ `byte[2]^0x53==0` ⇒ 与 **`"iOS"`** 比较（`0x4f69`=LE`"iO"`、`0x53`=`'S'`） |
+// | 8 | `0x3b0463 call *0x9baa40` → `0x8901d0` | `ProjectSettings::singleton()`（= `lea rdi,[0x9c1590]; jmp 0x8a2d80`） |
+// | 9 | `0x3b0489 lea rsi,[0x1bda84]` + `0x3b0495 mov edx,0x16` + `0x3b049a call 0x39f290` | `ProjectSettings::globalize_path("user://graphwar_media/")`（**长度 0x16 = 22**，`.rodata` 那一串是 `"user://graphwar_media/level_replay"`，切在 `/` 上 ⇒ **带尾斜杠**；后接的 `"level_replay"` 不在本函数里用） |
+// | 10 | `0x3b03cc movabs rax,0x617768706172472f` + `0x3b03da mov byte [r15+rsi+8],0x72` + `0x3b03e0 add rsi,9` | 追加字面量 **`"/Graphwar"`**（9 字节：`/`,`G`,`r`,`a`,`p`,`h`,`w`,`a` + `'r'`），且**先写进备用容量**、`rsi += 9` ⇒ 内联的 `String::push_str`。⚠️ 这一处只在**非 iOS** 分支（`0x3b03cc` 在 `0x3b0335`→`0x3b04c3` 那条路上）|
+// | 11 | `0x3b0644 mov edx,9` + `0x3b0654 call 0x461100` | 容量不够时的 `RawVecInner::reserve(additional=**9**)`（与 #10 的 9 字节一致） |
+// | 12 | `0x3b0203..0x3b0255` | 往那个 `Rc<RefCell<Vec<String>>>` 里 **push 一个 `String`**：`0x3b0235 lea rcx,[rbp*2]; add rcx,rbp` = `len*3` ⇒ 元素**步长 24 字节**；`[单元+0x10]` 借用标记（`0x3b01b5` 读、`0x3b01c8` 写 `-1`、`0x3b0255 inc` 复原） |
+// | 13 | `0x3b02f5` / `0x3b0398` / `0x3b0503` `test al,al` + `jne <panic>` | 三处 `write!` 类调用失败即 panic；panic 串 = `.rodata 0x1bdbd2` 前 **0x37=55** 字节 `"a Display implementation returned an error unexpectedly"` |
+// | 14 | `0x3b0543..0x3b0552` | 结尾 `dec qword [rsi]; jne; call 0x525200` = 放掉第 1 实参那个 `Rc` |
+//
+// ## 结论（观测）与**推断**（逐条写明缺什么）
+// * **观测**：目录来源是「iOS ⇒ `ProjectSettings::globalize_path("user://graphwar_media/")`（尾斜杠自带，**不**再追加前缀）；
+//   其它平台 ⇒ `Os::get_system_dir_full(6, _)` + `"/Graphwar"`」这条二分支；
+//   时间戳来自 `Utc::now()`；结果被 push 进 `[+0x16b0]` 的 `Vec<String>` 并返回给
+//   `make_dir_recursive_absolute`。
+// * **推断 1**：`"/Graphwar"` 与**时间戳串**的先后顺序。两处追加点（`0x3b03cc` 写字面量、
+//   `0x3b03e7` 的 `push_str`）只能证明「字面量在某个已有内容的 String 尾部」；
+//   时间戳串是通过 `core::fmt::format`（#5）产生、并被 push 进 Vec 的那个 24 字节元素
+//   （`0x3b00830` 一带的 `stp/st` 三字写入）—— **本模型取 `base + "/Graphwar" + stamp`**。
+//   缺的证据：Android 侧 `0x3a67bc..0x3a6834` 那段寄存器别名（`x20/x21/x24/x26/x27` 谁是谁）
+//   要逐条做活跃性分析，或者运行时 hook `make_dir_recursive_absolute` 读实参（一次真机即可定案）。
+// * **推断 2**：`Vec<String>` 是「已建过的目录缓存」还是「日志行缓冲」。
+//   支持缓存说：调用者拿返回值去建目录（#把 0x3ea170）；`permissions_result` 明确把
+//   `[+0x16b0]` 当**日志缓冲**（`docs/06` §120）。两者都在用同一字段 ⇒ 本文件按「缓存」建模，
+//   **不**声称它同时是日志。缺的证据：`[+0x16b0]` 的其它使用者（`callers` 全扫）。
+// * **推断 3**：#13 的三处 `write!` 中至少一处是把上面拼好的字符串**格式化进**结果，
+//   但具体 `pieces` 内容读不出（`.rodata 0x1a602c` 是**日志记录表**而不是纯 `&str`：它写着
+//   `src/graphwar_root_node.rs:904`，正是本函数的 Location ⇒ 那两条 `format` 是**日志**）。
+//
+// 档位：**观测**（身份/分支/常数/调用链）＋ 三条明写的**推断**（顺序/字段用途/格式化细节）。
+
+/// `get_media_storage_path` 用到的字段偏移与字面量。档位：**观测**（每条都指到一条指令）。
+pub mod media_path {
+    /// `self+0x16b0` = 那个 `Rc<RefCell<Vec<String>>>`（调用点 `0x3a59b6`/`0x3a59c6`、
+    /// `0x3a6ea4`/`0x3a6eb4` 各克隆一次）。与 [`super::permissions_result::LOG_BUFFER`] **同一偏移**。
+    pub const PATH_CACHE: usize = 0x16b0;
+    /// `0x3b0119 mov esi,6`：`Os::get_system_dir_full` 的 `SystemDir` 实参。
+    /// **6 = `PICTURES`**（Godot `SystemDir` 枚举序：DESKTOP 0 / DCIM 1 / DOCUMENTS 2 /
+    /// DOWNLOADS 3 / MOVIES 4 / MUSIC 5 / **PICTURES 6**）。⚠️ 枚举映射是**推断**，
+    /// 两份构建里都只有立即数 6，没有枚举名串。
+    pub const SYSTEM_DIR: i32 = 6;
+    /// `0x3b011e xor edx,edx`：`shared_storage = false`。
+    pub const SHARED_STORAGE: bool = false;
+    /// `0x3b030d..0x3b031f` 内联比较的目标串：`len==3`、`0x4f69`(LE `"iO"`)、`0x53`(`'S'`)。
+    /// 档位：**逐位**（三个立即数直接拼出 `"iOS"`）。
+    pub const IOS: &str = "iOS";
+    /// `0x3b0489` + `0x3b0495 mov edx,0x16`：传给 `ProjectSettings::globalize_path` 的字面量，
+    /// 长度 **22**（`.rodata 0x1bda84` 起 22 字节）。⚠️ 末尾**带斜杠**：
+    /// `.rodata` 该处是 `"user://graphwar_media/level_replay"`，前 22 字节正好切到 `/` 上
+    /// （21 字节的 `"user://graphwar_media"` 会少一个字节 ⇒ 与 `edx=0x16` 矛盾）。
+    /// 这一条同时解释了为什么 `"/Graphwar"` 只在**非 iOS** 分支追加（iOS 的基址已带尾斜杠）。
+    /// 档位：**逐位**。
+    pub const MEDIA_DIR: &str = "user://graphwar_media/";
+    /// `0x3b03cc`+`0x3b03da`+`0x3b03e0` 追加的 9 字节字面量。
+    /// ⚠️ 该追加点只在**非 iOS** 分支（`0x3b03cc` 落在 `0x3b0335`→`0x3b04c3` 那条路上；
+    /// iOS 分支 `0x3b0430`→`0x3b04c3` **没有**第二处追加）。档位：**逐位**。
+    pub const DIR_PREFIX: &str = "/Graphwar";
+    /// `0x3b0644 mov edx,9`：追加 [`DIR_PREFIX`] 前 `reserve` 的附加容量（= 9，与字面量长度一致）。
+    pub const DIR_PREFIX_RESERVE: usize = 9;
+    /// `0x3b05c5` / `0x3b05fa` / `0x3b062f` 的 `mov esi,0x37` = 55，
+    /// 与 `.rodata 0x1bdbd2` 起的 55 字节 panic 串一致。档位：**逐位**。
+    pub const DISPLAY_ERROR: &str =
+        "a Display implementation returned an error unexpectedly";
+    /// `.rodata 0x1a602c` 的记录里写着 `src/graphwar_root_node.rs:904`（= 本函数的 Location 行号）
+    /// ⇒ 本函数体内有一条**用自己行号**做前缀的日志记录。
+    pub const LOG_SELF_LINE: u32 = 904;
+    /// `.rodata 0x1a559e` 的记录里写着 `save_path = `（12 字节）与
+    /// `src/graphwar_remote_event_handler.rs:417` ⇒ 另一条日志记录走的是那个模块的日志器。
+    pub const LOG_SAVE_PATH_KEY: &str = "save_path = ";
+    /// 第二条日志记录的 `file:line` 归属模块（`.rodata 0x1a559e` 内逐字节读回）。
+    pub const LOG_SAVE_PATH_FILE: &str = "src/graphwar_remote_event_handler.rs";
+    /// 同上，行号。
+    pub const LOG_SAVE_PATH_LINE: u32 = 417;
+    /// `0x3b0235 lea rcx,[rbp*2]; add rcx,rbp` ⇒ `Vec<String>` 元素步长 = 3 个 qword。
+    pub const CACHE_ELEM_STRIDE: usize = 24;
+}
+
+/// 算一次「媒体存储目录」需要宿主做的那四件引擎侧的事。**意图结构，不调 Godot。**
+///
+/// 四个方法逐一对应 `get_media_storage_path` 里的一次引擎调用（地址见模块注的表）：
+/// [`MediaPathHost::system_dir`] = #3（`Os::get_system_dir_full(6,false)`）、
+/// [`MediaPathHost::utc_now_text`] = #4+#5（`Utc::now()` + `format!`）、
+/// [`MediaPathHost::os_name`] = #6（`Os::get_name()`）、
+/// [`MediaPathHost::globalize_media_dir`] = #8+#9（`ProjectSettings::globalize_path`）。
+pub trait MediaPathHost {
+    /// `Os::get_system_dir_full(dir, shared_storage)`（`0x3b0119`/`0x3b0120`）。
+    fn system_dir(&mut self, dir: i32, shared_storage: bool) -> String;
+    /// `Utc::now()` 之后立刻被 `format!` 过的那段文本（`0x3b0133` + `0x3b0197`）。
+    fn utc_now_text(&mut self) -> String;
+    /// `Os::get_name()`（`0x3b02a3`）。
+    fn os_name(&mut self) -> String;
+    /// `ProjectSettings::globalize_path(path)`（`0x3b049a`）。
+    fn globalize_media_dir(&mut self, path: &str) -> String;
+}
+
+/// `get_media_storage_path` 的**纯逻辑体**（函数本体见 `node_class` 里
+/// [`GraphwarRootNode::get_media_storage_path`] 的关联函数 —— 原版是
+/// `GraphwarRootNode::get_media_storage_path`，判档工具按「同名函数在同一个 impl 类型下」认 F1）。
+///
+/// 返回**目录路径**（调用方 `process` 立刻把它交给
+/// `DirAccess::make_dir_recursive_absolute`，`0x3ea170`）。同时把结果 push 进
+/// `cache`（原版是 `Rc<RefCell<Vec<String>>>` = `self+0x16b0`）。
+///
+/// 落码口径同本文件 §8：**不调 Godot**，四件引擎侧的事由 [`MediaPathHost`] 喂进来；
+/// 字段偏移与常数保留在 [`media_path`]（偏移本身就是证据）。
+///
+/// ⚠️ 模块注里列的**推断 1/2/3** 在这里照样成立：拼接顺序（`base + "/Graphwar" + stamp`）
+/// 是推断，`cache` 的用途是推断，`write!` 的 pieces 内容没有证据。
+pub fn compose_media_storage_path<H: MediaPathHost + ?Sized>(
+    host: &mut H,
+    cache: &mut Vec<String>,
+) -> String {
+    // #4/#5：时间戳先算（`0x3b0133` 在 `0x3b0119` 之后、但它的结果只在后面用）。
+    let stamp = host.utc_now_text();
+    // #3：系统媒体目录（`dir=6` = PICTURES，`shared_storage=false`）。
+    let system_dir = host.system_dir(media_path::SYSTEM_DIR, media_path::SHARED_STORAGE);
+    // #6/#7：平台名；只有与 "iOS" 逐字节相等才走 globalize_path 那条。
+    let os_name = host.os_name();
+    let mut path = if os_name == media_path::IOS {
+        // #8/#9：`user://graphwar_media/`（22 字节，**自带尾斜杠**）→ 绝对路径。
+        // 这一支**不**追加 `"/Graphwar"`：`0x3b0430`→`0x3b04c3` 之间没有第二处追加点。
+        host.globalize_media_dir(media_path::MEDIA_DIR)
+    } else {
+        // #10/#11：`reserve(9)` 后追加 `"/Graphwar"`（只在非 iOS 分支）。
+        let mut p = system_dir;
+        p.reserve(media_path::DIR_PREFIX_RESERVE);
+        p.push_str(media_path::DIR_PREFIX);
+        p
+    };
+    // 推断 1：时间戳接在目录名之后（两条分支都在 `0x3b04c3` 之后才拼它）。
+    path.push_str(&stamp);
+    // #12：push 进 `self+0x16b0` 的 `Vec<String>`（元素步长 24 字节 = `String`）。
+    cache.push(path.clone());
+    path
+}
+
+// ---------------------------------------------------------------------------
+// `get_media_storage_path` 的单测
+// 期望值**全部来自反汇编读出的立即数/`.rodata` 字节**，不是本实现的输出（`AGENTS.md` §0 第 5 条）。
+// 复算：`.reference/venv/bin/python tools/addr_probe.py dis 0x3b00d0`。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod media_path_tests {
+    use super::*;
+
+    /// 一个只会照抄给定输入、并记录调用序的宿主。
+    struct FakeHost {
+        dirs: Vec<(i32, bool)>,
+        stamp: String,
+        os: String,
+        globalized: Vec<String>,
+        dir_text: String,
+    }
+
+    impl MediaPathHost for FakeHost {
+        fn system_dir(&mut self, dir: i32, shared_storage: bool) -> String {
+            self.dirs.push((dir, shared_storage));
+            self.dir_text.clone()
+        }
+        fn utc_now_text(&mut self) -> String {
+            self.stamp.clone()
+        }
+        fn os_name(&mut self) -> String {
+            self.os.clone()
+        }
+        fn globalize_media_dir(&mut self, path: &str) -> String {
+            self.globalized.push(path.to_string());
+            format!("/abs/{path}")
+        }
+    }
+
+    fn host(os: &str) -> FakeHost {
+        FakeHost {
+            dirs: Vec::new(),
+            stamp: "S".to_string(),
+            os: os.to_string(),
+            globalized: Vec::new(),
+            dir_text: "DIR".to_string(),
+        }
+    }
+
+    /// `0x3b0119 mov esi,6` / `0x3b011e xor edx,edx`。
+    #[test]
+    fn system_dir_is_six_and_not_shared() {
+        assert_eq!(media_path::SYSTEM_DIR, 6);
+        assert!(!media_path::SHARED_STORAGE);
+        let mut h = host("Android");
+        let mut cache = Vec::new();
+        let _ = compose_media_storage_path(&mut h, &mut cache);
+        assert_eq!(h.dirs, vec![(6, false)], "0x3b0119/0x3b011e 的实参");
+    }
+
+    /// `0x3b030d` `movzx eax,word[rdi]` / `0x3b0310 xor eax,0x4f69` /
+    /// `0x3b0315 movzx ecx,byte[rdi+2]` / `0x3b0319 xor ecx,0x53`：
+    /// 三个立即数**反解**出 `"iOS"`（`0x4f69` 小端 = `i`,`O`；`0x53` = `S`），长度 3。
+    #[test]
+    fn ios_constant_is_the_three_immediates() {
+        let b = media_path::IOS.as_bytes();
+        assert_eq!(b.len(), 3, "0x3b0305 cmp qword [rsp+0x38],3");
+        assert_eq!(u16::from_le_bytes([b[0], b[1]]), 0x4f69, "0x3b0310 的立即数");
+        assert_eq!(b[2], 0x53, "0x3b0319 的立即数");
+        assert_eq!(media_path::IOS, "iOS");
+    }
+
+    /// `0x3b03cc movabs rax,0x617768706172472f` + `0x3b03da mov byte [..+8],0x72`
+    /// + `0x3b03e0 add rsi,9`：字面量 **9 字节**，逐字节 = 立即数的小端展开 + `0x72`。
+    #[test]
+    fn dir_prefix_is_the_movabs_nine_bytes() {
+        let want: [u8; 9] = [0x2f, 0x47, 0x72, 0x61, 0x70, 0x68, 0x77, 0x61, 0x72];
+        assert_eq!(u64::from_le_bytes(want[..8].try_into().unwrap()), 0x6177_6870_6172_472f);
+        assert_eq!(media_path::DIR_PREFIX.as_bytes(), &want);
+        assert_eq!(media_path::DIR_PREFIX.len(), 9, "0x3b03e0 add rsi,9");
+        assert_eq!(media_path::DIR_PREFIX_RESERVE, 9, "0x3b0644 mov edx,9");
+    }
+
+    /// `0x3b0495 mov edx,0x16` = 22 = 传给 `globalize_path` 的字面量长度。
+    #[test]
+    fn media_dir_is_twenty_two_bytes() {
+        assert_eq!(media_path::MEDIA_DIR.len(), 0x16);
+        assert_eq!(media_path::MEDIA_DIR, "user://graphwar_media/");
+        // `.rodata 0x1bda84` 起 22 字节必须与字面量逐字节相同（含尾斜杠）。
+        let rodata = b"user://graphwar_media/level_replay";
+        assert_eq!(&rodata[..0x16], media_path::MEDIA_DIR.as_bytes());
+        assert_eq!(rodata[0x15], b'/');
+        assert_eq!(b"user://graphwar_media".len(), 0x15, "21 字节会与 edx=0x16 矛盾");
+    }
+
+    /// 三处 `mov esi,0x37`（55）对应 `.rodata 0x1bdbd2` 起的 55 字节。
+    #[test]
+    fn display_error_is_fifty_five_bytes() {
+        assert_eq!(media_path::DISPLAY_ERROR.len(), 0x37);
+        assert_eq!(media_path::DISPLAY_ERROR,
+                   "a Display implementation returned an error unexpectedly");
+    }
+
+    /// 日志记录表里的两个 `file:line`（`.rodata 0x1a602c` / `0x1a559e` 逐字节读回）。
+    #[test]
+    fn log_records_are_the_two_rodata_sites() {
+        assert_eq!(media_path::LOG_SELF_LINE, 904);
+        assert_eq!(media_path::LOG_SAVE_PATH_FILE, "src/graphwar_remote_event_handler.rs");
+        assert_eq!(media_path::LOG_SAVE_PATH_LINE, 417);
+        assert_eq!(media_path::LOG_SAVE_PATH_KEY, "save_path = ");
+        assert_eq!(media_path::LOG_SAVE_PATH_KEY.len(), 12);
+    }
+
+    /// `0x3b0235 lea rcx,[rbp*2]; add rcx,rbp` ⇒ 元素 3 个 qword = 24 字节 = `String`。
+    #[test]
+    fn cache_element_stride_is_three_qwords() {
+        assert_eq!(media_path::CACHE_ELEM_STRIDE, 24);
+        assert_eq!(media_path::CACHE_ELEM_STRIDE, core::mem::size_of::<String>());
+    }
+
+    /// 非 iOS：目录 = `Os::get_system_dir_full(6,false)` 的结果（`0x3b0325` 那条 fallthrough）。
+    #[test]
+    fn non_ios_uses_the_system_dir_and_never_globalizes() {
+        let mut h = host("Android");
+        let mut cache = Vec::new();
+        let p = compose_media_storage_path(&mut h, &mut cache);
+        assert_eq!(p, "DIR/GraphwarS");
+        assert!(h.globalized.is_empty(), "非 iOS 不该走 0x3b0463/0x3b049a");
+        assert_eq!(cache, vec!["DIR/GraphwarS".to_string()]);
+    }
+
+    /// iOS：目录 = `ProjectSettings::globalize_path("user://graphwar_media")`（`0x3b049a`）。
+    #[test]
+    fn ios_uses_globalize_path_of_the_media_dir() {
+        let mut h = host("iOS");
+        let mut cache = Vec::new();
+        let p = compose_media_storage_path(&mut h, &mut cache);
+        assert_eq!(h.globalized, vec!["user://graphwar_media/".to_string()],
+            "0x3b0495 edx=0x16 ⇒ 只传前缀 22 字节");
+        assert_eq!(p, "/abs/user://graphwar_media/S", "iOS 分支不追加 /Graphwar");
+        assert_eq!(cache, vec![p.clone()]);
+    }
+
+    /// 平台名不是逐字节 `"iOS"`（大小写/长度不同）都走非 iOS 分支。
+    #[test]
+    fn ios_branch_needs_the_exact_three_bytes() {
+        for os in ["ios", "IOS", "iOs", "iOSX", "iO"] {
+            let mut h = host(os);
+            let mut cache = Vec::new();
+            let _ = compose_media_storage_path(&mut h, &mut cache);
+            assert!(h.globalized.is_empty(), "{os} 不该命中 0x3b0305..0x3b031f 的比较");
+        }
+    }
+
+    /// 返回值和 push 进缓存的必须是**同一个串**（`0x3b02xx` 的 push 与 sret 写出共用同一段）。
+    #[test]
+    fn returned_path_is_the_cached_one() {
+        let mut h = host("Android");
+        let mut cache = Vec::new();
+        cache.push("stale".to_string());
+        let p = compose_media_storage_path(&mut h, &mut cache);
+        assert_eq!(cache.len(), 2, "0x3b0255 inc qword [r13+0x10] 只是 push 一条");
+        assert_eq!(cache[1], p);
+    }
 }
 
 #[cfg(test)]
@@ -1911,8 +2261,8 @@ use crate::_scaffold::root_wiring::{self, RootWiring, DEMO_SOLDIERS, Wired};
 // T71：`check_save_level` / `request_permissions_result` 的纯逻辑写在本文件的第 8 节
 // （`mod node_class` 之外，这样不带 `gdext-bindings` 也能编），这里把它们抬进来。
 use crate::graphwar_root_node::{
-    permissions_result, save_level, PermissionsResult, SaveLevelDecision, SaveLevelInputs,
-    SaveLevelSkip,
+    compose_media_storage_path, media_path, permissions_result, save_level, MediaPathHost,
+    PermissionsResult, SaveLevelDecision, SaveLevelInputs, SaveLevelSkip,
 };
 
 /// `_ready` 里三个 holder 的节点名（[`READY_NODES`]，**观测**）。
@@ -2339,6 +2689,43 @@ impl GraphwarRootNode {
         *gate_b = false;
         // （原版 0x3b50db..0x3b50f6 的全局单例虚调不模拟：未定名 + 属引擎层）
         message
+    }
+
+    // =======================================================================
+    // T97 落码的原版方法：`get_media_storage_path`（关联函数形态，理由同 T71）
+    // =======================================================================
+
+    /// `GraphwarRootNode::get_media_storage_path` —— **x86 `0x3b00d0`**
+    /// （FDE `0x3b00d0..0x3b0824`，`0x754` = 1876 字节；Android 同名函数 `0x3a670c`，1596 字节）。
+    ///
+    /// 这是 527 台账里 `graphwar_root_node.rs` **唯一一条 `real-missing`**
+    /// （`fixtures/gap_rootnode.tsv` 第 21 行；`docs/06` §123.8 第 2 条挂了两轮）。
+    ///
+    /// # 实参（观测）
+    /// 调用者 3 处、全在 `process`（`0x3a5760`）：`0x3a59d8` / `0x3a6ec3` / `0x3a7c2a`。
+    /// 三处的准备逐条相同：`mov rax,[rbx+0x16b0]; inc qword ptr [rax]`（`Rc` 克隆 + 溢出闸）
+    /// → `mov rsi,[rbx+0x16b0]` → `lea rdi,[rsp+0xb0]`（sret）。
+    /// ⇒ 第 1 实参 = `self+0x16b0` 的 `Rc<RefCell<Vec<String>>>`（见 [`media_path::PATH_CACHE`]）。
+    ///
+    /// # 返回值用途（观测）
+    /// 三处调用之后都紧跟 `call 0x3ea170` = **`DirAccess::make_dir_recursive_absolute`**
+    /// （该函数 `.rodata` 串 `'make_dir_'`；`fixtures/callgraph_roles.tsv` 第 411 行标 `io-file`）
+    /// ⇒ 返回的是**目录路径**，调用方负责把它建出来。
+    ///
+    /// # 指令表
+    /// 见本文件 §9 的模块注（14 条：`Os::singleton` / `get_system_dir_full(dir=6,false)` /
+    /// `Utc::now` + `format` / `Os::get_name` 与 `"iOS"` 的三个立即数比较 /
+    /// `ProjectSettings::globalize_path("user://graphwar_media/")`（`edx=0x16`）/
+    /// `/Graphwar` 的 9 字节 `movabs` + `reserve(9)` / `Vec<String>` push（步长 24）/
+    /// 三处 `write!` 失败即 panic（`esi=0x37`）/ 结尾放掉 `Rc`）。
+    ///
+    /// 档位：**观测**（身份、二分支、常数、调用链）；三条**推断**写在 §9（拼接顺序 /
+    /// 那个 `Vec<String>` 的用途 / `write!` 的 pieces 内容）。
+    pub fn get_media_storage_path<H: MediaPathHost + ?Sized>(
+        host: &mut H,
+        cache: &mut Vec<String>,
+    ) -> String {
+        compose_media_storage_path(host, cache)
     }
 }
 
