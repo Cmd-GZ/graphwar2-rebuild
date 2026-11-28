@@ -28236,3 +28236,296 @@ llvm-objdump -d --start-address=0x4c91e4 --stop-address=0x4c9270 $AND
 | `src/graphwar_setup_control.rs` | +184 行（2 个 commit） | `enable_play_chat_button` 新增、`on_visibility_change` 补实、4 条常量、4 条单测 |
 | `docs/06-verification.md` | 追加本节 | 不动既有节 |
 | **没动** | `src/graphwar_root_node.rs` / `graphwar_button.rs`（t97）、`src/_scaffold/**`、`client/**`、`tools/**`、`fixtures/guardrails.json`、`fixtures/function_coverage.tsv`、`fixtures/boundary_audit.tsv`、`fixtures/global_triage*.tsv`、`fixtures/f3_triage.tsv`、`docs/00`/`02`/`16`/HANDOVER/README | 只读引用 |
+
+## 149. T101 `graphwar_nodes`（29 vs 11）与 `player_showcase`（17 vs 10）两块"缺口"的定性：**一个的差是「18 条没有 `panic::Location` 的真业务机器码」= 2 个源码函数（本轮全部落码）；另一个的差是「7 条分母外的 gdext 宏产物」= 0 个待写函数**（2026-11-28，任务 `task-94` / 分支 `agent/gap-nodes-showcase`）
+
+> **节号说明**：本节取 **§149**。§148 由**同轮 t102**（`entity_drawer` + `graphwar_plane`，分支 `agent/gap-drawers2`）先落地；
+> 两个分支各自独立过 `tools/docsec.py check`，合并后 §148 → §149 连续无洞。本节分支上 `docsec` 会报一条
+> `⚠ 断号: [43, 89, 148]`（前两条是历史缺口，见 `AGENTS.md` 合并纪律 A.6）。
+
+`docs/06` §143（T96 刷新）的模块缺口表里这两行排在前列：
+
+| 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `graphwar_nodes.rs` | **29** | 11 | 4 | 7 | **0** | 25 |
+| `player_showcase.rs` | **17** | 10 | 4 | 6 | **0** | 13 |
+
+本节回答一个问题：**这两个数是不是"要手写 25 / 13 个函数"**。答案都不是，而且两个模块的"缺口"性质**完全不同**：
+
+* `graphwar_nodes`：差集里 **18 条是原版真业务函数**（递归按名字/按类型遍历场景树），
+  但它们在 Linux 侧**一条 `panic::Location` 都没有** ⇒ 进不了 527 分母。
+  **18 条机器码 = 2 个源码函数**，本轮**全部落码**。
+* `player_showcase`：差集里 **7 条是 gdext 宏产物**（虚调用壳 / `class_id` / 注册与初始化闭包）、
+  且另有 6 条宏产物已在 527 分母里（T82 判过 `na:gdext-glue`）⇒ **real-missing = 0，待写源码函数 = 0**。
+
+⇒ 两块合起来：`gap_proxy 38` 对应的**真实待写源码函数数 = 2**（都已落地），**剩余 0**。
+
+### 149.0 一页结论
+
+| # | 交付 | 结果 |
+|---|---|---|
+| ① | `graphwar_nodes` 29 条逐条定性 → [`fixtures/gap_nodes.tsv`](../fixtures/gap_nodes.tsv) | implemented **4** / `na:other`（own-generic-mono）**7** / **`real-missing / denom:no-loc` 18**。**那"25 条差" = 18 条真业务（分母外）+ 7 条 T82 已裁的自身泛型单态化 + 0 条"进了分母却没实现"**。 |
+| ② | `player_showcase` 17 条逐条定性 → [`fixtures/gap_showcase.tsv`](../fixtures/gap_showcase.tsv) | implemented **4** / `na:gdext-glue` **13**（在 527 的 6 + 分母外的 7）⇒ **real-missing 0**。**那"13 条差"整块是分母假象**。 |
+| ③ | 落码（每处单独 commit） | ① `GraphwarNodes::get_node_by_name_rec<T>`（x86 17 个单态化 `0x3ab990…0x3af0a0`，arm64 真名逐字）— commit `9da67c3`；② `GraphwarNodes::get_node_by_type_rec<T>`（x86 `0x3af430`）— commit `18046b8`。**共 18 条机器码 → 2 个源码函数**。 |
+| ④ | **真实待写源码函数数**（本节主产出） | `graphwar_nodes` = **2**（本轮落完即 0 剩余）；`player_showcase` = **0**。两块合计 **2**，已落 **2**，**剩 0**。 |
+| ⑤ | 只登记不落码 | 7 条 `na:other/own-generic-mono`（11 个薄壳 = 1 个泛型 fn，T80/T82 已裁）+ 13 条 `na:gdext-glue`（宏产物，源码层的等价物就是 `#[godot_api]`/`#[derive(GodotClass)]` 属性本身）。 |
+| ⑥ | 悬案推进 2 条 | 本文件 `unknowns()` 旧第 2 条（11 个 x86 函数是薄壳还是 `_rec`）与旧第 4 条（名字比较语义）**从推断/未知升到观测**，见 §149.5 第 4/5 条；空出的两个位置换成本轮**新发现**的两条未知。 |
+
+> **招牌三口径一位未动**：A `333/527 = 63.2 %` · B `333/438 = 76.0 %`（招牌）· 严格 1:1 `261/527 = 49.5 %`（本机实跑，见 §149.6）。
+> 理由不是"没做"，而是**本轮落的两条源码函数在原版侧没有 Location** ⇒ 527 分母与分子都不收它们。
+> **落码 ≠ 进度条动**，这一条是本轮最需要说清的（§149.6）。
+
+### 149.1 预注册与口径自校验（`fixtures/gap_nodes_showcase_plan.txt`，单独 commit `df53ec4`）
+
+判据**原样继承**，一条阈值都没立新的：五类定义 = T82 `fixtures/f3_triage_plan.txt` §1；机判特征与优先级 = T82 §2/§3 + §9 勘误；
+体积硬闸 `VOL_CAP = 0x800` = T85 M4 / T86 §134.3；**调用形态闸（S 轴）= T89 `docs/06` §137.5**；落码口径 = T95 `fixtures/gap_f3misc_plan.txt` §4。
+本轮**新增只有一个子类**（不新增判据）：
+
+* **`real-missing / denom:no-loc`** —— 原版有我方**没有**的业务函数，且 Linux 侧**没有 `Location`**。
+  与 T97 的 `implemented / denom:no-loc` 互为镜像：一个"没进分母但已实现"，一个"没进分母且该写"。
+  ⚠️ 它**可以也应当**被写出来，但**不会**改变 527 口径的任何数字 —— 这就是本节 ④ 项与 ⑥ 项要分开报的原因。
+
+**口径自校验 S0**：A1 = 29 / A2 = 17 必须逐值等于 `fixtures/global_triage_android_census.tsv` 的
+`game_module graphwar_nodes 29` / `player_showcase 17`。本轮用**与 T96 普查逐字同一段代码**复算 ⇒ **0 条差异**。
+
+⚠️ **`player_showcase` 这一行的归属规则比 nodes 复杂一层（本节新登记的口径陷阱）**：
+`<PlayerShowcase as …IControl>::draw` 这类名字在 `.symtab` 里是 `..` 分隔形态（没有 `12graphwarrust` 前缀），
+必须走普查的**第二条正则** `graphwarrust\.\.(module)` 才算得上。只按 `12graphwarrust` 扫**只会得到 7 条**，
+差的 10 条恰好全是 `<… as Trait>` 形态 —— 这解释了为什么"用 readelf + grep 手扫"很容易得出 7 而不是 17。
+
+### 149.2 `graphwar_nodes`：29 = **11 薄壳 + 17 `_rec` + 1 `_type_rec`**，差集全是「没 Location 的真业务」
+
+29 条的拆分**不是本轮发现**，而是 T80 早就发表过的结构（`src/graphwar_nodes.rs` 文件头「三个入口」表、
+`docs/16-client.md` §25.2）；本轮做的是**复算 + 定性 + 落码**：
+
+| 族 | Android 真名（`.symtab` 逐字） | 条数 | Linux 侧 | 我方此前 |
+|---|---|---|---|---|
+| 薄壳 | `GraphwarNodes::get_node_by_name` | **11** 单态化 | 11 条**全在 527**（4 F1 + 7 F3/`na:other`） | 有（`src/graphwar_nodes.rs:604` 一个泛型 fn + 7 个实例壳） |
+| 递归按名 | `GraphwarNodes::get_node_by_name_rec` | **17** 单态化（st_size 1906…2070） | **0 条在 527**（FDE `0x3ab990…0x3af0a0`） | **没有** |
+| 递归按类型 | `GraphwarNodes::get_node_by_type_rec` | **1**（st_size 1590） | **0 条在 527**（`0x3af430`） | **没有** |
+
+**为什么那 18 条进不了 527 分母（决定性一条，可复算）**：
+`tools/addr_probe.py locs <linux_va>` 对**全部 18 个** Linux 地址返回 **"no panic::Location referenced"**，
+而 11 个薄壳都对到 `src/graphwar_nodes.rs:8:62`（槽 `0x951678`）。
+⇒ 分母的定义就是"有 Location 锚"，这 18 条**结构上不可能进分母**，所以台账里 `real-missing 0` 与
+"源码级缺 2 个函数"**两者都对，但说的是不同口径**。
+
+**这 18 条是"真业务"而不是"宏产物"的五条证据**（任意三条即可排除 `na:*`）：
+
+1. **名字是业务名**（arm64 未 strip `.symtab` 逐字 `GraphwarNodes::get_node_by_name_rec`），不是
+   `__register_*` / `ptrcall_fn` / `virtual_fn` / `drop_in_place` 任何宏形态；
+2. **体内自递归**：17 个 `_rec` 实例**每一个**都能在自身区间里找到一条 `call` 指向自己
+   （例：`0x3ad570` 体内 `0x3ad73d call 0x3ad570`；`0x3af430` 体内 `0x3af5b7 call 0x3af430`）
+   —— 这是**不依赖名字**的"它是递归算法"证据；
+3. **调用形态闸 = `rel32 ≥ 1` 且 `slot = 0`**：18 条全部符合（被**直接调用**，不是交给 API 的闭包）；
+4. **被调者是引擎遍历 API**（arm64 逐字）：`Node::get_children_full` / `AnyArray::len` / `Node::get_name` /
+   `<StringName as Display>::fmt` / `memcmp@plt` / `Gd<T>::owned_cast`；`_type_rec` 换成 `RawVec::grow_one`；
+5. **体积闸不构成排除**：`st_size` 1590…2070、FDE `0x2cd…0x38d` ⇒ 其中 2056/2070 **> 0x800**，
+   按 `VOL_CAP` 本来就不许判 `na:*`（体积闸在这两行上是正对照）。
+
+### 149.3 落码：两条源码函数的真值链（指令级）
+
+#### ① `get_node_by_name_rec<T>`（commit `9da67c3`，`src/graphwar_nodes.rs:841`）
+
+**身份**：arm64 17 个单态化（`0x3a2638 0x3a2958 … 0x3a57d0`）↔ x86 17 个 FDE
+`0x3ab990 0x3abd20 0x3ac050 0x3ac3e0 0x3ac770 0x3acb00 0x3ace90 0x3ad220 0x3ad570 0x3ad900 0x3adc50 0x3adfe0 0x3ae320 0x3ae650 0x3ae9e0 0x3aed10 0x3af0a0`。
+其中 **11 个正是 11 个薄壳的尾调目标**（`TYPE_TAILS`），另 6 个由**别的模块**直接调用
+（`0x3a2e10` = `GraphwarRootNode::_ready` 调 4 个、`0x3b0830` 命令总线调 1 个、`0x4e3f20` 调 1 个）。
+
+**语义（arm64 有符号名 + x86 有指令，两侧逐条对上）**：
+
+```text
+3a2688  bl Node::get_children_full            ; 取子节点数组（AnyArray）
+3a26a0  bl AnyArray::len ; 3a26a4 cmp x23,x0  ; for i in 0..len
+3a26b0  bl core::builtin::to_i64              ; 下标转 i64（取第 i 个的实参）
+3a26dc  bl FromGodot::from_variant            ; Variant → Gd<Node>
+3a2704  bl Node::get_name                     ; 子节点的 StringName
+3a273c  bl <StringName as core::fmt::Display>::fmt   ; ★ 名字先按 Display 写进一个 String
+3a274c  cmp x8,x20 / 3a2760 bl memcmp@plt     ; ★ 再与 name 比 **长度 + 字节**
+3a27f8  bl RawGd::<T>::check_rtti("clone",5)  ; 名字命中的分支里才做 RTTI 检查
+3a2818  bl Gd<T>::owned_cast                  ; （"clone" 5 B 在 .rodata）
+3a281c  ldr w8,[sp,#0x40] / tbnz w8,#0,<递归> ; ★ cast 失败就继续递归，不返回
+3a27a8  bl 0x3a2638（自己）                    ; ★ 自递归
+3a27ac  ldr w8,[x19] / tbnz w8,#0,<返回>       ; 子递归成功 ⇒ 直接往上返回
+```
+
+x86 同形：`0x3ad5c7` 取子数组 → `0x3ad5e5` len → `0x3ad5f7` 第 i 个 → `0x3ad6cf` 比长度 →
+`0x3ad6e3 call *0x9baa10`（比较）→ `0x3ad73d call 0x3ad570`（自递归）。
+
+**三处最容易写错、各自钉死的点**：
+① **不检查根自己**（两侧第一个动作都是 `get_children_full`）；
+② 名字比较 = **`Display` 渲染成 `String` 后按长度 + 字节**，不是 `StringName` 的 `PartialEq`；
+③ **名字命中但 cast 失败要继续递归**（不是返回 `None`、也不是跳过该子树）。
+
+**接线**：T80 落 11 个薄壳时 `_rec` 还没解出来，尾调写成了**调用方注入的闭包形参**
+`rec: impl FnOnce(Root, &str) -> T` —— 那**不是**原版形状。本轮**不改 11 个 mono fn 的签名**（避免动既有断言），
+而是把 `rec` 的物理含义坐实为 `get_node_by_name_rec`，并加一条组合测试
+`the_thin_shell_composes_with_the_real_rec` 作为接线证据；文件头就地更正了"占位"的说明。
+
+#### ② `get_node_by_type_rec<T>`（commit `18046b8`，`src/graphwar_nodes.rs:892`）
+
+**身份**：arm64 唯一（`0x3a5ae4`，`st_size` 1590）↔ x86 **`0x3af430`**（FDE `0x3af430..0x3af6fd`，`0x2cd`）。
+跨构建定名 `fp:高置信同源 score=0.8405 margin=0.4417`（`fixtures/hybrid_names.tsv` 全表最高的一条）+ 自递归 + 被调者集三条合起来 ⇒ **推断（强）**。
+
+**与 `_rec` 的差别逐条由 arm64 被调者表钉住**：**没有** `Node::get_name` / `Display::fmt` / `memcmp@plt`，
+**多**一条 `alloc::raw_vec::RawVec<T,A>::grow_one` ⇒ 不比名字、往 `Vec` 里塞、返回多个。
+**顺序是先序**：x86 `0x3af544`（`call 0x4490a0` = cast 包装）→ `0x3af54e` 判别 → `0x3af57b` 压栈，
+**之后**才 `0x3af5b7 call 0x3af430`（自递归）、`0x3af5f2` memcpy 追加子结果。同样**不检查根自己**。
+
+#### 两条落码的自审（抓到 1 处设计错）
+
+* **错**：第一版把 trait 写成 `type Child: SceneTree` 的关联类型，递归时 `cast` 的类型每层都变
+  （`&&&&…`），rustc 报 `reached the recursion limit while instantiating`。
+  **改**：每层节点用**同一类型** `Self`（原版子节点一律是 `Gd<Node>`，类型参数 `T` 只影响末尾一次
+  `owned_cast`）+ 内层 `rec_impl(&F)` 收引用。**语义未变**，理由写进了代码注释 ——
+  不是"为了让编译器过而改语义"。
+* **单测 8 条**（期望值全部来自反汇编，不来自实现输出）：不匹配根自己 / cast 失败继续递归 /
+  先序取最浅命中 / 找不到即 `None` / 名字是逐字节相等（反例：前缀、大小写、尾随空格）/
+  17 个实例覆盖全部 11 个薄壳尾调且升序 / 薄壳占位形参 + 真 `_rec` 组合跑得通 / 先序收集 = `[A, A1, B1]`。
+
+### 149.4 `player_showcase`：17 = **4 业务 + 13 宏产物**，real-missing **0**
+
+| 族 | Android 真名 | 条数 | Linux 侧 | 类别 |
+|---|---|---|---|---|
+| 业务 | `<…IControl>::draw` / `ready` / `process`、`PlayerShowcase::on_text_change` | **4** | 4 条**全在 527 F1**（`0x4e5400` / `0x4e6480` / `0x4e68f0` / `0x4efd70`） | implemented（我方全有：`src/player_showcase.rs:1720/1658/1704/1855`） |
+| 注册 | `__register_methods` / `__register_constants` | **2** | `0x4e1160` / `0x4e12e0`（F3） | `na:gdext-glue` |
+| 初始化 | `_::__init::__inner_init` | **4** | `0x4e87d0` / `0x4e8970` / `0x4e8b20` / `0x4e8d70`（F3） | `na:gdext-glue` |
+| 虚调用壳 | `__virtual_call::virtual_fn` ×3 + `__default_virtual_call::virtual_fn` ×1 | **4** | **—（分母外，无 Location）** | `na:gdext-glue` |
+| 类型/分发 | `class_id`、`ptrcall_fn`、`varcall_fn` | **3** | **—（分母外）** | `na:gdext-glue` |
+
+**13 条 `na:gdext-glue` 的两条独立证据（每条都写进 TSV）**：
+① 名字形态就是 gdext 宏产物（`__register_*` / `__inner_init` / `__virtual_call::virtual_fn` /
+`__default_virtual_call` / `class_id` / `ptrcall_fn` / `varcall_fn`）；
+② 机器特征逐条：`__default_virtual_call` 与 3 个 `__virtual_call::virtual_fn` 都是 `rel32=0 / slot=1`
+（地址只在 `.data.rel.ro` 数据槽里，例如槽 `0x8aee68` → `0x437fb4`、`0x8aee20` → `0x43f988`）；
+`class_id` 是 `rel32=1` 的 86 B 常量读取器（`CLASS_ID` 静态槽在 arm64 `0x8b40b0`）；
+两个 `ptrcall_fn`/`varcall_fn` 是 `rel32=0 / slot=0`，按 §2.5 必须找间接链 —— **找到了**：
+`adr` 取址在 `0x4575f8` / `0x4575ec`，落在 `core::ops::function::FnOnce::call_once`（`0x45750c`）里
+= 注册闭包把函数指针塞进方法表。
+
+**为什么源码层待写函数 = 0**：这 13 条的源码等价物**不是 fn**，而是属性
+（`#[godot_api]` / `#[derive(GodotClass)]` / `#[func]` 的分发壳）。我方 `src/player_showcase.rs` 已经有
+4 个业务方法 + 标注了 `#[godot_api]` 的两个 impl 块 ⇒ **写代码这一步没有可做的**；
+剩下的差异只在"宏展开后的机器码能不能逐条对上"，那属于**构建期**问题，不是源码缺口。
+
+### 149.5 本轮新发现（5 条，都能复核）
+
+1. **`st_size` 会被重叠符号骗**：11 个薄壳 `st_size` 一律 552，但相邻符号只隔 `0xe4 = 228 B`
+   （第 8 个 `0x3a22c0` 隔 `0xcc = 204 B`）⇒ **真实跨度 228/204**；
+   `__register_methods`(1024 B @`0x43c1bc`) 与 `__register_constants`(1024 B @`0x43c34c`)
+   更是**同一段机器码上的两个符号**（`0x43c1bc + 1024 = 0x43c5bc > 0x43c34c`）。
+   ⇒ 用 `readelf -s` 的 `Size` 当"函数长度"时要先查相邻符号间距；`gap_*.tsv` 的两处已就地标明。
+2. **薄壳 ↔ x86 的逐行配对是推断**（沿用 T80 的地址序口径），本轮给了**一条反证**：
+   两侧"唯一一个非 228/`0xf9` 的实例"位置不同（arm64 第 8 个 204 B、x86 第 3 个 `0xe2`）⇒
+   若按"同类实例应对应"则配对整体平移。**逐行 F1/na 归属会变，但两类计数（4/7）与"1 个源码 fn"不变。**
+   这是"计数稳、归属不稳"的一个典型案例 —— 写进 `gap_nodes.tsv` 的「映射自校验」小节。
+3. **`__inner_init` ×4 的跨构建配对不能用地址序**：地址序会与 `Location` 键冲突
+   （把 `player_showcase.rs:37` 的那条配到只有 `9:10` 的 x86 行）。
+   改用**尺寸序 + LOC 键相容性**两条独立轴：`1064↔0x19c(412)`、`1096↔0x1a8(424)`、`1284↔0x20f(527)`、`1298↔0x245(581)`
+   （比值 0.387/0.387/0.410/0.447，与 4 条业务行的 0.26–0.43 同量级）⇒ 档位记「推断（强）」。
+4. **`unknowns()` 旧第 2 条升档（推断 → 观测）**："这 11 个 x86 函数是薄壳还是 `_rec`"此前只有"11 == 11"的计数论证；
+   本轮证明 11 个薄壳的**尾调目标全部落在 17 个 `_rec` 实例里**，而 `_rec` 实例**每个都自递归**
+   ⇒ 它们只能是薄壳（`_rec` 不会尾调另一个 `_rec`）。
+5. **`unknowns()` 旧第 4 条升档（未知 → 观测）**：名字比较的语义此前记"`==` 还是 `format!` 后比较未知"。
+   arm64 `0x3a273c bl <StringName as Display>::fmt` → `0x3a274c cmp len` → `0x3a2760 bl memcmp@plt`
+   ⇒ **是 `Display` 渲染成 `String` 后按长度 + 字节比较**，不是 `StringName` 的 `PartialEq`。
+   仍未定的只是 Rust 源码里写 `format!` 还是 `to_string()`（语义相同，**推断**）。
+   ⇒ 空出的两个 `unknowns()` 位置换成**本轮新发现的两条未知**（`_rec` 的 x86 五寄存器实参分解、
+   `_type_rec` 里 `0x4490a0` 与 arm64 两跳的对应），仍保持 6 条不注水。
+
+### 149.6 三个数**分开报**，以及"落码为什么不动进度条"
+
+本机实跑（`function_coverage.py --stats`，命令见 §149.9）：
+
+| 口径 | 读数 | 含义 |
+|---|---|---|
+| **机器码**（A，分母 527，含 na） | **333 / 527 = 63.2 %** | 历史对照口径 |
+| **B（招牌）** | **333 / 438 = 76.0 %** | 分子分母同口径剔 na |
+| **B′（区间下界）** | 333 / 445 = 74.8 % | `na:other` 那 7 条留回分母 |
+| **严格 1:1（R6）** | **261 / 527 = 49.5 %** | F1 只指向 261 个**不同**我方函数 |
+| **源码函数数**（本节的第三个数） | `graphwar_nodes` **+2**（`_rec` / `_type_rec`）；`player_showcase` **+0** | 机器码 18 条 → 源码 2 个 |
+
+**一位未动的理由（这就是本节最该说清的东西）**：
+机器码口径的分子 = "在 527 里被判 F1 的原版函数"。本轮落的两条是**原版侧没有 Location 的函数**
+（§149.2 的决定性一条），它们**既不在 527 分母里、也不可能变成 527 的分子**
+⇒ 落码只增加了"源码级覆盖率"，**不改变 A/B/1:1 任何一个数**。
+把 18 条机器码直接加进分子是**口径造假**（分母不收却往分子加），本轮明确不做。
+
+⚠️ **同时纠正一个容易被误读的直觉**：`graphwar_nodes` 台账里 `lin_F3_real = 0` 并**不**意味着
+"这个模块没有真缺口"。它的含义是"527 分母里的 F3 行里没有 real-missing"；
+而这个模块的真缺口**根本不在分母里**（`denom:no-loc`）。
+⇒ 读缺口表时，`gap_proxy` 与 `lin_F3_real` 都只能当下界，不能当"还剩多少函数要写"。
+
+### 149.7 门槛读数（本机实跑，逐条）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1658 passed / 0 failed / 1 ignored**（基线 1634 ⇒ **+24**；+24 = 8 条新单测 × **3 个编译进本文件的测试二进制**：lib test + `tests/graphwar_nodes.rs` + `tests/graphwar_player_screen_control.rs`，三者都用 `#[path]` 引入本源文件） |
+| `cargo test --offline --features gdext-bindings` | **1813 passed / 0 failed / 1 ignored**（基线 1789 ⇒ **+24**，同样出自那 8 条新单测 × 3 个测试二进制） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（先重跑 `coverage_matrix.py` 重新生成 `docs/coverage-matrix.tsv` 与 `docs/149-coverage-matrix.md`：`src_fns` 4125 → **4145**、`graphwar_nodes.rs` 的 `ours_funcs` 30 → **50**；`attributed_funcs` 仍 **527** ⇒ 与 §149.6「一位未动」一致） |
+| `python3 tools/check_doc_refs.py` | **rc = 0**（"无死链"） |
+| `python3 tools/docsec.py check docs/06-verification.md` | **通过**（无重复号 / 无冲突标记 / 无空心节）；`⚠ 断号 [43, 89, 148]`（148 是协作留号，见节首说明） |
+| `python3 tools/boundary_audit.py --check` | **match 441 / mismatch 0**（rc = 0） |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（`replay_attrib --drive fire` 内容命中 647、`--drive batch` 647、`batch_conv --policy strict` 637/1080）—— 一位未退。另跑 `tools/bit_exact_attrib.py --check-baseline --axis fire|batch --snapshot <快照>`：两轴**「校验结果：全部一致」**（语料先比：403 条目 / 401 回放逐份 sha256；再比 5 组数字：种类序列 1075 / 死亡集合 366/385 / 挖洞点 207/294 全 OK） |
+
+### 149.8 遗留 / 建议下一步
+
+1. **薄壳逐行配对仍是推断**（§149.5 第 2 条）。可用的**独立轴（本轮没做）**：
+   把"薄壳的调用方身份集"在两架构上对齐 —— x86 侧 `CALLERS` 表已知（`0x4d3180` = `PlayerScreenControl` 等），
+   arm64 侧有完整符号名，两边按**调用方的 模块::类型::方法** 取交集即可定死 11 对。
+   **不影响任何计数**，只影响"哪一行是 F1"。
+2. **17 个 `_rec` 里有 6 个组内未定**（都只被别的模块调用：`0x3a2e10` ×4 / `0x3b0830` ×1 / `0x4e3f20` ×1）。
+   同一条"调用方身份集"轴能定它们。
+3. **`_rec` 的 x86 实参分解只解了一半**：`name = (rcx, r8)` 由 `0x3ad6e3` 的 `memcmp` 直接证实；
+   `rsi:rdx` 是 16 B 的 `Gd`（arm64 侧 `x0:x1` 是 16 B 且入口就 `check_rtti("upcast_ref")`）属**推断**。
+   缺：能区分"16 B 句柄"与"第二个字符串"的独立指纹。已写进 `unknowns()`。
+4. **11 个 `T` 是什么类型仍未解**（缺 `godot_core::meta::class_id` 的表）。这不影响"1 个泛型 fn"的结论，
+   但影响"这 11 个薄壳分别服务哪个界面控件"的语义 —— 那是 `docs/16` §28 的节点名表已经覆盖的部分。
+5. **`player_showcase` 的 7 条分母外宏产物在 x86 侧没有落地址**（`__default_virtual_call` / `class_id` 的
+   悬案，与 T97 在 `src/player_showcase.rs` 的 `NAME_BRIDGE_CONFLICTS` 里登记的完全一致）——
+   本轮没有更好的证据，**不动**。
+6. ⚠️ **工具口径提醒（建议给 `function_coverage.py` / `global_triage.py` 提）**：
+   现有"缺口"列只看 527 台账，**看不见 `real-missing / denom:no-loc` 这一类**
+   （本节 18 条就整族在视野外）。若以后要继续按模块排优先级，建议加一列
+   `lin_fns_noloc`（Android 真名里**没有** Location 对应、且名字是业务形态的函数数）。
+
+### 149.9 复跑命令
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home; export CARGO_TARGET_DIR=$PWD/.cargo-target
+PY=$PWD/.reference/venv/bin/python; SNAP=.reference/replays/gw2-replays-snapshot/replays
+
+# ① 真名集合（S0：必须 29 / 17，与普查表逐值相等）
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | c++filt --format rust \
+  | grep -E 'graphwar_nodes::|player_showcase::' | sort -k2
+
+# ② denom:no-loc 的决定性一条（18 个地址必须全部 "no panic::Location referenced"）
+for a in 0x3ab990 0x3abd20 0x3ac050 0x3ac3e0 0x3ac770 0x3acb00 0x3ace90 0x3ad220 0x3ad570 \
+         0x3ad900 0x3adc50 0x3adfe0 0x3ae320 0x3ae650 0x3ae9e0 0x3aed10 0x3af0a0 0x3af430; do
+  $PY tools/addr_probe.py locs $a; done
+# 对照（薄壳有锚）：$PY tools/addr_probe.py locs 0x3aaea0   → src/graphwar_nodes.rs:8:62
+
+# ③ 递归 / 尾调链（每个 _rec 都有一条落在自身区间内的 call）
+$PY tools/addr_probe.py callers 0x3ad570     # 0x3ad73d in 0x3ad570（自递归）+ 0x3aaf47 in 0x3aaea0（薄壳尾调）
+$PY tools/addr_probe.py callers 0x3af430     # 0x3af5b7 in 0x3af430 + 0x4d3180
+
+# ④ `_rec` 语义（arm64 有符号名：被调者真名 + Display::fmt + memcmp）
+llvm-objdump -d --arch-name=aarch64 --start-address=0x3a2638 --stop-address=0x3a2958 \
+  .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E 'bl\s+0x'
+$PY tools/addr_probe.py dis 0x3ad570          # x86 同形：子节点循环 + 比长度 + memcmp + 自递归
+
+# ⑤ 调用形态闸（ptrcall_fn/varcall_fn 的取址链）
+$PY tools/arm64_sym.py at 0x4575ec            # → core::ops::function::FnOnce::call_once（注册闭包）
+readelf -rW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E '43f988|437fb4'
+
+# ⑥ 三个数（分开跑、分开报）
+$PY tools/function_coverage.py --stats | grep -E '口径 A|口径 B|R6'
+
+# ⑦ 门槛
+cargo test --offline && cargo test --offline --features gdext-bindings
+$PY tools/coverage_matrix.py --check && python3 tools/check_doc_refs.py
+python3 tools/docsec.py check docs/06-verification.md && $PY tools/boundary_audit.py --check
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```
