@@ -29121,6 +29121,10 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
 
 ### 150.11 遗留 / 未做 / 我可能错在哪
 
+0. **敏感性已测（稳健性）**：LOC 抽取的区间用的是 `.symtab` 的 `st_size`；而 T101 已证 `st_size` 会被**重叠符号**虚高
+   （17 个 `_rec` 实例写着 2048、真实跨度 1928）。改成 `real_span = min(st_size, 下一个 FUNC − 本地址)` 复算，
+   **X = 143 / 207、`denom:in` 365、`real-missing` 57 一位不变** ⇒ `st_size` 虚高**没有**造成"误读邻居函数的 Location"的假 `denom:in`。
+   （复算方式：把 `cmd_denom_outside` 里 `ranges` 换成 real_span，跑 `--control-only`。）
 1. **13 组混合组未解**：同一条源码函数的部分单态化有游戏 Location、部分没有。若是"内联进来的 panic 点"，
    则 X 被**低估** 13 组（上限 156）；若是"该单态化走了不同的 panic 路径"，则不低估。**未查**，缺什么：需要按单态化逐条看
    被内联者（Android 有真名可查，本轮没做）。
