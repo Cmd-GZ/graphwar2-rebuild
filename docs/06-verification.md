@@ -25597,3 +25597,303 @@ $PY tools/docsec.py check docs/06-verification.md      # 通过
 5. **不做的事**：没有改任何 `src/**`、`client/**`、`tests/**`、护栏/门槛、`docs/00`、`docs/02`、`docs/07`、
    `fixtures/naming_android*.tsv`（T87 原始台账，只读引用）、`fixtures/name_to_addr.tsv`（v1，只读引用）、
    `tools/naming_android.py`、`tools/f3_triage.py`、`tools/function_coverage.py`。
+## 139. T93 `graphwar_module_container.rs`：49 条「全仓最大代理缺口」= **48 条单态化副本 + 1 条 drop glue**，源码级缺口 **0**（2026-11-28，任务 `task-86` / 分支 `agent/gap-modcontainer`）
+
+> 预注册：`fixtures/gap_modcontainer_plan.txt`（**先单独 commit**，`6e93411`）。逐条台账：`fixtures/gap_modcontainer.tsv`（69 行）。
+> 本节所有数字都能用 §139.8 的命令复跑；口径一律 ELF vaddr（Ghidra/REA 地址 = 本表 + 0x100000）。
+
+### 139.0 一页结论
+
+T86 §134.6 的 `gap_proxy` 表把 `graphwar_module_container.rs` 列成全仓**最大缺口（49）**，
+理由是同源 Android 构建里有 **69 个真名函数**、而 Linux 只有 **20 个**能按 `panic::Location` 归属。
+本轮把 69 条逐条对齐后，结论是：
+
+**这 49 条一条业务函数都不是。** 它们 = **48 个单态化副本**（同一批 **2 个泛型方法**的其它实例化）
+\+ **1 条编译器 drop glue**。三个方法在源码里各**只有一行 `fn`**，我方 `src/graphwar_module_container.rs`
+**三个都已实现**（`:577` / `:590` / `:608`）⇒ **源码级缺口 = 0，本轮落码 = 0 条**。
+
+| 组 | arm64 2.0.60 真名（demangle，抹 `h<hash>`） | 条数 | 源码函数 | 我方实现 | 本轮裁决 |
+|---|---|---|---|---|---|
+| A | `GraphwarModuleContainer::add_module` | **25** | 1 | `src/graphwar_module_container.rs:577` | `na:other / own-generic-mono` |
+| B | `GraphwarModuleContainer::get_module` | **23** | 1 | `:590` | `na:other / own-generic-mono` |
+| C | `GraphwarModuleContainer::get_module_wk` | **20** | 1 | `:608` | `na:other / own-generic-mono`（**已在 527 台账里，F1**） |
+| D | `core::ptr::drop_in_place<Weak<RefCell<GraphwarModuleContainer>>>` | **1** | **0**（编译器生成） | — | `na:other / drop-glue` |
+| | 合计 | **69** | **3** | **3/3** | `real-missing` **0** / `unknown` **0** |
+
+**三档计数（报告里必须分开写，见预注册 §7）**
+
+| 口径 | 读数 | 说明 |
+|---|---|---|
+| **机器码条数 — Android** | **69** | `.symtab` 里名字含 `graphwar_module_container` 的 `.text` FUNC（含 drop glue 1 条）；与 T86 `global_triage_android_census.tsv` 的 `game_module graphwar_module_container 69` **是同一批** |
+| **机器码条数 — Linux** | **69** | 68 个单态化（三个等距块，§139.2 独立复算）+ 1 个 Weak drop glue（`0x527e80`，`推断`） |
+| **机器码条数 — 可按 Location 归属** | **20** | = C 组 20 条（都是 `:30:28` 一个键）⇒ 这就是 527 里的 20 行、也是"代理缺口 49"的来源 |
+| **源码函数数** | **3** | 由"组内只有 1 个方法名 + 25 型并集"推出（§139.3 C3/C4） |
+| **严格 1:1（源码函数 ↔ 物证）** | **3 / 3** | 三个方法各有地址级物证（块地址 + 反汇编常数/分支）；`tests/graphwar_module_container.rs` 逐条断言 |
+
+> ⚠️ **别把 25 算成 25 条业务函数，也别把 3 说成"69 条全做完"**。同一个量在三个口径下是 69 / 3 / 3。
+> 反过来，527 台账对本模块也**多算**：那 20 行机器码只对应 **1 个源码函数**（`get_module_wk`）。
+
+### 139.1 四条轴（口径；前三条沿用 T87 `naming_android_plan.txt` §2，第四条是本轮新加的）
+
+| 轴 | 内容 | 独立性 / 用途 |
+|---|---|---|
+| **L 位置轴** | `panic::Location` 键集 `(src/<f>.rs, line, col)` | 527 的归属机制；本模块**只有** `:30:28` 一个键（`RefCell::borrow` 的 `#[track_caller]`） |
+| **F 结构轴** | ① `.rodata` 的 **16 字节 `TypeId` 常量内容**（`TypeId::of::<M>()`，HashMap 的键）② `.data.rel.ro` 里 **4 字 `dyn Any` vtable**（`[drop_in_place, size, align, type_id]`）③ `.rodata` 串 ④ 小立即数；另记 FDE 尺寸比 | **不含符号名当特征**；arm64 侧的名字只用来"给 F 轴的结果命名"（=答案，不是特征） |
+| **S 形态轴**（T89 §138.5 的调用形态闸） | `call rel32` 条数 / 地址出现在数据槽里的条数（slot） | 泛型单态化 = **被直接调用**（`rel32 ≥ 1`、`slot = 0`） |
+| **T 构造器邻接轴**（本轮新增） | 装配点里 `bl add_module` 的**前一条 `bl` 是 `M::new`**（源码 `container.add_module(Rc::new(RefCell::new(M::new(..))))` 是一行） | 用来解 **ICF 合并**导致的类型名歧义（§139.3 C5），22/25 直接可读，其余 3 条的 vtable 名与它**逐条一致** |
+
+**F 轴的提取法（写死在预注册 §2）**：16 字节常量 = 反汇编里读 `.rodata` 的 `movups`（x86）/
+`adrp+add` + `ldr q0`（arm64），取 `[8..16] ≠ 0` 且非全可打印 ASCII 者；vtable 首字的
+`R_*_RELATIVE` addend 指向 `drop_in_place`。
+
+### 139.2 独立复算三个块：**不信任既有文档**，只靠函数体形态
+
+预注册 §5 要求"正对照先做"。这里干脆把块地址**重新扫一遍**，判据只有三条（全在函数体里）：
+① 读到 **≥1 个 16 字节 TypeId 常量**；② 有 **4 字 `dyn Any` vtable**（`16 ≤ size ≤ 0x800`、`align ∈ {1,2,4,8,16}`、
+首字重定位到 `.text`）；③ 调 `hashbrown::HashMap::insert`（x86 `0x443bc0` / arm64 `0x465068`，
+**arm64 侧这个地址有符号名**）⇒ `add_module` 形态；调 `core::hash::BuildHasher::hash_one`
+（x86 `0x47e490` / arm64 `0x3eba44`）+ **2 个** TypeId 常量 ⇒ `get_module` / `get_module_wk` 形态。
+
+| 侧 | `add_module` 形态 | 两 TypeId 形态 | 铺排结果 |
+|---|---|---|---|
+| **x86（FDE 边界）** | **25** 条，尺寸全 `0x97` | **43** = 23×`0x163` + 20×`0x214` | `0x4694f0 + i·0xa0` (i<25) → `0x46a490 + i·0x170` (i<23) → `0x46c5a0 + i·0x220` (i<20) ⇒ 末端 `0x46ee00+0x214 = 0x46f014`，与下一函数 `0x46f020` 之间只差 12 字节对齐填充 |
+| **arm64（`.symtab` st_size 边界）** | **25** 条，尺寸全 `0xd4`=212 | **不扫**：arm64 侧 `.symtab` 直接给 23 / 20 条真名，不需要形态推断（跨构建铺排只在 x86 侧做） | `0x49e520 + i·0xd4` (i<25) |
+
+⇒ 三个块**严丝合缝、等距、无洞**，与文件头（前几轮写的 `0x4694f0 / 160`、`0x46a490 / 368`、`0x46c5a0 / 544`）
+**逐一相符**；这次是**独立**得到的（第一次只用形态、没看那些数字），所以它现在算复核过。
+
+**FDE 尺寸比（旁证，跨 ISA 天然不等，只作一致性检查）**：`add` 151/212 = **0.712**（25/25 同值）、
+`get` 355/432 = **0.822**（23/23）、`wk` 532/644 = **0.826**（20/20）、drop glue 32/40 = **0.800**。
+**每个组内部完全同值**、组之间差异与 ISA 相符 ⇒ 没有"块边界切错"的迹象。
+（arm64 的 `.eh_frame` 在本工具链上解析会失步，见 §139.9 第 3 条，所以 arm64 边界一律用 `.symtab` 的 `st_size`。）
+
+### 139.3 正 / 负对照（预注册 §5，全过才允许出结论）
+
+| 组 | 做法 | 结果 |
+|---|---|---|
+| **C1 正对照（L）** | C 组 20 条：Linux 20 个地址的 L 键集 | **20/20 都只有 1 个键 `src/graphwar_module_container.rs:30:28`**；A/B/D 组 49 条**一个 Location 都没有**（`addr_probe.py locs` 直读）⇒ "它们为什么不在 527 里"有了硬答案：**不是没实现，是没有 Location 锚** |
+| **C2 正对照（F）** | 三组各取 1 条人工读 `dis`，确认骨架读法 | 成立：`add` 0x49e520 体里 `adrp/add 0x858aa8`（vtable，首字 → `drop_in_place<RefCell<GraphwarModeManager>>`，size 字 `0x28`）+ `ldr q0,[0x197000]`（TypeId）+ `bl HashMap::insert`；`get` 0x46a490 / `wk` 0x46c5a0 各有 **2 个** TypeId 常量 |
+| **C3 身份并集** | A 组 25 条的类型名并集 vs `src/graphwar_module_container.rs` 的 [`MODULES`] 25 型 | **完全相等**（25 = 25，无多无少）；`get` → **23** 型、`wk` → **20** 型，也与表里 `get≠0`/`wk≠0` 的集合**完全相等** |
+| **C4 负对照（防"随便配对都对"）** | 把 arm64 第 i 条与 x86 第 i 条**按序号**配对（不看装配序） | `size_word`（= `size_of::<RefCell<M>>()`，跨 ISA 必须相等）命中 **2/25**；换成**按装配点调用序**配对后 **25/25** ⇒ 配对方法在做实事，不是"怎么配都对" |
+| **C5 证伪闸** | 预注册 §5：块内序号不一一对应 / 块有洞 / 某条 `M` 不在 25 型里 / 某条 L 键与本组不同 ⇒ 不许判 na | **一条都没触发**。四组内部 `size` 完全同值、块等距无洞、类型并集 = 表、C 组 L 键唯一 |
+
+**配对是怎么做的（可复跑）**
+
+1. **装配点调用序**（全 `.text` 共 **44** 个 `add_module` 调用点 → 4 处）：arm64 `GraphwarGameClient::new` `0x409c70` **22**、
+   `graphwar_game_server::game_server_thread` `0x483574` **20**、`GraphwarBackend::start_*` `0x407848`/`0x407b9c` 各 **1**；
+   x86 对应 `0x517690` / `0x4500c0` / `0x515590` / `0x5159a0`。两侧条数**逐处全等（22/20/1/1）**，
+   按位置配对得到 **25/25 一一映射**（同一 arm64 实例在不同装配点从未被指到两个 x86 地址）。
+2. **同构建内 `TypeId` 常量锚定**：`get_module::<M>` / `get_module_wk::<M>` 的 HashMap 键就是
+   `TypeId::of::<M>()`，与同型的 `add_module` **同一个常量** ⇒ 用它把 23+20 条钉到具体类型：
+   arm64 侧 **23/23、20/20**；x86 侧 **23/23、20/20**（两侧各自独立成立）。
+3. **T 轴解 ICF 歧义**：见 §139.3 末尾"我写错了"。
+
+> **「我写错了」1 处（自己抓到、已修，留档）**：第一版类型提取直接读 vtable 首字所指的
+> `drop_in_place<RefCell<M>>` 的符号名，结果 25 条 `add_module` 只读出 **23 个**类型名 ——
+> 有 **3 条都叫 `GraphwarSoldierManager`**，可它们的 `TypeId` 常量**互不相同**（这是不可能的）。
+> 查下去发现：`GraphwarPlayerManager` / `GraphwarRankManager` / `GraphwarSoldierManager` 三个
+> 72 字节、布局相同的 manager 的 drop glue 被**合并到同一地址 arm64 `0x4b2350`**（252 B，`.symtab` 里
+> **3 个 FUNC 别名同址**），所以 vtable 首字这条轴在它们上面**失效**。
+> 换成两条独立证据后定案：① vtable 的**第 4 字**（`<M as Any>::type_id` shim）三者互不相同
+> （`hd6722f76…` / `h4c7db77…` / 另一个）⇒ 确实是三个不同的型；② **构造器邻接轴**给出名字：
+> `0x40a01c bl GraphwarPlayerManager::new` → `0x40a028 bl add(0x49f260)`、
+> `0x40a070 bl GraphwarSoldierManager::new` → `0x40a07c bl add(0x49f18c)`、
+> `0x40a5dc bl GraphwarRankManager::new` → `0x40a5e8 bl add(0x49ef10)`。
+> 其余 22 型的 vtable 名与构造器名 **22/22 一致**。
+> **教训**：`drop_in_place` 符号名**不能单独当类型身份**（布局相同的类型会被链接器折在一起）；
+> 这次是预注册 C3（"并集必须 = 25 型"）把我逼出来的 —— 若没有这条闸，会写下一个"23 型"的错结论。
+
+### 139.4 这 49 条在 T86 台账里被判成了什么（**只登记，不改别人的台账**）
+
+`fixtures/gap_modcontainer.tsv` 的 69 行里，49 条的 Linux 地址在 `fixtures/global_triage.tsv`（T86）里的类别是：
+
+| 组 | T86 台账类别 | 条数 | 本轮裁决 |
+|---|---|---|---|
+| A `add_module` | `real-missing / prop:game`（L4 调用图扩散） | **19** | `na:other / own-generic-mono` |
+| A `add_module` | `unknown / no-evidence`（L-none） | **6** | 同上 |
+| B `get_module` | `real-missing / prop:game` | **23** | 同上 |
+| C `get_module_wk` | `implemented / F1` 2 条 + `F2` 18 条（L1-location） | 20 | `na:other / own-generic-mono`（**本来就已在 527**） |
+| D drop glue | `real-missing / prop:game` | **1** | `na:other / drop-glue` |
+| | **49 条代理缺口 = 43 `real-missing` + 6 `unknown`** | 49 | **na 49 / real 0** |
+
+⇒ T86 的 **`real-missing` 池（542 条）里有 43 条**是本模块的**单态化副本**（外加 1 条 drop glue）。
+这正是 §134.7 第 1 条自己预告的风险："L4 调用图扩散把我方已实现函数的邻居也算成 real"。
+**本轮不改 `fixtures/global_triage.tsv`**（T86 的台账由它主人管），建议按 §139.9 处理。
+
+### 139.5 对「≈555」的影响：**机器码条数 ≠ 源码函数数**（`推断` / 代理口径，别当结论）
+
+§134.7 的 ≈555 是**机器码条数口径**：`Android 964 条需要写 − Linux 409 条已实现`。
+两边的数都含单态化副本，本模块就是极端的例子（25 条 = 1 个源码函数）。用**同一份 Android `.symtab`**
+把两侧都按"抹 `h<hash>` 后的源码级名字"去重：
+
+> ⚠️ **409 与今天的 384 对不上（差 25），登记为待核**：§134.7 的 409 是 T86 当时的读数；
+> 今天 `fixtures/function_coverage.tsv` 里 `bucket ∈ {F1,F2}` 只有 **384** 行（F1 313 + F2 71），
+> 用 `tools/global_triage.py::read_cov()` 的列位置复算也是 384。差 25 的原因本轮没查（可能是 T86 那次的
+> 台账状态，也可能是 `lin_F1F2` 的口径与今天不同）。本节一律用**今天的** 384 行，
+> 并把这一条列进 §139.9 的待核清单 —— 谁去查 `fixtures/global_triage_modules.tsv` 与
+> `fixtures/function_coverage.tsv` 的时间差就能定案。
+
+| | 机器码条数 | 抹 hash 后源码级名字 | 冗余副本 |
+|---|---|---|---|
+| Android 游戏本 crate（非 drop glue，与 `global_triage_android_census.tsv` 同口径、按地址去重） | **964** | **693** | **271** |
+| Linux 527 里 F1+F2（`fixtures/function_coverage.tsv`：F1 313 + F2 71 = 384 行，其中 2 行无名字） | **382** | **294** | **88** |
+| 本模块（极端例） | 69 | **3** | 66（其中 1 条是 drop glue，不算源码函数） |
+
+⇒ **源码函数口径的缺口 ≈ 693 − 294 = 399**（而不是 555）；555 − 399 = 156 是**两侧单态化副本的回声**。
+**`档位：推断 / 代理`** —— 两侧名字集**不能逐条对齐**（Android 有被整体内联掉的函数、Linux 有 Android 没有的闭包副本、
+且"名字"来自两份不同构建），所以 399 只作**量级**参考。可复算命令见 §139.8 第 5 条。
+**明确不建议**拿 399 去改招牌数字（招牌是 B = 313/438 = 71.5%，分母口径与本节无关）。
+
+### 139.6 src 侧：**没有 real-missing ⇒ 落码 0 条**；`MODULES` 表 150 槽位逐条复核 0 不一致
+
+1. **`MODULES` 表 150 个槽位（25 型 × 3 槽 × 2 架构）逐条复核：0 处不一致。**
+   反推来源 = 本轮的四条轴（vtable 名 + 构造器邻接 + 同构建 `TypeId` 常量 + 装配点调用序）；
+   `get`/`wk` 的"哪些型有"也与表里 `get≠0`(23) / `wk≠0`(20) **完全相等**。
+   ⇒ `tests/graphwar_module_container.rs` 断言的那张表**不是自洽验证，是过硬的**。
+2. **`src/` 与 `tests/` 本轮一字未改**（落码 0）。原本想把上面那条 ICF 教训补进
+   `src/graphwar_module_container.rs` 的文件头 `//!` 注释，**已撤回** —— 原因是一个真实的坑：
+
+   > 改 `//!` 注释同样会**移动行号**，而 `fixtures/function_coverage.tsv` 与
+   > `docs/149-coverage-matrix.md`（都是生成物）里写着 `src/graphwar_module_container.rs:608`
+   > 这一族"我方实现位置"。实测：加 30 行注释后 `coverage_matrix.py --check` **rc=1**
+   > （`docs/149-coverage-matrix.md` 第 235 行开始不一致），必须重跑两个生成物才回到 OK。
+   > 为守住任务书的"只动 `src/graphwar_module_container.rs` + 我新建的 fixtures + `docs/06`"
+   > 并且不给别人的台账制造行号漂移，**改回原样、把澄清全部留在本节**（§139.3 已写全）。
+
+**落码条数 = 0**：没有一条判成 `real-missing`，所以没有新函数可写；三个源码函数**早已实现**。
+本轮的价值是**把一个 49 的假缺口清零**，而不是新增代码。
+
+### 139.7 门槛读数（本机实跑，2026-11-28）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1592 passed / 0 failed**（与基线 1592 一致；本轮未改 `src/**`、`tests/**`） |
+| `cargo test --offline --features gdext-bindings` | **1741 passed / 0 failed**（基线 1741） |
+| `coverage_matrix.py --check` | OK（无生成物过期） |
+| `check_doc_refs.py` | rc=0 |
+| `docsec.py check docs/06-verification.md` | 节数 137｜范围 1..139｜断号 [43, 89]（两个历史缺口，非错）｜无重复号/冲突标记/空心节 |
+| 三轴（冻结快照 401 份回放） | `fire` **647** / `batch` **647** / `batch_conv` **637**（`fire`/`batch` 都是 `结算批 1080、内容命中 647`；`batch_conv` = 多发批 32 + 单发批 605 = 637。三轴的"文件 286 / 读失败 117"是既有现象，见 §41 与本节无关） |
+| `boundary_audit.py --check` | 527 个可归属函数：match **441** / **mismatch 0** / multi 86 |
+
+> 三轴与 527 台账本轮**一字未动**（没改计分工具、没改别人的 `na` 台账、没改 `fixtures/global_triage.tsv`）；
+> `fixtures/function_coverage.tsv` 也没重跑（`src/` 未改，F 档不会因此改变）。
+
+### 139.8 复跑命令（照抄可跑；`$PY` = `.reference/venv/bin/python`，全部在仓库根跑）
+
+```bash
+# 1) 69 条真名 + 四组计数（Android 2.0.60 arm64，.symtab 未剥离）
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | grep graphwar_module_container | grep FUNC | wc -l                     # 69
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | grep graphwar_module_container | grep FUNC | awk '{print $8}' | c++filt \
+  | sed -E 's/::h[0-9a-f]{16}$//' | sed -E 's/.*:://' | sort | uniq -c
+#   => 25 add_module / 23 get_module / 20 get_module_wk / 1 ...GraphwarModuleContainer>>>
+
+# 2) L 轴 / S 轴（Linux 侧；20 条有 :30:28，其余 48 条无 Location；slot 全 0）
+$PY tools/addr_probe.py locs    0x46c5a0     #  src/graphwar_module_container.rs x1  e.g. :30:28
+$PY tools/addr_probe.py locs    0x4694f0     #  (no panic::Location referenced)
+$PY tools/addr_probe.py callers 0x4694f0     #  call rel32: 2 / reloc slot: 0
+
+# 3) 独立扫三个块（**不看任何既有文档**，只靠函数体形态：①读 ≥1 个 16 字节 TypeId 常量
+#    ②有 4 字 dyn Any vtable ③调 HashMap::insert / 两个 TypeId + 调 hash_one）
+$PY - <<'PY'
+import sys, os, struct, collections
+sys.path.insert(0, "tools")
+import naming_android as NA, addr_probe as AP
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+from capstone.x86 import X86_OP_MEM, X86_OP_IMM, X86_REG_RIP
+SO = ".reference/steam/2026-08-28/libgraphwarrust.so"; e, ctx = NA.Elf64(SO), AP.Ctx(SO)
+md = Cs(CS_ARCH_X86, CS_MODE_64); md.detail = True
+INS, PROBE = 0x443bc0, 0x47e490                     # HashMap::insert / BuildHasher::hash_one
+R, DR = e.sec(".rodata"), e.sec(".data.rel.ro")
+rel = {r: a for (r, t, s, a) in NA.rela_entries(e, ".rela.dyn") if t == 8}
+def inspect(st, ln):
+    ro, dr, calls = [], [], []
+    for ins in md.disasm(e.read(st, ln), st):
+        for op in ins.operands:
+            if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP:
+                t = ins.address + ins.size + op.mem.disp
+                if R["addr"] <= t < R["addr"] + R["size"]: ro.append(t)
+                elif DR["addr"] <= t < DR["addr"] + DR["size"]: dr.append(t)
+            elif op.type == X86_OP_IMM and ins.mnemonic == "call": calls.append(op.imm)
+    seen = set(); n = 0
+    for t in ro:
+        b = e.read(t, 16)
+        if not b or len(b) < 16 or b in seen: continue
+        if struct.unpack("<Q", b[8:])[0] == 0 or all(0x20 <= c < 0x7f for c in b): continue
+        seen.add(b); n += 1
+    vt = [v for v in dr if v % 8 == 0 and v in rel
+          and 16 <= struct.unpack("<Q", e.read(v + 8, 8))[0] <= 0x800
+          and struct.unpack("<Q", e.read(v + 16, 8))[0] in (1, 2, 4, 8, 16)]
+    return n, bool(vt), calls
+hit = collections.defaultdict(list)
+for st, ln in sorted(ctx.fde_ranges):
+    if not ln or ln > 0x761: continue
+    n, vt, calls = inspect(st, ln)
+    if n == 1 and vt and INS in calls: hit["add"].append((st, ln))
+    elif n == 2 and PROBE in calls: hit[("two", ln)].append((st, ln))
+for k, v in hit.items():
+    v.sort(); print("%-14s %2d 条 %#x..%#x 尺寸 %s" % (k, len(v), v[0][0], v[-1][0], sorted({hex(l) for _, l in v})))
+PY
+#   => add 25 条 0x4694f0..0x46a3f0 尺寸 0x97 / ('two',355) 23 条 0x46a490..0x46c430 / ('two',532) 20 条 0x46c5a0..0x46ee00
+
+# 4) 装配点调用序（两侧条数必须逐处相等：22 / 20 / 1 / 1）
+$PY tools/addr_probe.py dis 0x517690 | grep -c 'call'          # x86 GameClient::new 里 22 个 add_module
+$PY tools/addr_probe.py dis 0x4500c0 | grep -c 'call'          # x86 game_server_thread 里 20 个
+
+# 5) 源码级 vs 机器码级（§139.5 的三个数，跑出来就是那三行）
+$PY - <<'PY'
+import sys, re, collections, subprocess
+sys.path.insert(0, "tools")
+import naming_android as NA
+e = NA.Elf64(".reference/steam/android-2.0.60/libgraphwarrust.so"); T = e.sec(".text")
+by = collections.defaultdict(set)
+for s in e.symtab():
+    if s["type"] == 2 and s["size"] and T["addr"] <= s["value"] < T["addr"] + T["size"]:
+        by[s["value"]].add(s["name"])
+game = [sorted(v)[0] for v in by.values() if any("graphwarrust" in n for n in v)]
+dm = [re.sub(r"::h[0-9a-f]{16}$", "", d) for d in subprocess.run(
+    ["c++filt", "--format", "rust"], input="\n".join(game), capture_output=True, text=True
+).stdout.strip().split("\n")]
+nonglue = [d for d in dm if "drop_in_place" not in d]
+print("Android 游戏地址 %d = drop glue %d + 其余 %d；其余只对应 %d 个源码级名字（冗余 %d）"
+      % (len(dm), len(dm) - len(nonglue), len(nonglue), len(set(nonglue)), len(nonglue) - len(set(nonglue))))
+rows = [l.rstrip("\n").split("\t") for l in open("fixtures/function_coverage.tsv") if l[:1] == "0"]
+f12 = [r[1] for r in rows if r[6] in ("F1", "F2") and r[1] not in ("", "—")]
+print("Linux F1+F2 有名行 %d，只对应 %d 个源码级名字（冗余 %d）" % (len(f12), len(set(f12)), len(f12) - len(set(f12))))
+PY
+#   => Android 1244 = 280 + 964；964 只对应 693 个名字（冗余 271）
+#   => Linux   F1+F2 有名行 382 只对应 294 个名字（冗余 88）    ⇒ 源码级缺口 ≈ 693 − 294 = 399
+
+# 6) MODULES 表 150 槽位复核（0 处不一致）
+grep -c 'ModuleEntry { name: ' src/graphwar_module_container.rs                # 25
+```
+
+### 139.9 遗留 / 我写错了什么 / 建议下一步
+
+1. **建议（给 lead）**：`fixtures/global_triage.tsv` 里本模块这 **43 条 `real-missing/prop:game` + 1 条 drop glue**
+   应改成 `na:other / own-generic-mono`（证据 = 本文 §139.2–§139.4 + `fixtures/gap_modcontainer.tsv` 的 49 行）。
+   **本轮没改**（T86 的台账由它主人管，任务书也把 `fixtures/global_triage*` 列为禁区）。
+   43 条 `real-missing` 的构成（可逐条核）：A 组 19 + B 组 23 + D 组 1 = **43**；
+   另有 A 组 6 条 `unknown / no-evidence` 也应一起改（不影响 `real-missing` 计数，影响 `unknown` 池）。
+   改完 `real-missing` 池 **542 → 499**、`unknown` 池 **3,208 → 3,202**（两个数都要按 T86 的纠偏口径另说，见 §134.5）。
+2. **建议**：`fixtures/f3_triage.tsv`（T82）与 `fixtures/function_coverage.tsv` 的"20 行 = 20 条已实现"里，
+   本模块的 20 行**源码级只对应 1 个函数**。若将来要报"源码级 1:1 复原率"，
+   `tools/function_coverage.py` 已经有 `M1_1to1 = 242/527` 这个敏感度口径 —— 建议把它**升为并列报数**，
+   而不是另立新工具。本模块是它最典型的样本（20 行 → 1 个函数）。
+3. **`未知` 项（本轮定不了，写清楚缺什么）**：
+   * x86 侧 `0x527e80` 是不是本模块那条 `drop_in_place<Weak<RefCell<GraphwarModuleContainer>>>`：
+     **`推断`**。判据是"38 条 Weak drop glue 里唯一 `dealloc(size=0x48, align=8)`"，而 `0x48 = 16 + size_of::<RefCell<…>>() = 16+56`
+     对应 `size_of::<M>() = 48`；**同为 48 字节的 `FunctionHistoryRecorder` 因 `wk = 0` 不产生 Weak 实例**，故候选唯一。
+     缺的证据：x86 侧无符号，无法直接读出该实例的类型。
+   * arm64 的 `.eh_frame` 在本工具链（`tools/loc_xrefs.py::parse_eh_frame`）上**会失步**
+     （0x49e368 之后一路跳到 0x4a52f4，还造出一条 `0x52dc00116fd8` 的假 FDE）。本轮 arm64 边界一律用 `.symtab` 的 `st_size`。
+     **这不影响任何结论**（arm64 侧本来就有符号表尺寸），但**将来谁要用 arm64 FDE 必须先修解析器** —— 建议登记为 T87 工具的已知限制。
+   * `global_triage.tsv` 对本模块 C 组 20 条给的是 `2 F1 + 18 F2`，而 `function_coverage.tsv` 给的是 **20 × F1**。
+     两份台账在这里**不一致**（§134.4 D 组早就报过"两份台账不同步"）。本轮只登记，不改。
+4. **待核 1 条（本轮不查）**：§134.6 的 `lin_F1F2` 合计 **409** 与今天 `function_coverage.tsv` 的
+   F1+F2 = **384** 差 **25**（详见 §139.5 的引注）。本轮用的是 384，并在那一节写明了差异；
+   要定案得比两份台账的时间差，属 T86/T82 的口径问题，不在本轮范围。
+5. **不做的事**：没有改 `src/_scaffold/**`、`client/**`、`tests/**`（含既有断言）、门槛/护栏、
+   `fixtures/f3_triage*`、`fixtures/global_triage*`、`fixtures/naming_android*`、`fixtures/function_coverage.tsv`、
+   `docs/149-coverage-matrix.md`、`tools/**`。**`src/` 与 `tests/` 本轮一字未改**（见 §139.6 第 2 条）。
