@@ -234,3 +234,32 @@ python3 tools/function_coverage.py --stats          # 527 台账 F 档计数（�
 | **S6** | `in_527` 列合计：L1 = 23 行、L2 = 6 行，且每行都被至少一条 A 行指到，或写明"无 A 对应" |
 
 ## 9. 勘误（追加式；跑之前为空）
+### E1（体积闸 vs `clap` derive 产物）：**按硬闸落 `unknown`，没有偷偷豁免**
+
+§2.4 写死「> 0x800 一律不许判 `na:*`」。实测有 **1 条**撞上：`0x3b0bd8`
+（`<graphwar_root_node::Args as clap_builder::derive::Args>::augment_args`，`st_size = 5752`）。
+它的名字形态**几乎确定**是 `#[derive(clap::Args)]` 的展开体，但预注册的硬闸不许据此判 `na` ⇒
+本行**落 `unknown`**（`subclass = volcap:past-cap`），并在 TSV 里写明「体积超闸是它落 unknown 的唯一原因」。
+若 lead 认为「名字里直接写着生成器路径」构成独立豁免理由，可把这一条翻成 `na:other / clap-derive`
+（另一条 `from_arg_matches_mut` 860 B **在闸内**，已是 `na:other / clap-derive`）。
+⇒ 本条**不是**判据被改，而是判据被**执行**；这也说明 §2.4 在「宏产物天生比手写函数大」的族上会误伤。
+
+### E2（F1 需要「同一个 `impl` 类型」这个隐藏条件）
+
+§4.1 的 F1 机制写的是「三件事同时做」，但漏了一条**工具侧的硬条件**：
+`tools/function_coverage.py` 的 P1 要求「同名函数在**同一个 impl 类型**下」，只写成**自由函数**会判
+`F2 / free-fn-name`。本轮第一次落码就撞上了（`docs/06` §144.11 ②）。
+处理方式：纯逻辑体留在顶层（可无 gdext 编译 + 单测），**方法体**挂 `impl GraphwarRootNode` 的关联函数
+（与 T71 `check_save_level` 同法）。⇒ 下一轮落码时，「关联函数 vs 自由函数」要在动手前就定。
+
+### E3（§6 P2 的计数偏差 1 条）
+
+§6 的 P2 写「root_node 里 ~11 条在 527（F1）」，实测 **12** 条：多个 `ready::{{closure}}` 的 Location
+在 Android 侧被 4 个闭包符号共享、在 Linux 侧摊成 7 行 ⇒ 行数两边本来就不平。
+**方向对（真缺口 1 条），计数差 1**，不改上文，在此记明。
+
+### E4（`drop-glue` 与 `class-id` 的证据档只到「观测」）
+
+§2.6 要求 `na:*` 每条 ≥2 个独立证据。本轮 `drop-glue`（10 条）与 `class-id`（2 条）的第 2 个证据是
+`.symtab` 名字形态 + 形态一致性（小体积 / 无 Location / `rel32=0`）而**不是**逐条读函数体内部结构 ⇒
+它们属**观测级**，不是逐位级。若要求逐位，需对 `0x394150` 一类逐条反汇编比对（本轮没做）。

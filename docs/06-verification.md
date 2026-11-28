@@ -27231,7 +27231,7 @@ PY
 
 | # | 交付 | 结果 |
 |---|---|---|
-| ① | 两个模块的差集**是什么** | `button`（Android 35 / Linux 6）：**29 条差全是 gdext 宏产物 + drop glue**（25 `na:gdext-glue` + 4 `na:other/drop-glue`），另 6 条真业务我方**早已实现** ⇒ **`real-missing = 0`**。`root_node`（45 / 23）：26 条宏/AST 产物（`na:gdext-glue` 20 + `clap-derive` 2 + drop glue 6）+ **17 条真业务**，其中 **1 条真缺口**（`0x3b00d0`）已在 527 内、**3 条真缺口在分母外**（§144.5）。 |
+| ① | 两个模块的差集**是什么** | `button`（Android 35 / Linux 6）：**29 条差全是 gdext 宏产物 + drop glue**（25 `na:gdext-glue` + 4 `na:other/drop-glue`），另 6 条真业务我方**早已实现** ⇒ **`real-missing = 0`**。`root_node`（45 / 23）：28 条宏/AST 产物（`na:gdext-glue` 20 + `clap-derive` 1 + drop glue 6 **+ `unknown` 1**：`augment_args` 5752 B 撞体积闸，按预注册 §2.4 **不许**判 na ⇒ 保守落 `unknown`，见 plan §9 勘误 E1）+ **17 条真业务**，其中 **1 条真缺口**（`0x3b00d0`）已在 527 内、**3 条真缺口在分母外**（§144.5）。 |
 | ② | `real-missing` 落码 | **1 处**：`GraphwarRootNode::get_media_storage_path`（Linux `0x3b00d0` / FDE `0x754`）⇒ 527 台账 **F3 → F1**（§144.4）。 |
 | ③ | 三个悬案（T71 §123.3.1 / §123.8 第 4 条） | `+0xb0` 写点 **6 条全找到**（含哨兵写入点 `0x3b2e1d`）；`+0x1f8` 在**本模块归属内 0 条写点**（⇒ 闸门语义仍未解，缺什么写清）；`GATE_B(+0x1703)` **闭环**（写 3 / 读 2）（§144.6）。 |
 | ④ | 三个数的口径 | 机器码 **333/527 = 63.2 %**（332→333）；招牌 B **333/438 = 76.0 %**（332→333，分母剔 89 条 `na:*`）；严格 1:1 **261/527 = 49.5 %**（260→261）；源码级 **+1 个不同我方函数**（§144.7）。 |
@@ -27288,12 +27288,13 @@ PY
 | 类 | 子类 | 条数 | 说明 |
 |---|---|---|---|
 | `na:gdext-glue` | `call-shim` / `ctor-shell` / `virtual-shim` / `reg-table` / `class-id` | **20** | 10 / 4 / 3 / 2 / 1（`ready` 那 4 个 `{{closure}}` **不**在这一类，见下） |
-| `na:other` | `clap-derive` | **2** | `Args as clap_builder::derive::{Args,FromArgMatches}::{augment_args,from_arg_matches_mut}`（5752 / 860 B） |
+| `na:other` | `clap-derive` | **1** | `Args as clap_builder::derive::FromArgMatches::from_arg_matches_mut`（860 B，**在 VOL_CAP 内**） |
+| `unknown` | `volcap:past-cap` | **1** | `Args as clap_builder::derive::Args::augment_args`（**5752 B > 0x800** ⇒ 预注册 §2.4 硬闸不许判 `na:*`，保守落 `unknown`；plan §9 勘误 E1） |
 | `na:other` | `drop-glue` | **6** | `drop_in_place<GraphwarRootNode>` ×4 + `drop_in_place<…ready::{{closure}}>` ×2（28 / 4 B） |
 | `implemented` | `pinned` | **12** | 在 527 台账里且 F1：`ready` / 4 个 `ready::{{closure}}` / `process` / `purchase_denied` / `check_save_level` / `purchase_confirmed` / `process_button_pressed` / `request_permissions_result` / `get_media_storage_path`（本轮 F3→F1） |
 | `implemented` | `denom:no-loc` | **2** | `init`（2336 B，LOC 只有 `local.rs:428`）、`show_screen`（612 B，LOC 空）—— 我方 `src/graphwar_root_node.rs:2712` / `:2793` **已有同名实现**，但 Linux 侧无 `.rs` Location ⇒ 进不了 527 |
 | `real-missing` | `denom:no-loc` | **3** | `show_pop_up`（328 B）/ `print_help_and_exit_if_requested`（288 B）/ `user_args`（672 B）—— 我方**没有**同名实现，见 §144.5 |
-| **合计** | | **45** | `na` **28** / 真业务 **17** |
+| **合计** | | **45** | `na` **27** / `unknown` **1** / 真业务 **17** |
 
 * 527 的 23 行 → 12 条 A 行逐一指到 + 其余 11 行是宏壳/无名行（每行都在 TSV 末尾「映射自校验」里列出，
   其中 `0x426430` / `0x433c00` 写明**无 A 对应**：T87 已定它们只被 `godot_core` 的具名函数引用 ⇒ `na:gdext-glue`）。
@@ -27451,3 +27452,7 @@ $PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv 
 4. 预注册 §2.6 的 `na:*` 需要「≥2 个独立证据」，本轮 `drop-glue` 那 10 条的第 2 个证据是
    `.symtab` 名字形态 + 无 Location 的形态一致性，**不是**逐条读了 `drop_in_place` 的内部结构 ——
    属**观测级**，不是逐位。若要求逐位，得对 `0x394150` 一类做逐条反汇编比对（本轮没做）。
+5. **自审时抓到一处会"偷偷豁免硬闸"的写法**：`clap` 的 `augment_args`（5752 B）名字形态几乎确定是 derive 产物，
+   但它的体积**超过**预注册 §2.4 的 `VOL_CAP = 0x800`。第一版 TSV 里生成器把「≤VOL_CAP ✓」这句**无条件**印上去
+   （对着 5752 B 也印），属**假陈述**。已改成：>0x800 的 `na` 候选**一律降 `unknown`** 并在「依据」里写明原因；
+   要翻成 `na` 得由 lead 认「名字形态可单独豁免体积闸」（理由与清单写在 plan §9 勘误 E1）。
