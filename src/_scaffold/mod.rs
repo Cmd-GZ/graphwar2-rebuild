@@ -157,6 +157,15 @@ pub mod root_node_class;
 // `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod play_flow_class;
+// 联机**时序**的两件真值出口（T99 / `docs/06` §144）：`play_screen.gd` 改前自己攒
+// 墙钟累加器来决定 `TickRequest` 的 1 Hz 节奏，而真值是 `GraphwarTickHandler::tick`
+// （`0x519840` 的 `tick % 60 == 0`）与 `handle_connected_to_server_event`（`0x519630`）；
+// `session.gd` 改前手抄 7 条状态同步名单与 `NewConnectionRequest` 的两个版本串，
+// 真值分别在 `graphwar_server_connection_handler::on_new_connection`（逐字节）与
+// `graphwar_client_connection_handler::{NEW_CONNECTION_REQUEST_MAJOR, _MINOR}`。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod flow_clock_class;
 pub mod protocol;
 // 模块容器装载器 + 3 个 manager 的真装配（`docs/16-client.md` §38）：按 `TypeId` 把
 // `GameStateManager` / `TurnManager` / `PlayerManager` 装进 `GraphwarModuleContainer`。

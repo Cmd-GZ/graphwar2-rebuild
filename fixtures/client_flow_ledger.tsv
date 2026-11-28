@@ -1,0 +1,107 @@
+# fixtures/client_flow_ledger.tsv —— 客户端**流程/时序**控制层迁回 Rust 的逐段台账
+# （任务 T99 / `task-92`，2026-11-28；口径沿用 T58/§105 与 T67/§118，判据同 `AGENTS.md` §0.4/§0.5）
+#
+# 为什么要这份台账：`client/src/screens/play_screen.gd`(3595) / `client/src/app/app.gd`(984) /
+# `client/src/net/session.gd`(886) 是**最后三块没逐段过账的仿制品**。T31 搬了"对局状态机"
+# （`GwTurnState`）、T42 搬了函数输入、T58 搬了音频/求值器/帧层/配色、T67 搬了 app/campaign/
+# discovery/link 的**判定层**。剩下的正是本表的核心：**回合推进、准备态、弹道生命周期、
+# 胜负时机的"编排/时序"**（`AGENTS.md` §0.4 点名的四项），以及联机会话的握手时序。
+#
+# 口径：
+#   * 行号 = **改前**（本分支 HEAD = master `67e5ef0` 的 `client/src/…`）；
+#     任务书写的 3502/984/881 是更早的行数，本轮按 `wc -l` 实测 3595/984/886；
+#   * 地址一律 **ELF vaddr**（`AGENTS.md` 口径；Ghidra/REA = 本表 + 0x100000）；
+#   * `verdict` 三种：`move`（搬进 Rust）/ `partial`（搬一部分，或"规则已在 Rust、只剩接线"）/
+#     `keep`（留 .gd，理由写清）；
+#   * `evidence` 四档 `逐位`/`观测`/`推断`/`未知`，外加三个非档位标记：`自造`（我方选择，
+#     不是复原结论）、`引擎`（Godot 侧 API/信号/节点）、`视图`（画图/布局/坐标）。
+#
+# 判据（沿用 T31/T58/T67）：**只有"Rust 侧已有复原实现且能指到地址"的才搬**。
+# 所以本表里 `keep` 占多数是**结论**而不是偷懒 —— 编排顺序（谁先调谁）在原版是
+# `GraphwarGameClient::process` 那条主循环，我方没有它的函数边界，搬过去只是换个语言再写一遍。
+#
+# 统计（按 `verdict` 列复算：`awk -F'\t' 'NR>1&&$1!~/^#/&&NF>1{print $7}' fixtures/client_flow_ledger.tsv 	 sort 	 uniq -c`）：
+#   **move 4 / partial 13 / keep 59（共 76 段）**；move 落在 **3 处代码改动**上
+#   （S06 与 S13 是同一个新出口，合并成一处）：
+#   * move：P15（联机 TickRequest 节奏）/ P39（联机倒计时）/ S13（`NewConnectionRequest` 两个版本串）
+#           / S06（7 条状态同步的名单与顺序）；
+#   * partial 13：P05 P09 P14 P16 P20 P25 P31 P34 P37 P43 P44 / S04 S08 —— 要么"判据已在 Rust、
+#     只剩编排/接线"，要么"搬了一半、另一半是**推断**"；每行 `missing_if_kept` 里点名缺什么。
+#
+# id	file	lines_pre	segment（这段在判断什么）	rust_side（文件:行 / 函数 + vaddr）	evidence	verdict	moved_to	missing_if_kept
+P01	play_screen.gd	1-28	文件头"几何/配色抄自 recoverd-src + 真帧"的对照表	—	视图	keep	—	给人读的对照表；搬进 Rust 只会变成第二份注释
+P02	play_screen.gd	378-397	`_ready()`：装平面节点、订阅、初始可见性	—	引擎	keep	—	节点装配与信号连接是引擎侧
+P03	play_screen.gd	398-535	`build()`：按原版 `play_screen.tscn` 的 106 节点补我方缺的那几个	`recovered-src/play_screen.tscn`（T44 已逐字节装上，本函数只补 tscn 里没有的运行期节点）	视图	keep	—	视图树
+P04	play_screen.gd	588-699	回放版式开关 `_set_replay_layout` / dump / 暂停图标	—	视图	keep	—	版式（T4/T51 已按真帧量过）
+P05	play_screen.gd	758-878	`begin_match()` 开局编排：三分支 → 清状态 → 建士兵/颜色 → 轮转 → 时钟 → 靶子/障碍 → 规则 → 状态机迁移	`GwTurnDriver.setup_flat`→`graphwar_turn_manager::PlayerTurns`(0x463da0) / `GwLevelRules.from_campaign`/`.from_versus`→`graphwar_play_screen_control::LevelRules`(0x473520) / `GwTurnClock.set_time_mode`→`TurnClock` / `GwTurnState.apply("game_started")`→`turnstate::next_state`	逐位（各判据）/ 自造（顺序）	partial	各判据都已在 Rust（T31 搬完）；只剩"先调谁后调谁"	**编排顺序没有证据**：原版这条在 `GraphwarGameClient::process` 主循环里，我方没有它的函数边界 ⇒ 顺序留 .gd
+P06	play_screen.gd	761-786	三分支决策（回放 / 联机 / 本地）与退回本地时的清理	—	自造	keep	—	原版是 `apply_show_screen`(0x3af850) 之后由 GameClient 决定读哪份数据；三个分支是我方的实现结构
+P07	play_screen.gd	786-800	士兵数：战役关取关卡数据的 `soldiers`，联机取玩家表	`graphwar_campaign_control::LEVEL_INFO`（T67/C05 已搬，`0x4ad380`）	逐位	keep	—	取值已经全部走 Rust（本段只是 `want = level.get("soldiers")` 的赋值与循环）
+P08	play_screen.gd	802-821	回合轮转装表 `_reset_turn_driver()`：`_soldiers` → 每玩家一张表	`src/_scaffold/play_flow_class.rs:373` `GwTurnDriver.setup_flat` → `graphwar_turn_manager::PlayerTurns::add/announce`	逐位	keep	—	**已搬（T31）**；本段只剩"摊平数据"，没有第二份轮转规则
+P09	play_screen.gd	822-837	`_time_left = GwModes.turn_seconds(...)` + `_turn_clock.set_time_mode`	`graphwar_play_screen_control::TurnClock::set_time_mode`（时长 = `graphwar_mode_manager::TimeMode::seconds()` × `TICKS_PER_SECOND`）	观测（时长来源 `docs/42` 抓包）	partial	`GwTurnClock`（已用）	`GwModes.TIME_SECONDS` 是 .gd 的第二份时长表（值恰好相同：[30,60,120,180,300,0] vs Rust 30/60/120/180/300/None）⇒ 联机侧那处使用随 P39 删掉
+P10	play_screen.gd	838-878	靶子位置（自定）/障碍（关卡模式）/胜负规则装配/`apply("game_started")`	靶子坐标：`—`（自造）；障碍生成：`docs/126` 内核生成器；状态机写点：`0x475bac`（root_node 侧，我方没有那台节点）	自造 / 推断	keep	—	**靶子坐标是自定值**（原版由关卡生成器随机放置，`docs/118` §8 #16）；`game_started` 的写点是我方选的**替身**位置
+P11	play_screen.gd	879-890	`end_match()` 收尾顺序：停时钟 → 清曲线 → 清弹道状态 → 拆联机订阅	`GwShotFlow.reset` / `GwTurnState.reset` / `GwBotTurn.disarm`（各自 Rust）	自造（顺序）	keep	—	同 P05
+P12	play_screen.gd	1121-1130	`_curve_active_tick()`：联机读 `room.active_ticks` 当揭示起点	`graphwar_function_manager::set_function_active_tick`(`0x456b80`) 已由 `_on_online_message` 喂进平面；`graphwar_plane::is_active_function`(0x3be5f6/0x4b67a0)	观测	keep	—	本段只给诊断/自检读表，不参与判定
+P13	play_screen.gd	1131-1141	`_replay_curve_tick()`：回放揭示量 = `回放tick − active_tick`，夹到 `0..揭完`	`graphwar_plane::is_active_function`（`0x4b67a0` 的 `30·(frac−active)` + `0x3be5f6` 的在场谓词）	观测	keep	—	回放相位由 `ReplayDriver`(Rust) 给 tick，本段只做减法；揭示量本体在平面（Rust）
+P14	play_screen.gd	1195-1219	`_drive_clock()`：三条时钟路径（联机真时钟 / 回放 tick / 本地墙钟）	`graphwar_plane::drive_frame`(0x516fd0→0x518400→0x518240→**0x519840**) + `set_fractional_tick`（T88 已接）	逐位（联机）/ 自造（本地墙钟）	partial	联机已接 Rust 定步时钟	**本地局仍是墙钟**（`_advance_curve(seconds)`），未接 `0x519840` 的 tick 轴 —— 已登记差异（`docs/06` §137），本轮不动（会动到 match_play 的揭示节奏）
+P15	play_screen.gd	1220-1233	`_online_poll_tick()`：**1 Hz 发 `TickRequest`** + 收到 `TickReply` 就把 tick 轴拨过去	`src/graphwar_tick_handler.rs:407` `GraphwarTickHandler::tick`（**0x519840**：`accum += 16_666_666 ns`、`tick += 1`、`tick % 60 == 0` 时再发 `TickRequest`；幻数 `imul 0xeeeeeeef`/`ror`/`cmp 0x4444444`）+ `:462` `handle_connected_to_server_event`（**0x519630**：不看载荷直接发一条）+ `:267` `TICKS_PER_REQUEST=60`	逐位	move	新增 `src/_scaffold/flow_clock_class.rs::GwFlowClock`（`connected()`/`drive(delta)`）	改前是**墙钟累加器**（`_tick_request_acc += delta`，满了 `fmod`）⇒ 节奏与 tick 计数**没有相位关系**，长帧后与 `0x519840` 的 `%60` 判据不同相
+P16	play_screen.gd	1851-1872	`_reset_shot_state()`：清一发/一局的中间态，并把 `_tick_request_acc` 推到门槛（模拟"连上就发一条"）	`GwShotFlow.reset`(Rust) / `GwTurnState.reset` / `GwBotTurn.disarm` / 平面 `remove_function`(0x498b70) —— 其余 Rust	自造（那行门槛）	partial	P15 的 `GwFlowClock.connected()`	那行 `_tick_request_acc = TICK_REQUEST_PERIOD` 是 `0x519630` 的**手写替身**；搬走后本段只留 Rust 的 `reset()*` 与视图清理
+P17	play_screen.gd	1873-1888	`_reset_turn_driver` / `_alive_flags`：把 `_soldiers` 摊成两张数组	`GwTurnDriver.setup_flat` / `next_shooter(alive)`（`0x463fb6` 的判活位 `& 1`）	逐位	keep	—	判活与轮转在 Rust；本段是数据摊平
+P18	play_screen.gd	1889-1910	`_begin_shot()`：把命中表交给弹道生命周期 + 状态机 `Activate`	`GwShotFlow.begin` → `graphwar_game_state_manager::ShotLifecycle`；`GwTurnState.apply("activate")` → `turnstate::next_state`	观测	keep	—	**已搬（T31/T84）**；本段只递参数
+P19	play_screen.gd	1911-1959	`_advance_presentation` / `_apply_shot_events`：按 Rust 吐的事件摆节点/播声	`GwShotFlow.advance/flush` → `ShotLifecycle::advance`	观测	keep	—	本段**不判断**，只按 `kind` 分派（死亡特效坐标来自 `docs/31` §3）
+P20	play_screen.gd	1960-1998	`_on_shot_arrived` / `_finish_round`：到达 → 炸 → 清曲线 → 判"要不要结算"	`GwShotFlow.settled()`（Rust 闩）/ `GwTurnState.apply("turn_ended")`	观测	partial	—	**收尾顺序是我方的**：原版"落地 → 结算 → 换手"的真实顺序无证据（弹道 tick 由 `0x4b67a0` 的揭示量隐式驱动）；本段把三条 `apply()` 的先后写死在 .gd
+P21	play_screen.gd	2034-2081	`_tick_bot_turn` / `bot_take_turn`：AI 思考倒计时 → 到点自己开火	`GwBotTurn` → `graphwar_play_screen_control::BotTurn`（我方自定）；瞄准串 `BotTurn::aim_expression`（自定）	自造	keep	—	**原版是 `aigen` 进化器，"AI 什么时候开火"没有观测**（`docs/16` §52.6 #3）⇒ 闸门搬 Rust 只为"判据一份"，不是复原
+P22	play_screen.gd	2082-2103	`_settle_round()`：回合 +1（Rust）+ 靶子复原 + 判胜负	`GwShotFlow.settle`（回合计数）/ `GwLevelRules.evaluate_soldiers`（`0x473520`）	逐位（判据）/ 推断（靶子复原）	keep	—	"打不全就全部复原"是**推断档**（`docs/123` §3.2），Rust 侧没有对应实现 ⇒ 不能搬
+P23	play_screen.gd	2104-2125	`_apply_target_reset()`：只翻 alive 位，不重建实体/不碰掩膜	—（形状结论见 `docs/123` §2.2/§4.3，无地址）	推断	keep	—	同上：判定点没找到（语料 397 份 0 次部分命中）
+P24	play_screen.gd	2126-2149	`_clip_to_obstacle()`：弹道在障碍处截断（只为绘制）	`plane::hit_test`（掩膜规则；与 `_resolve_shots` 同一条规则）	逐位（判定本体）	keep	—	只决定"画到哪一点"，判定已调内核
+P25	play_screen.gd	2150-2173	`_simultaneous_announced()`：本回合该交的玩家 = **每个还有活士兵的玩家**（公告顺序）	`graphwar_turn_manager.rs:840` `get_current_turn_players`（**0x4627c0**）：同时回合支 = 玩家表**全部键**（`0x46282c call 0x3c03b0` collect）；顺序支 = 单元素（`0x462846`–`0x46286f`）	观测	partial	—（本轮只登记，未改语义）	**两条判据不等价**：真值不按 alive 过滤，我方按。不给它接 deadline 就不能改（见下）
+P26	play_screen.gd	2174-2182	`_judge_shots()`：递 `_soldiers`/靶子表/障碍 + 射手下标，收命中表	`GwShotFlow.judge` → `graphwar_shot_calculator::settle::resolve_points_owned`（射手排除 `0x3c4452`/`0x3c3e81`）	逐位	keep	—	**已搬**；本段只递数据
+P27	play_screen.gd	2195-2210	`_resolve_shots()`：一批弹道一次性落地（同时回合/外部来弹/压平）	`GwShotFlow.land_all/abort`	观测	keep	—	同上
+P28	play_screen.gd	2214-2245	`_active_soldier()`：本地取 Rust 游标指定的士兵；联机取服务端 `TurnInfo.soldier_id`	`GwTurnDriver.current_shooter`（`PlayerTurns::current`）/ `0x463da0`	逐位（本地）/ 观测（联机）	keep	—	"轮到谁"在 Rust；本段把 id 域换成实体 id
+P29	play_screen.gd	2246-2271	`_next_turn()`：轮转（Rust）+ 换手后的副作用（时钟归零、AI 闸门、载函数、刷标签）	`GwTurnDriver.next_shooter`（`0x463f40`–`0x463fca`）/ `GwTurnClock.restart` / `GwBotTurn.arm`	逐位（轮转）/ 自造（副作用顺序）	keep	—	副作用顺序无证据；轮转本体已在 Rust
+P30	play_screen.gd	2285-2319	`_check_match_over()`：按关卡类型判一局结束 + 状态机 `game_ended` + `report_match_result`	`GwLevelRules.evaluate_soldiers` → `0x473520`（枚举生命表 → `0x454950` 判活 → `0x3c2120` 查队伍）/ `turnstate::next_state`（`0x475bac` 写点）	逐位（判据）	keep	—	**已搬**；本段只是把 verdict 落到界面与回调
+P31	play_screen.gd	2459-2540	`_begin_replay()`：装载录像 + 记首帧 tick + 重建局面	`GwReplayDriver`/`ReplayDriver`（T72 归一，`0x4c6f40` 的时钟已由 `advance_dt` 承担）	观测	partial	—	装载顺序（读文件 → 载 tick → 建局面 → 画）是我方的；原版 `GraphwarReplayScreenControl::process`(0x4c6f40) 只解出**时钟**，装载序列未解
+P32	play_screen.gd	2570-2583	`_replay_tick()`：每帧推进 = Rust 驱动报告 → 重摆脏层	`GwReplayDriver.advance_dt` → `_scaffold/replay_driver.rs::drive_frame`（定步 `NANOS_PER_TICK`）+ `mark_dirty`	观测	keep	—	**已搬（T72/T4）**；本段只看三个 `dirty_*` 标志
+P33	play_screen.gd	2768-2786	`_on_replay_button()`：▶/⏮/⏭ 的命令分派	`ReplayDriver::{pause,toggle_pause,seek_*}`（`0x3d61a0`/`0x3d6a40`/`0x3d68b0`/`0x3d6bb0`，T95 已落码）	观测	keep	—	命令名 → 方法名的映射是我方界面层
+P34	play_screen.gd	2884-2925	`_begin_online()`：联机开局编排（订阅 → 清状态 → 重建士兵/障碍/靶子 → 应用 TurnInfo → 版式）	`GwTurnState` / `GwTurnClock` / `GwBotTurn` / `GwLevelRules` 各自 Rust；`set_turn`(0x4638f0) 未接（见 P37）	自造（顺序）	partial	—	与 P05 同：编排顺序无证据；但**每一段被编排的判据**都已在 Rust
+P35	play_screen.gd	2926-2961	`_online_teardown` / `_online_subscribe`：信号断开/重连（幂等）	—	引擎	keep	—	`Signal.is_connected/connect` 是引擎侧
+P36	play_screen.gd	2984-3034	`_build_online_soldiers()`：服务端 `entities` → 界面 `_soldiers`（含颜色/名字回退链）	实体表本体：`net_events_class` → `entity_manager`/`name_mgr`/`color_manager`（T17 已接）	观测	keep	—	本段是"表 → 界面行"的投影；`assign_colors` 是自定（`docs/139` §6 已登记）
+P37	play_screen.gd	3118-3141	`_apply_online_turn()`：服务端 `TurnInfo` → 当前射手 + 本人函数原文	`graphwar_turn_manager.rs:804` `TurnManager::set_turn`（**0x4638f0**：出场序表定位/追加 `0x463957`/`0x463a77`，士兵 0 走删记录 `0x463a8b`，否则公告 `0x463bc6`，发 `TurnInfo` `0x463c09`）	观测	partial	—	**写入点未接**：`set_turn` 已在 Rust 且逐条解出，但联机侧没有 `TurnManager` 实例（我方回合表是 `GwTurnDriver` 的 `PlayerTurns`，形状不同）⇒ 本轮只登记
+P38	play_screen.gd	3142-3152	`_online_can_fire()`："轮到我了吗"（三条：射手未知/我不知道我是谁/严格比对）	`graphwar_turn_manager.rs:895` `is_on_turn`（**0x462b50**，FDE `0x462b50..0x462c07`）	观测	keep	—	**不能当复原用**：`is_on_turn` 的唯一调用点是 `EntityDrawer::draw`（`0x4b31ac`），语义是"这个实体在回合上"（画准备圈那类），**不是**"我能发 Fire"；原版 Fire 按钮的可用判据**未知** ⇒ 本段标注为**自造**，不搬
+P39	play_screen.gd	3153-3165 + 3515-3532（联机分支）	`_online_tick()` + 联机倒计时标签：**墙钟**每秒 `_time_left -= delta`	`src/_scaffold/play_flow_class.rs:1209` `GwTurnClock` → `graphwar_play_screen_control::TurnClock`（`advance` 按 `TICKS_PER_SECOND` 折 tick、`seconds_left` = 时长 − 已过 tick；自动开火三合取项 `0x470989`–`0x4709ec`）	观测（时长 `docs/42`）/ 逐位（tick 折法）	move	`GwTurnClock`（沿用既有类，不新增）	改前联机**根本不配 `_turn_clock`**（`begin_match` 的联机分支提前 return）⇒ 倒计时是与 Rust 时钟平行的第二份实现，且用墙钟而非 tick
+P40	play_screen.gd	3166-3189	`_fire_online()`：只发 `SubmitFunction` + `Fire` 两条请求	`_scaffold/protocol.rs` 的 wire 规格（T16/T75 已核）；判定/生死/回合在服务端	观测	keep	—	"先 submit 再 fire"的顺序是 `docs/24` 的观测；本段不重算任何语义
+P41	play_screen.gd	3190-3299	`_on_online_message()`：11 条事件的**视图分派**（重摆/画特效/应用 TurnInfo/收场标记）	`net_events_class.rs`（事件 → manager 的证据表，T17）；收场 = `GameStateInfo{EndingGame}`（`docs/06` §77）	观测	keep	—	"事件 → 重摆哪一层"是视图动作；事件语义已喂 Rust
+P42	play_screen.gd	3336-3409	`_draw_online_shot` / `_truncate_path_at_x` / `_stop_before_end`：按服务端 `start/end_x` **复算**弹道并截断	`GwCore.calculate_path`（`math_function` 0x4ed670/0x4eb9d0 + 采样器）/ `settle::resolve_points`（服务端停点规则）	观测	keep	—	**复算是策略**（服务端只发三点）；截到 `end_x` 的容差（一个弦长）是我方约定（`docs/139` §4）
+P43	play_screen.gd	3475-3514	`_process()`：帧序编排（时钟 → 回放/弹道表现 → 联机/本地时钟 → AI → 超时判据）	各判据在 Rust（`GwTurnClock.decide`/`GwBotTurn.tick`/`GwShotFlow.advance`）	自造（帧序）	partial	—	**帧序本身无证据**：原版是 `process` 一条主循环（`0x515dc0`），我方没有它的函数边界 ⇒ 顺序留 .gd
+P44	play_screen.gd	3515-3532	`_update_timer_label()`：本地读 Rust `seconds_left()`、联机读 `_time_left`	`GwTurnClock.seconds_left`（Rust）/ `TimerInf` ⇒ 空串（观测：`orig_campaign_play.png` 左下空白）	观测	partial	联机分支随 P39 删掉	改后**只剩一条**取数路径（都问 Rust）
+A01	app.gd	150-178	`show_screen()`：可见性决策 + 广告分支 + 进/出 `PlayScreen` 的 deferred	`graphwar_root_node::apply_show_screen`（**0x3af850**；T67 已搬，`GwRootNode.show_plan`）；广告：`0x3a7bed` 传 `true`	逐位/观测	keep	—	**已搬（T67）**；本段只把 plan 落到节点上。⚠️ 广告那条仍是**恒 false**（我方没有 `AdHolder` 节点，`docs/118.6`）
+A02	app.gd	179-197	弹窗开/关与"换基础屏就全关"	—	自造	keep	—	**已知模型分叉**（T67/§118.6）：原版是"单可见"，我方是叠层；像素等价但节点 visible 不同 ⇒ 登记未改
+A03	app.gd	198-215	`_on_screen_entered()`：进屏回调 + 进 `PlayScreen` 时对齐静音	`graphwar_audio_control`（T58 已搬）	引擎	keep	—	节点回调
+A04	app.gd	438-445	`_start_game()`：不能开局就静默（额外提示是**有意偏离**）	—	自造	keep	—	`docs/108` §7 已登记偏离
+A05	app.gd	446-465	`_start_level()`：取关卡数据 → 写四个模式 → 加人类/Bot → 进对局	`graphwar_campaign_control::LEVEL_INFO`（`0x4ad380`）/ `graphwar_level_manager`	逐位（数据）	keep	—	数据已全部来自 Rust（T67/C05）；本段是赋值与切屏
+A06	app.gd	466-471	`_begin_match()`：先 `show_screen("PlayScreen")` 再 `begin_match()`	`apply_show_screen`(0x3af850)	自造（顺序）	keep	—	**"先显示再初始化"没有证据**；原版 init 在节点 `_ready`/`initialize` 链里（未解）
+A07	app.gd	557-566	`_on_net_joined()`：握手完成后 **关窗 → online=true → `_sync_state_from_net()` → `_begin_match()`**	—	自造（顺序）	keep	—	同 A06：握手后初始化顺序无证据（原版在 `GraphwarGameClient` 的主循环里）
+A08	app.gd	567-579	`_on_net_game_started()`：再 sync 一次 + 已在 `PlayScreen` 就重建战场	—	自造	keep	—	原版开局批（障碍/士兵/位置/轮到谁）到达后由 manager 各自更新；我方用"重建整屏"顶替
+A09	app.gd	580-588	`_on_net_join_failed()`：关 ConnectingPopUp → 开 DisconnectedPopUp	—	引擎/视图	keep	—	窗口切换
+A10	app.gd	589-611	`_on_net_disconnected()`：同上 + 在 `PlayScreen` 就 `end_match()`	`graphwar_client_connection_handler::tick` 的断开路径（T52 已落码）	视图	keep	—	窗口切换 + 收尾函数调用
+A11	app.gd	612-637	`_on_net_ended()`：三件事顺序 ①算胜负写 `last_result` ②开 `EndGamePopUp` ③放胜负音效（不动战场/不关连接）	`turnstate::winner_byte`（`0x478133`–`0x478236`，经 `GwEndGame`）	观测（`docs/06` §77/§68.4 真帧）	keep	—	**顺序是观测来的**（真帧：收场三条之后画的就是结算框），但"先算后开"是我方的实现约束 ⇒ 留 .gd
+A12	app.gd	716-753	`_sync_state_from_net()`：`room` → `state`（模式串→索引、玩家表、名字回退）	`GwNetSession.*_index()`（`GwModes` 枚举）/ `protocol.rs` 的 wire 值表	自造（映射）	keep	—	**模式串 ↔ 索引表是自造**：原版是 `enum` 的 Serialize/Deserialize（`docs/06` §103 定案 `game_state` 是枚举），我方用下标近似 ⇐ 已登记，本轮不改（会动 5 个屏）
+A13	app.gd	754-771	`_looks_like_host_port()`：地址必须 `host:port` 且 port 1..65535	—（观测 `docs/92` §4.7：只写 IP 时原版毫无反应）	观测	keep	—	**Rust 侧没有这条**：原版那一步是 `TcpStream::connect_timeout` 的入参解析，判定点未解
+A14	app.gd	825-857	`_align_play_mute_once` / `_apply_mute_to_screen` / `_process`	`graphwar_audio_control`（T58）	观测	keep	—	只调 Rust 的音频层
+A15	app.gd	638-709	`online_result()` / `_winner_byte` / `_winner_team_of`：把"每队还有没有活实体"翻成胜方字节	`turnstate::winner_byte`（`0x478133`–`0x478236`，经 `endgame_class::GwEndGame`）+ `0x473520` get_alive_teams	逐位（判据）/ 推断（`turn_limit_set` 那一格）	keep	—	**已搬**；本段只数"有没有活实体"（`room.entities` 是生命表的镜像）并做界面取队
+A16	app.gd	945-977	`_online_victory_winners()`：胜方队伍 → 结算框要画的玩家实体列表	`endgame_class`（T58 已搬结算数学）/ `get_node_by_name_rec` 那条命名链（T95 已落码 `0x3db3e0`）	观测	keep	—	节点命名链在 Rust；本段按队伍过滤实体
+S01	session.gd	109-149	`_reset_room()`：会话侧 `room` 模型的那几张表（玩家/实体/靶子/队伍/名字/外观/颜色/特效/弹道/tick）	`net_events_class.rs` 派发到 manager（T17）；表本身的**形状**是我方选的	自造（形状）	keep	—	这是"线上事件 → 我方模型"的会话层；语义已喂 Rust，本表只是容器
+S02	session.gd	150-170	`start()`：建 link → 连 → 发 `NewConnectionRequest`	`graphwar_client_connection_handler::connect`（**0x45a340**，T52 已落码）/ `connect_thread`（`0x438880`，`CONNECT_TIMEOUT_SECS=30` 逐位）	逐位（连接层）/ 引擎（信号）	keep	—	连接状态机在 `GwClientLink`（T67）；本段是会话级装配
+S03	session.gd	171-179	`poll()`：推进 link + **握手超时 5.0 s** ⇒ `_fail`	—	自造	keep	—	**5.0 s 没有真值**（原版没有可观测的握手超时；`docs/06` §135 已把这句写成"本项目选择"）⇒ 不许假称复原
+S04	session.gd	180-225	link 四个信号 → 会话 `phase`（8 态：idle/connecting/handshaking/joined/started/ended/closed/failed）	`graphwar_client_connection_handler::ConnectionState` 4 态（T52 落码；`tick` 闩锁 `0x48b488`）	观测	partial	`GwClientLink`（已用，T67）	8 态里只有"连接层"那 4 个有 Rust 对应；`joined/started/ended` 是**会话层**（原版对应 `GraphwarGameClient` 的哪一步未知）⇒ 留 .gd
+S05	session.gd	226-238	`_on_frame()`：解析 → `_note` → `_apply` → 发信号 → 判 joined	`_scaffold/protocol.rs`（`GwNetFrame.parse_message` 已按 T75 严格化）	观测	keep	—	收帧顺序是我方的（先落模型再发信号，P41 依赖这个顺序）
+S06	session.gd	239-259	`_note()`：消息名记账 + 7 条状态同步打点	`graphwar_server_connection_handler::on_new_connection`（7 条同步的**真值名单与顺序**，`state_sync_matches_captured_bytes` 逐字节 + `docs/33`）	逐位（名单/顺序）/ 观测（归属）	move	`GwFlowClock.state_sync_kinds()`（同一新类，取值来自 Rust）	改前 `STATE_SYNC_KINDS` 是**第二份名单**（`wire_samples.gd::STATE_SYNC` 抓包原文之外的第三份）；名单与顺序在 Rust 侧是逐字节真值
+S07	session.gd	260-476	`_apply()`：27 条事件 → `room` 各表（含 GameStateInfo 收场、TurnInfo/TurnCount/EndOfTurn/TickReply、Function*/Effect/Obstacle）	`net_events_class.rs`（事件语义）；收场 = `graphwar_game_state_manager::set_state`（`0x4780cc` 写 `[self+0x120]`）	观测	keep	—	**语义已喂 Rust**（`_feed_managers` 先跑）；本段是会话级模型更新，不许改判据
+S08	session.gd	477-500	`_end_session()`：收场**只发生一次** + 发 `ended` + `phase="ended"`（让断线分支 return）	`graphwar_game_state_manager::set_state(EndingGame)`（`0x4780cc`/`0x475bac`）；"只一次"是信号层约束	观测	partial	—	原版没有"会话 ended 信号"这一层（收场=状态字节 + 结算框）；幂等闩是我方为防重复弹窗加的（**保留**，但别当成复原）
+S09	session.gd	530-628	`_feed_managers()`：一条事件 → `GwNetEvents` 对应方法（一事件一行，参数顺序 = `WIRE_SPEC`）	`net_events_class.rs`（T17）	观测	keep	—	**桥本身**：原版那条 `GraphwarRemoteEventHandler::handle_server_remote_event`（`0x3e6df0`）我方没复元 ⇒ 这层是非搬不可的替身，已登记
+S10	session.gd	716-724	`_can_join_by_state_sync()`：`NewConnection` 到过 + 7 条全到齐才进屏	—	自造	keep	—	**进屏门是我方定的**（T84 删掉 `_can_join_by_idle` 兜底后只剩这一条）；原版"什么时候算加入完成"没有观测 ⇒ 保留并标注
+S11	session.gd	725-739	`_mark_joined()`：发 `NewPlayerRequest`（默认）+ `GameStartRequest`（`auto_start`，**明确偏离**）	`NEW_CONNECTION_REQUEST_MAJOR/MINOR`/协议 tag（`protocol.rs` WIRE_SPEC）	自造（`auto_start`）/ 观测（`NewPlayerRequest` 时机 `docs/24` §3）	keep	—	`auto_start` 是"我方服务端不实现开局"的**有意偏离**（文件头已写）；不许搬进 Rust 冒充原版
+S12	session.gd	740-748	`_mark_started()`：首条 `TurnInfo` 或 `EndOfTurnInfo` ⇒ `game_started`	—	自造	keep	—	"开局那一批的边界"用两个事件名近似（我方无真值）
+S13	session.gd	815-820 + 66-72	`STATE_SYNC_KINDS`（7 条名单）+ `send_new_connection_request()` 的两个版本串（`"2.0"`/`"60"`）	`graphwar_server_connection_handler.rs:150` `on_new_connection`（7 条，逐字节）/ `graphwar_client_connection_handler.rs:304-305` `NEW_CONNECTION_REQUEST_MAJOR="2.0"`/`MINOR="60"`（arm64 `0x4693c0`：`mov w9,#0x2e32`/`mov w8,#0x30`、`mov w9,#0x3036`）	逐位	move	`GwFlowClock.state_sync_kinds()` / `new_connection_request()`	两处都是 .gd 在自己抄真值：名单是第三份、版本串是第二份
+S14	session.gd	821-834	`send_new_player_request` / `send_start_game` / `send_tick_request`	协议 tag 与空体（`protocol.rs` WIRE_SPEC）	观测	keep	—	载荷是常量；`TickRequest` 的**节奏**在 P15 搬
+S15	session.gd	835-850	`submit_function` / `fire`：两条请求的载荷（`owner_id`/`function`）	`protocol.rs` WIRE_SPEC（字段序）+ 服务端 `Match::fire`	观测	keep	—	载荷形状已按抓包；本段不重算
+S16	session.gd	851-886	五个 `*_index()` 静态映射：线上模式串 → 我方枚举下标	`protocol.rs` 的 `WIRE_VALUE_ENUMS` / `events.rs` 的 `GameState`（原版是枚举 Serialize/Deserialize）	自造（下标近似）	keep	—	与 A12 同一条：真值是**枚举**，我方用下标当替身（`docs/06` §103 已定案）⇒ 换真值要动 5 个屏，超本轮范围

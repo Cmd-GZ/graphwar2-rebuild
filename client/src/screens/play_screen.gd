@@ -226,9 +226,6 @@ var _last_verdict := {}
 var _layout_override := {}
 var _functions := {}                            # player_index -> String
 var _active := 0
-## 联机 / 回放共用的倒计时秒数（**只给排版与联机那条路用**）。
-## 本地回合的时钟在 Rust：`GwTurnClock`（`0x470989` 的三个合取项，`docs/16` §53）。
-var _time_left := 0.0
 var _shot_queue: Array[Dictionary] = []         # 同时回合制下本轮的弹道
 var _show_names := true
 var _show_function_overlay := false
@@ -256,6 +253,8 @@ var _judged: Dictionary = {}
 var _flow := GwShotFlow.new()
 ## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
 var _turn_clock := GwTurnClock.new()
+## `TickRequest` 的节奏时钟（Rust：`GraphwarTickHandler`，`0x519840` / `0x519630`）。
+var _flow_clock := GwFlowClock.new()
 ## **对局状态机本体**（8 个 `GameState`，原版是 `[self+0x120]` 那一个字节）。
 ##
 ## 迁移表在 Rust（`GwTurnState` → `src/turnstate.rs::next_state`），本屏只**发事件、问状态**。
@@ -830,7 +829,6 @@ func begin_match() -> void:
 	_active = 0
 	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		_active = int(_soldiers[_active_soldier_idx].player)
-	_time_left = float(GwModes.turn_seconds(st.time_mode))
 	_running = true
 	_set_axis_mode(int(st.axis_mode))
 	_refresh_mode_indicators()
@@ -1213,17 +1211,20 @@ func _drive_clock(delta: float) -> void:
 ## `TickRequest`（`current_tick % 60 == 0`），服务端回 `TickReply{current_tick}`；
 ## 客户端的 tick 轴**就是**这样对齐到服务端的（`docs/06` §60.2.1，`tools/match_serve.py`
 ## 也是照这个行为实现的）。`FunctionActive.active_tick` 就长在这条轴上。
-const TICK_REQUEST_PERIOD := 1.0
-var _tick_request_acc := 0.0
+## `TickRequest` 的节奏（T99 / `docs/06` §144）：真值 `GraphwarTickHandler::tick`（**`0x519840`**）
+## = 每 tick `accum += 16_666_666 ns`，**`tick % 60 == 0`** 时再发一条；连上时那条走
+## `handle_connected_to_server_event`（**`0x519630`**，不看载荷）。改前是自造的墙钟累加器
+## （`_tick_request_acc += delta`）⇒ 与 tick 计数无相位关系。现在判据只在 Rust（`GwFlowClock`）。
 var _online_tick_synced := -1
 
 func _online_poll_tick(delta: float) -> void:
 	if _online_session == null:
 		return
-	_tick_request_acc += delta
-	if _tick_request_acc >= TICK_REQUEST_PERIOD:
-		_tick_request_acc = fmod(_tick_request_acc, TICK_REQUEST_PERIOD)
+	var due := int(_flow_clock.drive(delta))
+	for _i in due:
 		_online_session.send_tick_request()
+	# 收到 `TickReply{current_tick}` 就把 tick 轴拨过去（原版客户端对齐服务端 tick 轴那件事；
+	# 平面 `set_fractional_tick` 的读法见 `docs/06` §60.2.1 / §137）。
 	var cur := int(_online_room().get("current_tick", -1))
 	if cur >= 0 and cur != _online_tick_synced:
 		_online_tick_synced = cur
@@ -1860,10 +1861,12 @@ func _reset_shot_state() -> void:
 	if _effects != null:
 		_effects.clear()
 	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
-	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。累加器直接推到"该发"的门槛上：
-	# 原版连上服务器时会立刻发一条 `TickRequest`（`handle_connected_to_server_event`
-	# `0x519630`，不看载荷），所以第一条也该在第一帧就发出去，而不是等满 1 s。
-	_tick_request_acc = TICK_REQUEST_PERIOD
+	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。原版连上服务器时会**立刻**发一条
+	# `TickRequest`（`handle_connected_to_server_event` **`0x519630`**，不看载荷）⇒ 这里调
+	# `GwFlowClock.connected()` 那一下，而不是把某个累加器推到门槛上当替身（改前就是那样）。
+	_flow_clock.reset()
+	if _online_mode and _online_session != null and int(_flow_clock.connected()) > 0:
+		_online_session.send_tick_request()
 	_online_tick_synced = -1
 
 ## 把 `_soldiers` 摊成"每玩家一张士兵表"，交给回合轮转（`docs/143` §6）。
@@ -2896,7 +2899,6 @@ func _begin_online(app_node) -> void:
 	_destroyed_this_shot.clear()
 	_last_verdict = {}
 	_reset_shot_state()
-	_time_left = 0.0
 	_clear_curve()
 	_sync_entities()                  # 服务端的 `Match` 里只有士兵，没有靶子（docs/117）
 	_rebuild_pid_index(room)
@@ -2911,6 +2913,10 @@ func _begin_online(app_node) -> void:
 	_rules = GwLevelRules.new()
 	_rules.from_versus(_human_team())
 	_set_axis_mode(int(app_node.state.axis_mode))
+	# 回合时钟（T99 / `docs/06` §144）：改前联机分支在 `begin_match()` 里提前 return ⇒
+	# `_turn_clock` **一次都没配过**，联机倒计时是与它平行的第二份实现（墙钟 `_time_left`）。
+	# 现在档位来自服务端状态同步（`TimeModeInfo` → `state.time_mode`），秒数由 Rust 给。
+	_turn_clock.set_time_mode(int(app_node.state.time_mode))
 	_refresh_mode_indicators()
 	_refresh_plane()
 	_load_active_function()
@@ -3120,9 +3126,8 @@ func _apply_online_turn(room: Dictionary) -> void:
 	_online_turn_player = int(turn.get("player_id", -1))
 	_online_soldier = int(turn.get("soldier_id", -1))
 	_active = int(_pid_index.get(_online_turn_player, 0))
-	var app_node := app()
-	if app_node != null:
-		_time_left = float(GwModes.turn_seconds(app_node.state.time_mode))
+	# 新回合 ⇒ 计时归零（`TurnClock::restart`；时长档位来自服务端 `TimeModeInfo`）。
+	_turn_clock.restart()
 	# 服务端已经记着的函数原文（`FunctionInfo.owner_id` = **soldier_id**，`docs/24` §4.5）
 	var fns: Dictionary = room.get("functions", {})
 	for owner in fns:
@@ -3150,15 +3155,13 @@ func _online_can_fire() -> bool:
 
 ## 联机下的时钟：只走数、不换手。换手是服务端 `TurnInfo` 的事 ——
 ## 本地那条"到点自动换手"（`_process` 的另一半）在这里会让两个真相源打架。
+##
+## 倒计时**不是**我方的墙钟（T99 / `docs/06` §144）：改前是 `_time_left -= delta`，与
+## `GwTurnClock` 平行；现在推进 Rust 的 `TurnClock`（`graphwar_play_screen_control`）——
+## 它按 `TICKS_PER_SECOND` 把秒折成 tick、`seconds_left()` = 时长 − 已过 tick，
+## 时长来自 `graphwar_mode_manager::TimeMode::seconds()`（`docs/42` 抓包实证 30/60/120/180/300）。
 func _online_tick(delta: float) -> void:
-	var app_node := app()
-	if app_node == null:
-		return
-	var limit := GwModes.turn_seconds(app_node.state.time_mode)
-	if limit <= 0:
-		_update_timer_label()
-		return
-	_time_left = maxf(0.0, _time_left - delta)
+	_turn_clock.advance(delta)
 	_update_timer_label()
 
 ## 联机开火：**只发两条请求**，弹道与服务端算。判定/生死/回合全在服务端
@@ -3242,8 +3245,12 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 			_apply_online_turn(_online_room())
 			_status(_online_status_text())
 		"EndOfTurnInfo":
-			# 本客户端还没发 `TickRequest`（`room.current_tick` 恒 0），所以只记下来，
-			# 倒计时仍按墙钟走（`docs/139` §7 记为未做）。
+			# ⚠️ T99 更正：这里原来写着"本客户端还没发 `TickRequest`（`room.current_tick` 恒 0）"
+			# —— **那句从 T88 起就不成立了**：`_online_poll_tick()` 按 `0x519840` 的 `tick%60`
+			# 发 `TickRequest`，`TickReply` 在 `session.gd::_apply` 里写 `room.current_tick`。
+			# 所以下面这行打印的"当前 tick"是真的。
+			# **仍未做**：倒计时改用服务端 tick 轴（`end_of_turn_tick − current_tick`）；
+			# 现在走 Rust `TurnClock` 的"本回合已过 tick"轴（两者只差一个常量偏移，`docs/144` 遗留）。
 			_status("联机：本回合截止 tick %d（%s）／当前 tick %d" % [
 				GwNetFrame.body_int(body, "end_of_turn_tick", 0),
 				GwNetFrame.body_str(body, "time_mode"),
@@ -3518,12 +3525,7 @@ func _update_timer_label() -> void:
 	var app_node := app()
 	if app_node == null:
 		return
-	# 联机：倒计时是本地那条 `_time_left`（换手与否归服务端，本屏只显示）。
-	if _online_mode:
-		var limit := GwModes.turn_seconds(app_node.state.time_mode)
-		_timer_label.text = "" if limit <= 0 else GwModes.format_clock(_time_left)
-		return
-	# 本地：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
+	# 本地与联机**同一条**路径：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
 	var left := _turn_clock.seconds_left()
 	_timer_label.text = "" if left < 0.0 else GwModes.format_clock(left)
 
