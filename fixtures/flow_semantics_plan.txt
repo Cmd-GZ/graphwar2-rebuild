@@ -1,0 +1,264 @@
+# fixtures/flow_semantics_plan.txt —— T104 客户端流程层四条语义遗留的**预注册判据**
+#
+# 作者：T104（分支 agent/flow-semantics，工作树 .agent-work/cg/wt-t104）
+# 日期：2026-11-28
+# 状态：**先于任何代码改动**提交（本文件的 commit 之后的改动才计入本轮）
+#
+# ⚠️ 任务书的节号有一处错：四条遗留实际写在 `docs/06` **§144.6 #1–#4**（T99 / `agent/client-flow`），
+#    不是 §146.6（§146 是 T100 的像素遗留）。本文件与 docs/06 §148 都按 §144.6 引用。
+#
+# 铁律（继承 T82 `fixtures/f3_triage_plan.txt` §1、T97/T98 的做法）：
+#   * 判据**先写死**，跑完不许为了让结论好看而改口径；发现写错只能**追加勘误**（§7），不删原文。
+#   * 每条结论必须标证据档：逐位 / 观测 / 推断 / 未知。指不到地址或真报文的，写"缺什么"。
+#   * 地址口径一律 **ELF vaddr**（= 模块内偏移 = RVA）；Ghidra/REA 文本里的地址要 **减 0x100000**。
+#   * `cargo test` / `selftest` 通过只是回归保护，**不构成复原证据**。
+
+## 0. 一页总表（预注册：本轮对四条各承诺到什么程度）
+
+| # | 遗留（§144.6） | 本轮承诺 | 判据落点 | 做不成的处置 |
+|---|---|---|---|---|
+| ① | `RoundCollection::expired` / `should_resolve(now_tick)` 兜底没接 ⇒ P25 搬了会死锁 | **接上 deadline + 单测 + 证明不死锁**（P25 规则本身本轮不搬） | §2（P1-*） | 若接完仍不能证明"不死锁"⇒ 撤销接线，只留判据与死锁复现 |
+| ② | `TurnManager::set_turn`（0x4638f0）未接 | **给出签名/写入目标/能不能接的结论**；能接就接（每处单独 commit） | §3（P2-*） | 接不上就写清缺哪一样前提（缺的东西要指到具体类/函数） |
+| ③ | `GraphwarPlane::drive_frame` 丢发件箱 ⇒ 两台同源时钟 | **一台时钟**：平面把 tick 产出计数暴露出来，`GwFlowClock` 不再自己握一台 | §4（P3-*） | 若归一后 `TickRequest` 条数序列变了 ⇒ 记录差在哪，先不删旧路径 |
+| ④ | 联机倒计时在"本回合已过 tick"轴，不是服务端绝对 tick 轴 | **把换算轴改对**（`end_of_turn_tick − now_tick`，同一 60Hz 轴） | §5（P4-*） | 若原版轴其实不是绝对轴 ⇒ 只登记证据，不改代码 |
+
+**本轮不碰**（写范围外）：`src/graphwar_nodes.rs`、`src/player_showcase.rs`、`src/entity_drawer.rs`、
+`src/graphwar_backend.rs`、`src/graphwar_game_recorder.rs`（t101/t102/t103 在做）、`src/_scaffold/protocol.rs`、
+门槛/护栏/停帧表（`fixtures/frame_diff_thresholds*.txt`、`fixtures/guardrails.json`、`fixtures/frame_capture_freeze_plan.txt`）。
+`src/graphwar_plane.rs` **只动 `drive_frame` 里的时钟转发那 1 处**（t102 也在动这个文件）。
+
+---
+
+## 1. 名词与轴（这四个判据全都要用，先钉死）
+
+* **tick 轴**：60 Hz，`NANOS_PER_TICK = 16_666_666`（`src/graphwar_tick_handler.rs`），
+  由 `GraphwarTickHandler::tick`（x86 **`0x519840`**）推进：`accum += 16_666_666 ns; tick += 1`。
+* **`GraphwarTickHandler.current_tick`**：载荷 **`+0x40`**（`0x4b6317 mov 0x58(%rbp),%ebx`，
+  `rbp` = RefCell 借用守卫 ⇒ 载荷在 `rbp+0x18` ⇒ `rbp+0x58` = 载荷 `+0x40`）。
+* **`end_of_turn_tick`**：服务端 `EndOfTurnInfo` 的字段（线上 i64，`docs/07` §3.3），
+  语义 = 这一回合的截止时刻（`docs/14` §3.2 回归：`end ≈ 回合开始 tick + 时长`）。
+* **"本回合已过 tick"**：我方 `TurnClock` 自己积出来的量（`advance(delta)` 折 tick）。
+
+---
+
+## 2. ① `RoundCollection::expired` / `should_resolve(now_tick)`
+
+### P1-1 判据源（预注册：这就是"有人不交怎么办"的指令级出处）
+
+`Match::handle_tick`（x86 **`0x470840`**，我方 `src/game.rs` 的 `handle_tick`）第二段
+（`docs/14` §11.3 已记这一段，本轮**逐条复核**）：
+
+```text
+0x470989  cmp  byte ptr [rbx+0x120], 2   ; ① 状态 == WaitingForFunctions(2)
+0x470990  jne  0x4709fb                  ;    否则跳走
+...
+0x4709ce  call 0x462ec0                  ; TurnManager::get_end_of_turn_tick → Option<u32>
+0x4709d7  cmp  eax, 1                    ; ② Option 判别 == 1(Some)
+0x4709da  jne  0x4709f1                  ;    None ⇒ 不结算（TimerInf 档）
+0x4709dc  cmp  ebp, edx                  ; ③ ebp = now_tick, edx = end_of_turn_tick（u32）
+0x4709de  jb   0x4709f1                  ;    now < end ⇒ 跳过；**continue ⇔ now >= end**
+0x4709e0  cmp  byte ptr [rbx+0x11c], 0   ; ④ "有人在等"(+0x11c) != 0
+0x4709e7  je   0x4709f1
+0x4709e9  mov  rdi, rbx
+0x4709ec  call 0x470eb0                  ; ⑤ fire_functions：把**已提交的**打出去 = 按现有内容结算
+```
+
+### P1-2 边界（预注册：`>=` 不是 `>`）
+
+`jb`（unsigned below）在 `now < end` 时跳过 ⇒ **触发条件是 `now_tick >= end_of_turn_tick`**。
+`RoundCollection::expired` 现行实现 `matches!(self.deadline, Some(d) if now_tick >= d)` **边界已经一致**
+⇒ 本轮**不改边界**，只接 deadline。验收断言必须钉住 `now == deadline` ⇒ true、`now == deadline-1` ⇒ false。
+
+### P1-3 轴的选择（预注册）
+
+原版 `now_tick` 与 `end_of_turn_tick` 在**同一条轴**上（同一台 `GraphwarTickHandler` 的 60 Hz 计数）。
+我方本地局没有服务端 `EndOfTurnInfo`（本地 `Match` 在 Rust 里），`GwTurnClock` 只积"本回合已过 tick"
+⇒ 我方接线用**同轴等价的差值形式**：`deadline = TurnClock::turn_duration_ticks()`，
+`now_tick = 本回合已过 tick`（`TurnClock::advance` 的累加值）。两者同减一个常量 ⇒ 比较结果逐位等价。
+**在线局不用这条**（在线局的截止由服务端 `EndOfTurnInfo` 给，见 §5 的 `P4-*`）。
+
+### P1-4 接线面（预注册）
+
+| 层 | 改动 | 为什么是这里 |
+|---|---|---|
+| `src/_scaffold/play_flow_class.rs` | `round_open()` 增可选 `deadline`（tick）；新增 `round_should_resolve(now)` / `round_expired(now)` | `RoundCollection` 的**唯一** GDScript 可见面就在这个类（`GwTurnDriver`）；`RoundCollection::deadline` 字段是私有的，没有别的注入点 |
+| `client/src/screens/play_screen.gd` | 同时回合支：开轮时传 deadline；每帧 + 每次 `round_submit` 后查 `round_should_resolve(已过 tick)`，真就结算 | 结算的编排本来就在 `.gd`（`_commit_shot`） |
+
+⚠️ `src/_scaffold/play_flow_class.rs` **不在**任务书的字面写范围（那里只列了 `flow_clock_class.rs` /
+`graphwar_function_manager.rs`）。理由是：`RoundCollection::new(ids, None)` 的**唯一**调用点就在它里面，
+而 `deadline` 字段私有、`graphwar_function_manager.rs` 里没有任何 `RoundCollection` ⇒ 要在任务书允许的文件里
+落 deadline，只能到这个文件。本文件在这里**预注册这个偏离**，并在 commit message 与 `docs/06` §148 里写明。
+该文件与 t101/t102/t103 的写范围不重叠（已核对三张任务卡的 write_scopes）。
+
+### P1-5 单测与"不死锁"的证明方式（预注册）
+
+1. `expired` 只在 `Some(d)` 且 `now >= d` 时为真（`None` 恒假）；
+2. `should_resolve` = 攒齐 ∨ 超时；`closed` 后恒假；
+3. **死锁复现（反面对照）**：`announced=[1,2]`、只 `submit(1)`、`deadline=None` ⇒
+   `should_resolve(1e9) == false`（这就是 P25 搬过来会死锁的那条路）；
+4. **修好**：同场景 `deadline=Some(100)` ⇒ `now=99` false、`now=100` **true**，且 `resolve()` 只交出
+   实际提交的 `[1]`（**没交的人不出现在结算里**，与真回放的 9 个反例同口径）。
+
+### P1-6 通过判据（预注册，跑完照这个打勾/打叉）
+
+* [ ] 4 组单测全绿，`now == deadline` 恰好为 true；
+* [ ] `.gd` 侧同时回合的"公告了但没人交"能在到点时结算（selftest/headless 有一条断言）；
+* [ ] 我方默认路径（公告 = 有活士兵的玩家，每人都会交）**行为不变**：结算时机与改前一致
+  （判据：headless `play_flow` 脚本条数不变、selftest 757/0/1skip 不变、三轴不变、像素不变）。
+
+---
+
+## 3. ② `TurnManager::set_turn`（0x4638f0）
+
+### P2-1 先复核签名与写入目标（预注册：照指令读，不照文档抄）
+
+`0x4638f0`（FDE 范围 `0x4638f0..0x463d9f`，`size=0x4af`；Ghidra 函数表**无**入口，`docs/149` 已记这条）。
+
+调用形态：`rdi = &GraphwarTurnManager`、`esi = player_id`（下文 `r15d`）、`edx = soldier_id`（下文 `r14d`），
+返回 void。判据 = 三条：`mov r14d, edx` / `mov r15d, esi` / 无写 `rax` 返回值。
+
+写入目标（`rbx = [rdi+0x18]` = 内层 `Rc<Inner>` 载荷）：
+
+| 指令 | 写什么 |
+|---|---|
+| `0x463970`–`0x463981` | 在 `[rbx+0x20]`（ptr）/`[rbx+0x28]`（len）那张 `Vec<u32>` 里**线性查** `player_id`（首次去重） |
+| `0x463983`–`0x46399f` | 没找到 ⇒ `0x46398d call [GOT 0x9baf48]=0x82fe80`（Vec 扩容）后 `[rax+len*4] = player_id`、`len += 1` |
+| `0x4639a3` | **`[rbx+0x30] = r13`** = 游标（= 该 player 在出场序表里的下标；找到时 `0x463a7a` 同一写法） |
+| `0x4639b4`–`0x463b7c`（`soldier_id != 0` 支） | `[rbx+0x60]` 是 `HashMap<u32, Vec<u32>>`：`0x47dec0` 查、hashbrown 探测 `0x463a0c`、条目 stride `0x28`、键在 `-0x28`；未命中 ⇒ `[rbx+0x50] -= 1`、写键、`Vec` 初值 `cap=4`、`inc [rbx+0x58]` |
+| `0x463b8d`–`0x463bd2` | 命中后往该 `Vec<u32>` 追加 `soldier_id`（同样线性去重，`0x463bbc` 是同一扩容桩） |
+| `0x463a8b`–`0x463ad8`（`soldier_id == 0` 支） | `0x47dec0` 查 + `0x486f20`（`HashMap::remove` 一族）+ `0x528070`（`alloc::dealloc`）⇒ **士兵 0 = 哨兵，删掉该玩家的士兵表**（0 = 全灭哨兵，与 `0x464016` 同源） |
+| `0x463be7`–`0x463c17` | `0x3d3530`（事件发送）带 `{+0x00=player_id, +0x04=soldier_id}` ⇒ 发一条 `TurnInfo` |
+
+### P2-2 生产者（预注册：谁调用它）
+
+`callers 0x4638f0` ⇒ **唯一** `call rel32 = 0x3e3170`，宿主 `0x3e2830`（= `graphwar_remote_event_handler.rs`，
+`docs/16` §（`0x3e3134` / `0x3e3170` 那段）已解：载荷来自 `TurnInfo`）。
+⇒ 原版的接线是：**收到 `TurnInfo` 事件 → `TurnManager::set_turn(player_id, soldier_id)`**。
+
+### P2-3 "能不能接"的判据（预注册，三条全满足才接）
+
+1. 联机侧有（或本轮能建）一台 `TurnManager` 实例 —— 原版它在 `ModuleContainer` 里，经
+   `get::<GraphwarTurnManager>()` 取（`0x46be70` 那一族）；
+2. `graphwar.gd` 的联机路径有一个**唯一的**接受点能拿到 `(player_id, soldier_id)` 原始载荷
+   （我方现在 `session.gd::_apply` 把 `TurnInfo` 落成 `room["turn"]`，字段齐）；
+3. 换源之后 `_active_soldier()` / `_online_can_fire()` 的读数**不比现在差**（判据：headless
+   `play_flow` 与 `process_loop` 脚本不变、selftest 不变、`match_ready`/`match_play` 像素不变）。
+
+三条全满足 ⇒ 落码（每处单独 commit）；缺任何一条 ⇒ **只给结论**，写清缺哪条、缺的东西落在哪个类/函数。
+
+---
+
+## 4. ③ 两台同源时钟（`drive_frame` 发件箱）
+
+### P3-1 判据源（预注册：原版把 tick 的产出泵出去了吗）
+
+`GraphwarGameClient::process`（x86 **`0x518400`**，`graphwar_game_client.rs:132`）的每帧主体：
+
+```text
+0x518484  call 0x519450          ; now-base 的 Duration（读 +0x28 哨兵 1e9 决定用真时间还是覆盖值）
+0x51848e  cmp  edx, 0x3b9aca00   ; 欠一个 tick？
+0x518494  jne  0x5184a3          ;   不欠 ⇒ 走别的分支
+0x518499  call r13               ; r13 = [GOT 0x9baf38] = 0x518240 → GraphwarTickHandler::tick (0x519840)
+0x51849f  call rbp               ; rbp = [GOT 0x9baef8] = 0x3d3630 → GraphwarEventHandler::… (event_handler.rs:467)
+```
+
+* `0x518240`（= `GraphwarGameClient::tick`，`graphwar_game_client.rs:139`，`locs` 3 条：
+  `139:41`/`139:86`/`140:22`）**只** borrow → `call 0x519840` → 放回借用，**不**自己清发件箱；
+* 紧跟的 `0x3d3630` 的 `panic::Location` = **`src/graphwar_event_handler.rs:467`** ⇒ 它是**事件泵**。
+⇒ **逐位结论：原版每个 tick 之后都泵一次事件**；`tick()` 推进发件箱的那两条（`TickEvent` 每 tick、
+`TickRequest` 每 60 tick）就是被这一泵取走的。我方 `drive_frame` 把它们 `clear()` 掉 = **与 0x518400 不符**。
+
+### P3-2 改法（预注册）
+
+| 层 | 改动 |
+|---|---|
+| `src/graphwar_plane.rs::drive_frame` | `outbox.clear()` → **drain 并计数**：`tick_events_total` / `tick_requests_total`，并把本帧的 `TickRequest` 条数暂存（`take_tick_requests()` 取走）；另有 `tick_connected()` 走 `0x519630`（连上立刻发一条） |
+| `src/_scaffold/flow_clock_class.rs` | `GwFlowClock` **不再自己握一台** `GraphwarTickHandler`：`drive()`/`tick()` 改成消费平面上报的计数（一台时钟）；保留 `state_sync_kinds()` / `new_connection_request_body()` 两个静态出口 |
+| `client/src/screens/play_screen.gd` | `_online_poll_tick(delta)` 改成 `var due = _plane.call("take_tick_requests")`；连上那条改成 `_plane.call("tick_connected")` |
+
+### P3-3 行为不变判据（预注册：这条最容易悄悄改行为）
+
+用**同一串 delta**（60 帧 `1/60`、若干长帧 `0.5`/`2.0`）跑改前/改后两套实现，`TickRequest` 总条数与
+**逐帧条数序列**必须**逐项相同**；不同就是行为变了，按 §7 登记差异再决定留不留。
+另外：selftest 757/0/1skip、headless 1979/0、三轴 647/647/637、`match_ready`/`match_play` 像素不变。
+
+### P3-4 `GwFlowClock` 的删除面（预注册）
+
+只删**时钟**部分（`handler` 字段、`carry_ns`、`reset/connected/drive/tick` 的自行推进语义）；
+`state_sync_kinds()` / `new_connection_request_body()` **不动**（`session.gd:111` / `:827` 在用，
+且它们的真值是握手那一批的名单与版本串，与时钟无关）。
+
+---
+
+## 5. ④ 联机倒计时的 tick 轴
+
+### P4-1 判据源（预注册：原版倒计时用哪两个数相减）
+
+宿主 `0x3dcbb0`（`locs`：`graphwar_game_client.rs`×25 + `graphwar_play_screen_control.rs`×18，
+是播放屏那台 `process` 大函数）。倒计时那一段：
+
+```text
+0x3dccd6  mov  ebx, dword ptr [r15+0x58]   ; ebx = now_tick（u32）
+                                           ;   r15 = RefCell 借用守卫（+0x10 借用计数、载荷在 +0x18）
+                                           ;   ⇒ [r15+0x58] = 载荷 +0x40 = GraphwarTickHandler.current_tick
+                                           ;   与 0x4b6317（平面 draw）读的是**同一格**
+0x3dcce4  call 0x46b740                    ; borrow 回合管理器
+0x3dcd2c  call 0x462ec0                    ; TurnManager::get_end_of_turn_tick → Option<u32>
+0x3dcd35  test al, 1
+0x3dcd3f  je   0x3dced5                    ; None（TimerInf）⇒ 别的分支（标签空白）
+0x3dcd47  sub  edx, ebx                    ; edx = end − now（u32 模 2^32 减法）
+0x3dcd49  cmovb edx, eax(=0)               ; **借位 ⇒ 0**（= saturating_sub，绝不会出负数）
+0x3dcd4c  imul rax, rdx ; shr rax, 0x25    ; rax = (end−now) / 60        = 剩余整秒（截断）
+0x3dcd59  imul rcx, rdx ; shr rcx, 0x2b    ; rcx = (end−now) / 3600      = 剩余整分
+0x3dcd6d  imul rcx, rax, 0x8888889 ; shr rcx, 0x21 ; imul ecx,0x3c ; sub eax,ecx
+                                           ; eax = 秒数 − 分*60 = 剩余秒
+0x3dcdc9  mov  byte ptr [rax+rsi], 0x3a    ; 拼 ':' ⇒ 格式 **MM:SS**
+```
+
+三个魔术数：`/60` = `0x88888889 >> 0x25`、`/3600` = `0x91a2b3c5 >> 0x2b`、再 `/60` = `0x8888889 >> 0x21`。
+
+### P4-2 结论（预注册的判定）
+
+`end_of_turn_tick` 的轴 = **与 `GraphwarTickHandler.current_tick` 同一根 60 Hz tick 轴**
+（两者**直接相减**，中间没有任何"回合开始 tick"的换算）⇒ **绝对轴**，不是"本回合已过 tick"。
+推算：`剩余秒 = saturating_sub(end_of_turn_tick, now_tick) / 60`（整数除，截断）⇒ `MM:SS`。
+（与 `docs/14` §3.2 的抓包回归 `end ≈ 回合开始 + 时长` 相容；`TimerInf` 线上 `end=0` ⇒ `None` ⇒ 空白。）
+
+### P4-3 改法（预注册）
+
+| 层 | 改前 | 改后 |
+|---|---|---|
+| `client/src/screens/play_screen.gd::_online_tick` | `_turn_clock.advance(delta)` + `seconds_left()`（时长 − 已过 tick，墙钟折 tick） | `left = 剩余秒(end_of_turn_tick, 平面 tick)`；`end==0` ⇒ 空白 |
+| `src/_scaffold/flow_clock_class.rs` | — | 新增纯函数 + `#[func]`：`seconds_until_turn_end(end_of_turn_tick, now_tick)`（`0` 哨兵 ⇒ `-1`），带单测 |
+| 本地局（`_process` 的本地支） | `GwTurnClock`（时长 − 已过） | **不动**（本地没有服务端 `EndOfTurnInfo`；见 P1-3） |
+
+### P4-4 通过判据（预注册）
+
+* 单测：`end=600, now=0` ⇒ `10`；`end=600, now=537` ⇒ `1`；`end=600, now=600` ⇒ `0`；
+  `end=600, now=601` ⇒ `0`（下溢夹 0）；`end=0` ⇒ `-1`（哨兵/TimerInf）；
+  `end=59, now=0` ⇒ `0`（不足 1 s 显示 `00:00`，与整数除法一致）；
+* `.gd` 联机倒计时读数来自这两个数（headless 断言一条）；
+* 像素**不变**：`match_ready` ∈ [0.070, 0.100] %、`match_play` ≤ 0.450 %（倒计时是底栏两个字，
+  改前后应当同宽——若像素变了，说明改出了别的东西，按 §7 登记）。
+
+---
+
+## 6. 门槛清单（预注册：这 9 条一条都不能退）
+
+| # | 门槛 | 目标 |
+|---|---|---|
+| 1 | `cargo test --offline` | **1634 / 0 / 1 ignored**（只许涨——本轮新增单测会涨） |
+| 2 | `cargo test --offline --features gdext-bindings` | **1789 / 0 / 1**（同上） |
+| 3 | `python3 tools/coverage_matrix.py --check` | OK |
+| 4 | `python3 tools/check_doc_refs.py` | rc=0 |
+| 5 | `python3 tools/docsec.py check docs/06-verification.md` | 无重复号/无冲突标记/无空心节 |
+| 6 | 三轴 `fire`/`batch`/`batch_conv` | **647 / 647 / 637**（一位不退） |
+| 7 | `python3 tools/boundary_audit.py --check` | mismatch **0** |
+| 8 | `selftest` | **757 / 0 / 1 skipped**，`missing=0 silent=0` |
+| 9 | headless 14 脚本 | **1979 / 0** |
+
+像素：`match_ready` ∈ **[0.070, 0.100] %** 且 L2 0 块；`match_play` **≤ 0.450 %**；其余屏不许变差。
+
+## 7. 勘误区（只追加，不删改上文）
+
+（跑数过程中的自审错误与任务书前提被证伪，逐条追加在这里，并在 `docs/06` §148 复述。）
