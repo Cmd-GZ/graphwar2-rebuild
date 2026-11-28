@@ -30628,7 +30628,6 @@ cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive 
 cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
 cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
 ```
-
 ## 156. T108 **分母外「绘制/数学/弹道」11 条源码函数**逐条取证落码：**7 条落成**（含 3 条**值级对拍**）、4 条写清缺什么；分母外真缺（**本分支基点** T105 口径）**57 → 50** 条机器码 / **55 → 48** 个源码函数，**rebase 到当前 master 后 = 43 → 36 组 / 43 → 36 条**；顺带修掉 **2 处真实差异**（`calculate_corrected_function` 不补未闭合括号、箭头半张角 6°→12°）（2026-11-28，任务 `task-101` / 分支 `agent/denom-drawers-math`）
 
 > 预注册：[`fixtures/denom_drawers_math_plan.txt`](../fixtures/denom_drawers_math_plan.txt)（commit `e86d035`，**先单独提交、后跑**；跑完 §1–§3 的判据与输入集**一字未改**，只在 §3.2 追加了 V3 一节的**新发现用例**，见 §156.2.4）。
