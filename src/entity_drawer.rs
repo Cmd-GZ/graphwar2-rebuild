@@ -207,10 +207,15 @@ pub fn drawn_radius(pos_radius: f64) -> f64 {
 /// `0x4b9a70` 里逐点 `center + r·(cos θ, sin θ)` 后 `push`：
 ///
 /// 1. `P0 = C + r·(cos θ, sin θ)`                      —— 顶点落在环心半径上
-/// 2. `P1 = C + (r+0.5)·(cos(θ−6°), sin(θ−6°))`
-/// 3. `P2 = C + (r+0.5)·(cos(θ+6°), sin(θ+6°))`
+/// 2. `P1 = C + (r+0.5)·(cos(θ−12°), sin(θ−12°))`
+/// 3. `P2 = C + (r+0.5)·(cos(θ+12°), sin(θ+12°))`
 ///
-/// 指令：`0x4b9b13`（P0）/ `0x4b9b56`（`r += 0.5`）/ `0x4b9b6e`（`θ − 6°`）/
+/// ⚠️ 2026-11-28 更正（T108）：旧注释写 `∓6°`、本段末尾又写"张 12°"，**都错了**。
+/// 槽 `0x19fb68` 的 8 字节是 `d5 eb 7b f3 e9 ce ca 3f` = `0.20943951023931953` = **12°**
+/// ⇒ 半张角 12°、总张角 24°（与 `docs/16` §12 的"±12°"一致）。判据 = 常量位模式，
+/// 见 `tests/entity_drawer.rs::arrow_head_is_the_three_points_from_0x4b9a70`。
+///
+/// 指令：`0x4b9b13`（P0）/ `0x4b9b56`（`r += 0.5`）/ `0x4b9b6e`（`θ − 12°`，立即数在槽 `0x19fc80`）/
 /// `0x4b9b92`（P1）/ `0x4b9bcf`（P2）。**观测**（指令顺序 + 立即数地址）
 ///
 /// 形态：**向心三角**（尖端在环心半径上，底边在外侧 `r+0.5`、张 12°）。
@@ -1808,7 +1813,26 @@ impl IControl for EntityDrawer {
                 color: ring_color,
             };
 
-            for prim in entity_drawer::entity_primitives(input) {
+            // 箭头侧 = 原版 `draw` 里**三次** `call 0x4b9a70`（`0x4b30b7` / `0x4b30e8` / `0x4b3119`，
+            // `addr_probe callers 0x4b9a70` 实测 3 个调用点全在 `draw` 体内）⇒ 这里也逐次调
+            // 真名方法 [`Self::draw_offset_triangle`]，每次产出一条 `draw_polygon`。
+            if arrows_on {
+                let r = entity_drawer::drawn_radius(input.pos_radius);
+                for &a in entity_drawer::segment_angles(input.v).iter() {
+                    if let entity_drawer::Primitive::Polygon { points, colors } =
+                        self.draw_offset_triangle(input.center, r, a, ring_color)
+                    {
+                        let pts: Vec<Vector2> = points
+                            .iter()
+                            .map(|p| Vector2::new(p.x as f32, p.y as f32))
+                            .collect();
+                        let c = colors.first().copied().unwrap_or(ring_color);
+                        polys.push((pts, color_of(c)));
+                    }
+                }
+            }
+            // 弧侧 = 原版三次 `draw_arc`（经 GOT 槽 `0x9bc020`：`0x4b366c` / `0x4b36fd` / `0x4b378a`）
+            for prim in entity_drawer::ring_primitives(input) {
                 match prim {
                     entity_drawer::Primitive::Arc {
                         radius,
@@ -1836,19 +1860,9 @@ impl IControl for EntityDrawer {
                             color: (arc_color.r, arc_color.g, arc_color.b, arc_color.a),
                         });
                     }
-                    entity_drawer::Primitive::Polygon { points, colors } => {
-                        if !arrows_on {
-                            // 原版箭头侧另有一道门（见 `show_ring_arrows` 的文档）；关掉时
-                            // 只画三段弧 —— 这就是回放真帧上的形态。
-                            continue;
-                        }
-                        let pts: Vec<Vector2> = points
-                            .iter()
-                            .map(|p| Vector2::new(p.x as f32, p.y as f32))
-                            .collect();
-                        let c = colors.first().copied().unwrap_or(ring_color);
-                        polys.push((pts, color_of(c)));
-                    }
+                    // `ring_primitives` 只产 `Arc`；箭头（`Polygon`）已在上面走
+                    // `Self::draw_offset_triangle`（原版那三次 `call 0x4b9a70`）。
+                    entity_drawer::Primitive::Polygon { .. } => {}
                 }
             }
         }
@@ -1916,6 +1930,97 @@ impl IControl for EntityDrawer {
         self.last_polys = polys.into_iter().map(|(p, _)| p).collect();
         // 观测点：这一帧**实际画的 id 顺序**（验收脚本拿它断言"排序生效"）。
         self.last_drawn_ids = rings.iter().map(|(id, _)| *id).collect();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T108（docs/06 §153）：两条**分母外**源码函数的真名边界
+// ---------------------------------------------------------------------------
+//
+// 归属/地址（预注册 fixtures/denom_drawers_math_plan.txt §1；台账
+// fixtures/denom_drawers_math_anchors.tsv）：
+//
+// | 原版函数 | Android 2.0.60 arm64 `.symtab` | Linux x86-64 `.eh_frame`（addr_probe fde 现取） |
+// |---|---|---|
+// | `EntityDrawer::update_name_label` | `0x4bf690`, 496 B | `0x4b9810`..`0x4b9a6f`（0x25f） |
+// | `EntityDrawer::draw_offset_triangle` | `0x4bf880`, 816 B | `0x4b9a70`..`0x4b9e63`（0x3f3） |
+//
+// 两条体内 `panic::Location` = 0（T105 观测）⇒ 结构上进不了 527 分母；它们在 527 之外**真缺**
+// 的是**函数边界**：语义（算术/几何）此前已按指令逐条复原，但挂在同名自由函数上
+// （`entity_drawer::name_label_layout` / `offset_triangle` + `arrow_head`），源码层没有这两个方法。
+//
+// 调用者（`tools/addr_probe.py callers`，**观测**）：
+//  * `update_name_label`：`0x4b4fdb` / `0x4b5373` 两点，**都在 `EntityDrawer::process`（`0x4b4b60`）体内**
+//    —— 与我们 `relayout()` 每帧摆一遍的调用序一致。
+//  * `draw_offset_triangle`：`0x4b30b7` / `0x4b30e8` / `0x4b3119` 三点，**都在 `EntityDrawer::draw`
+//    （`0x4b2890`）体内** —— 与我们 `draw()` 里"每具士兵 3 个箭头"一致。
+//
+// ABI（两条序言都读到**接收者**，所以写成 `&self` 方法而不是自由函数）：
+//  * `update_name_label`：rdi=self（`mov rsi,rdi` 后 `0x4b1800` 是 `Gd::upcast`，
+//    再对 upcast 后的 Control 调 `0x8925f0` = `Control::get_size`）；rsi=标签对象
+//    （`0x4b990a` 调 `0x891640` = `Control::get_minimum_size`）；rdx=打包色/标志
+//    （`0x4b988d call 0x4be6e0` 后按 `0x10000`/`0x1000000`/`0x101` 掩码判镜像）；
+//    xmm0=x, xmm1=y, xmm2=alpha（三个 f64）。
+//  * `draw_offset_triangle`：rdi=self（**末尾** `0x4b9c84 mov rsi,rbx` + `0x4b1800` 再 `upcast`
+//    成 `Object` 供 `Object::call("draw_polygon")`）；rsi=`&Color`（`0x4b9c19/0x4b9c3c/0x4b9c5c`
+//    三次 `movupd [r14]` = 同一个 16 B 颜色 push 三份）；xmm0/xmm1=环心 Vec2（16 B 打包），
+//    xmm2=半径，xmm3=角度（`0x4b9ab2 movaps xmm0,xmm3` 直接送 sincos）。
+impl EntityDrawer {
+    /// `EntityDrawer::update_name_label`（Linux **`0x4b9810`** / arm64 `0x4bf690`，496 B）
+    ///
+    /// 把名字标签摆到士兵头上（越界就翻到下方）并给不透明度。
+    ///
+    /// 指令锚（x86-64 Linux，算术部分见 [`entity_drawer::name_label_layout`] 的长注释）：
+    ///  * `0x4b9834 mov rsi,rdi` + `0x4b983c call 0x4b1800` ⇒ `Gd::upcast`（拿 `Control::get_size`）
+    ///  * `0x4b985d call *[0x9bb000] -> 0x8925f0` ⇒ `Control::get_size`（= 本控件的 `size`）
+    ///  * `0x4b987d divss xmm0,[0x1b9fc8]` ⇒ `k = size.x / 50.0f32`（`0x1b9fc8` = `50.0f32`）
+    ///  * `0x4b988d call 0x4be6e0` + `0x4b9892 test eax,0x10000` / `0x4b989a cmp eax,0x1000000`
+    ///    ⇒ 打包色里解出**镜像标志 + 队伍**（[`entity_drawer::team_mirror_sign`] 判据）
+    ///  * `0x4b990a call *[0x9bc080] -> 0x891640` ⇒ 标签的 `Control::get_minimum_size`
+    ///  * `0x4b98b0 xorps xmm0,[0x19e880]`（符号位掩膜）⇒ 镜像时 x 取反
+    ///  * 末尾 `0x4b… mov w1,#0x1` = `CanvasItem::set_visible(true)`
+    ///
+    /// ⚠️ 本方差的**边界**：原版这一个函数同时干"算位置 + 写 `position`/`modulate`/`visible`"。
+    /// 我方把"写属性"留在 [`Self::relayout`]（那里还要处理"死亡淡出后藏起来"的分支，
+    /// 见 [`entity_drawer::death_alpha`]），这里只产**纯布局结果**。语义等价、边界不同（登记遗留）。
+    fn update_name_label(
+        &self,
+        label_size: BoardVec2,
+        min_size: BoardVec2,
+        packed: u32,
+        x: f64,
+        y: f64,
+        alpha: f64,
+    ) -> entity_drawer::NameLabelLayout {
+        // `self` 在原版里只用来取本控件的 `size`（已由调用方 `relayout` 传成 `label_size`）。
+        let _ = self;
+        entity_drawer::name_label_layout(label_size, min_size, packed, x, y, alpha)
+    }
+
+    /// `EntityDrawer::draw_offset_triangle`（Linux **`0x4b9a70`** / arm64 `0x4bf880`，816 B）
+    ///
+    /// 一次 `draw_polygon` 调用的全部实参：3 个顶点（[`entity_drawer::arrow_head`]）+ **同一个颜色 3 份**。
+    ///
+    /// 指令锚（x86-64 Linux，几何见 [`entity_drawer::offset_triangle`] 的注释）：
+    ///  * `0x4b9a7d mov r14,rsi` ⇒ 第 2 个整数参 = `&Color`（16 B）
+    ///  * `0x4b9ab2 movaps xmm0,xmm3` + `0x4b9ab5 call *[0x9bbed0]` ⇒ 对**角度**调 sincos
+    ///  * `0x4b9ab8 movsd xmm0,[0x19fb68]` + `0x4b9ac0 addsd xmm0,[rsp+0x68]` ⇒ `θ + 0.20943951023931953`（+12°/2）
+    ///  * `0x4b9b5c addsd`（槽 `0x19f6d0` = `0.5`）⇒ 外沿 `r + 0.5`
+    ///  * `0x4b9c19/0x4b9c3c/0x4b9c5c movupd xmm0,[r14]` ⇒ 三次 push 同一个颜色
+    ///  * `0x4b9d2f lea rdx,[0x1c2bad]`（'draw_polygon'）+ `0x4b9d41 mov ecx,0xc` ⇒ `Object::call("draw_polygon", …)`
+    ///
+    /// ⚠️ 边界：原版在这个函数里**同时**建 `PackedVector2Array` / `PackedColorArray` 并调
+    /// `Object::call`。我方这里只产**图元描述**（[`entity_drawer::Primitive::Polygon`]），
+    /// 真正的 `draw_polygon` 发在 [`Self::draw`] 里（统一发图元的那一段）。语义等价、边界不同。
+    fn draw_offset_triangle(
+        &self,
+        center: BoardVec2,
+        r: f64,
+        theta: f64,
+        color: entity_drawer::Color,
+    ) -> entity_drawer::Primitive {
+        let _ = self;
+        entity_drawer::offset_triangle(center, r, theta, color)
     }
 }
 
@@ -2114,7 +2219,9 @@ impl EntityDrawer {
             // `cx` 被夹到 0 ⇒ 名字标签被摆到控件**左上角**（实测 `pos=(0, 14.7)`），
             // 于是士兵头上没有 `cmdgz`（真帧：标签在 (772,783)–(842,854)）。
             let min_size = name_label.clone().get_minimum_size();
-            let layout = entity_drawer::name_label_layout(
+            // 真名边界：`EntityDrawer::update_name_label`（原版 x86 `0x4b9810`）——
+            // 算术仍是 `entity_drawer::name_label_layout`（那边有逐条指令证据）。
+            let layout = self.update_name_label(
                 BoardVec2::new(size.x as f64, size.y as f64),
                 BoardVec2::new(min_size.x as f64, min_size.y as f64),
                 packed,
