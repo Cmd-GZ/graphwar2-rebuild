@@ -1,0 +1,54 @@
+# gap_backend.tsv —— T103：`graphwar_backend` 的 22 条 android 真名地址逐条定性
+#
+# 判据 = fixtures/gap_backend_recorder_plan.txt（**先 commit `fb77a74` 后跑**）。
+# 地址列 = **arm64 vaddr**（`.reference/steam/android-2.0.60/libgraphwarrust.so`，未 strip）；
+# 名字列 = `llvm-nm -C --print-size` 的 demangle 结果（**符号名就是物证**）；
+# size 列 = 同一命令的 FUNC size。x86 侧地址 = ELF vaddr（stripped，只有带 `panic::Location` 的才有锚）。
+# 复跑：`llvm-nm -C --defined-only --print-size --no-sort <arm64 so> | grep graphwar_backend`
+#       `.reference/venv/bin/python tools/addr_probe.py fde <x86 vaddr>` / `... locs <x86 vaddr>`
+#
+# 口径（plan §2）：`A_addr` = 22（census 的 android_fns）; `A_src` = **19**（18 个方法 + 1 个闭包）;
+# 其余 3 = `na:other`（`core::ptr::drop_in_place<…>` 实例化，名字逐字可读）。
+# ⚠️ census 的 22 不是源码函数数：`tools/global_triage.py::classify` 把本模块类型的 drop glue 也算进
+#    `game:std-glue`（`startswith("game")`），且 `_android_syms()` 只取每个地址的**第一个**符号名。
+android_vaddr	android_size	android_name	src_kind	class	na_evidence	x86_anchor	in_527	x86_fde	ledger_bucket	ours_boundary	ours_state	verdict	本轮
+0x003ad7f4	560	core::ptr::drop_in_place<RcInner<RefCell<GraphwarBackend>>>	drop-glue	na:other	名字逐字 = `core::ptr::drop_in_place<…>` ⇒ 编译器合成（`Rc<RefCell<GraphwarBackend>>` 强计数归零时的析构）	—	no	—	—	—	na	na（plan §4：名字即物证）	—
+0x00406b4c	88	GraphwarBackend::setup_level	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	（本轮前）无	none	F4 real-missing ⇒ 本轮落码	✅ 落码（观测）
+0x00406ba4	104	GraphwarBackend::stop_client	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	（本轮前）无	none	F4 real-missing ⇒ 本轮落码	✅ 落码（观测）
+0x00406c0c	88	GraphwarBackend::stop_server	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	（本轮前）无	none	F4 real-missing ⇒ 本轮落码	✅ 落码（观测）
+0x00406c64	216	GraphwarBackend::start_server	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	（本轮前）无	none	F4 real-missing ⇒ 本轮落码	✅ 落码（观测）
+0x00406d3c	324	GraphwarBackend::button_pressed	src-fn	real	—	0x514a10	yes	0x12e	F1（pinned=**addr**）	src/graphwar_game_client.rs:390 on_command（自述"`0x514a10` 的纯逻辑等价"）	body-partial	F2（只有 `start_game`/`fire` 两条命令的**真值表**；原版 324 B 还有取命令总线 / 键鼠分支 / 发事件。台账的 F1 靠"地址出现在注释里"）	—
+0x00406e80	488	GraphwarBackend::subscribe_to_event	src-fn	real	—	0x514b40	yes	0x1d7	F1（pinned=**addr**）	src/entity_drawer.rs:3039 `fn is_kernel_event`（**落点是注释命中**：`0x514b40` 只出现在 :3015 的注释里；本模块无 `fn subscribe_to_event`）	addr-only	**F3 ⇒ real-missing**（台账 F1 = **假 F1**，按 plan E-1/E-2）	—
+0x00407068	172	GraphwarBackend::stop_lan_broadcaster	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing	—
+0x00407114	268	GraphwarBackend::resubscribe_to_events	src-fn	real	—	0x514d80	yes	0x112	F1（name 锚）	src/graphwar_backend.rs:467 resubscribe_to_events	body-ok	F1（T95 落码，逐指令注释）	—
+0x00407220	144	GraphwarBackend::start_lan_broadcaster	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing	—
+0x004072b0	428	GraphwarBackend::start_client_to_replay	src-fn	real	—	0x514f20	yes	0x213	F1（name 锚）	src/graphwar_backend.rs:531 start_client_to_replay	body-ok	F1（T95 落码，7 步装配序 + 全部立即数）	—
+0x0040745c	156	GraphwarBackend::get_next_clip_checkpoint	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing（⚠️ 落码需给 `GraphwarReplayPlayer` 加**第三个** `Vec<u32>` 字段：arm64 `0x407468 ldp x8,x9,[x0,#0x48]` 读的是播放器 +0x48(ptr)/+0x50(len)，而 `checkpoints` 在 +0x30(ptr)/+0x38(len) —— 那个字段在 `src/graphwar_replay_player.rs`，超出本轮写边界）	—
+0x004074f8	136	GraphwarBackend::stop_server_broker_handler	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing	—
+0x00407580	264	GraphwarBackend::subscribe_to_event_with_id	src-fn	real	—	0x515320	no（527 外：无 Location；hyb 推断）	0xc9	—	src/graphwar_backend.rs:508 subscribe_to_event_with_id	body-partial	F2（落了"分配 16 B 捕获体 + 登记 (id,name)"这一段；闭包体 `get_mut(&id)`→`handler(event)` 未落）	—
+0x00407688	308	GraphwarBackend::subscribe_to_event_with_id::{{closure}}	src-fn	real（闭包）	—	0x5153f0 + 0x520100（**两条 x86 地址 = 同一个源码闭包的 call_once / call_mut 两个编译器 shim**，见 T95 的 vtable `0x961fa8`）	yes×2	0x10a / —	F1（name 锚，两条都指到 :508）	src/graphwar_backend.rs:508（同上）	body-partial	F2（同上一行：闭包体未落）	—
+0x004077bc	140	GraphwarBackend::start_server_broker_handler	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	无	none	F4 real-missing	—
+0x00407848	852	GraphwarBackend::start_client_to_local_server	src-fn	real	—	0x515590	yes（但 `loc_main_file` = graphwar_game_client.rs ⇒ 527 里算**那个模块**的行）	0x406	F1（pinned=**addr**）	src/graphwar_game_client.rs:1606 自由函数 `start_client_to_local_server<S>(steps, game_name)`	body-partial	F2（8 步串行编排已落；但形状是"步进记录器 + 名字"的自由函数，**不是** backend 方法 `<S>(&mut self, ...)`）	—
+0x00407b9c	364	GraphwarBackend::start_client_to_remote_server	src-fn	real	—	0x5159a0	yes（同上，算 game_client.rs 的行）	0x184	F1（pinned=**addr**）	src/graphwar_game_client.rs:1631 自由函数 `start_client_to_remote_server<S>(steps)`	body-partial	F2（6 步编排已落；形状同上）	—
+0x00407d08	488	GraphwarBackend::new	src-fn	real	—	未定位（无 Location 锚，527 外）	no	—	—	src/graphwar_backend.rs:458 `new()` = `Self::default()`	body-partial	F2（有函数体但只是默认构造；原版 488 B 建模块容器 + 内联 LAN 广播者 + 房间名 `"Graphwar Game"` 13 B）	—
+0x00407ef0	1392	GraphwarBackend::process	src-fn	real	—	0x515dc0	yes	0x5a9	F2（pinned=**free-fn-name**）	src/graphwar_backend.rs:240 process_steps（**决策表**）+ src/graphwar_game_client.rs:754 `GraphwarGameClient::process`（**另一条原版函数** 0x518400）	addr-only+表	**F3 ⇒ real-missing**（台账 F2 = **假 F2**：`0x518400` 是 `GraphwarGameClient::process`，与 `0x515dc0` 不是同一条函数；本模块只有决策表）	—
+0x00416dd0	28	core::ptr::drop_in_place<GraphwarBackend::subscribe_to_event_with_id::{{closure}}>	drop-glue	na:other	名字逐字 = `core::ptr::drop_in_place<…>` ⇒ 编译器合成，源码层没有这一行 fn	—	no	—	—	—	na	na（plan §4：名字即物证，E6 不适用）	—
+0x004172c8	40	core::ptr::drop_in_place<Weak<RefCell<GraphwarBackend>, &alloc::alloc::Global>>	drop-glue	na:other	同上（自指/共享 Weak 的析构）	—	no	—	—	—	na	na	—
+#
+# ---- 汇总（机读分节）----
+# A_addr = 22 ; A_src = 19（18 方法 + 1 闭包）; na:other = 3 ; na:gdext-glue = 0 ; unknown = 0
+# 落地状态（今日，含本轮落码的 4 条）：
+#   F1 = 6  （resubscribe_to_events / start_client_to_replay / setup_level / stop_client / stop_server / start_server）
+#   F2 = 6  （subscribe_to_event_with_id / 它的闭包 / start_client_to_local_server / start_client_to_remote_server / new / button_pressed）
+#   F3 = 2  （subscribe_to_event / process —— 台账的两条**假 F1 / 假 F2** 就落在这里）
+#   F4 = 5  （stop_lan_broadcaster / start_lan_broadcaster / get_next_clip_checkpoint / stop_server_broker_handler / start_server_broker_handler）
+# ⇒ **真实待写源码函数数 = 7 条从零写 + 6 条要补到 F1**（合计 13 条待办；19 − 6 = 13）
+# ⚠️ 527 分母关系（plan §2-4）：19 条里 **6 条**在 `function_coverage.tsv` 的 527 内（0x514a10/0x514b40/0x514d80/
+#    0x514f20/0x5153f0/0x515dc0，另 0x520100 是同一闭包的第二条），**13 条在分母外**（无 Location）。
+#    本轮落码的 4 条全在分母外 ⇒ 三个口径数字预期**一位不动**（T97/T98 的先例）。
+# 台账两处**假档位**（本轮结论，按 plan E-1/E-2；不改生成物）：
+#   ① `0x514a10` button_pressed 记 F1：落点 `game_client.rs:390 on_command` 只是两条命令的真值表 ⇒ 应为 F2。
+#   ② `0x514b40` subscribe_to_event 记 F1：落点 `entity_drawer.rs:3039` 是 `fn is_kernel_event`，
+#      `0x514b40` 只出现在 :3015 的注释里 ⇒ 应为 F3（我方**没有**这个函数）。
+#   ③ `0x515dc0` process 记 F2：落点 `game_client.rs:754` 是**另一条原版函数**（`GraphwarGameClient::process`
+#      0x518400）的循环体 ⇒ 应为 F3。

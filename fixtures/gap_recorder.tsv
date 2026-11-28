@@ -1,0 +1,46 @@
+# gap_recorder.tsv —— T103：`graphwar_game_recorder` 的 20 条 android 真名地址逐条定性
+#
+# 判据 = fixtures/gap_backend_recorder_plan.txt（**先 commit `fb77a74` 后跑**）。
+# 地址列 = **arm64 vaddr**（`.reference/steam/android-2.0.60/libgraphwarrust.so`，未 strip）；
+# 名字列 = `llvm-nm -C --print-size` 的 demangle 结果（**符号名就是物证**，不是形态推断）；
+# size 列 = 同一命令的 FUNC size。
+# 复跑：`llvm-nm -C --defined-only --print-size --no-sort <so> | grep -E 'graphwar_game_recorder'`
+#
+# 口径（见 plan §2）：`A_addr` = 20（census 的 android_fns）；`A_src` = **3**；
+# 其余 17 = `na:other`（`core::ptr::drop_in_place<…>` 的实例化，名字里逐字可读）。
+# ⚠️ 任务书假设「Linux 只有 2 条 Location 锚 ⇒ 可能是中方占多数」——**本轮证实成立**：
+#    20 里 17 条是编译器生成物（85%），源码函数只有 3 条；而 Linux 的 2 条锚分别落在
+#    其中 2 条上（save_game / 闭包），第 3 条 `new` 是"不 panic ⇒ 无 Location"的正常情形（plan §6-4）。
+android_vaddr	android_size	android_name	src_kind	class	na_evidence	x86_anchor	in_527	x86_fde	ledger_bucket	ours_boundary	ours_state	verdict	本轮
+0x003d7b54	744	GraphwarGameRecorder::subscribe_to_events::{{closure}}	src-fn	real	—	0x3d4fa0	yes	0x2b8	F3 real-missing	src/graphwar_game_recorder.rs:440 record / :462 on_event_state / :470 on_game_state	body-partial	F2（有体：录一条 + 状态机；缺 `subscribe_to_events` 边界本身与 tick 取数——原版闭包先从 ModuleContainer 取 TickHandler 的 tick，我方把 tick 当入参）	—（见下 §遗留）
+0x003d7e3c	840	GraphwarGameRecorder::new	src-fn	real	—	0x3d5260	no	0x4d8	（527 外：无 Location）	src/graphwar_game_recorder.rs:368 new	body-partial	F2（有体：Rc::new + 自指 Weak + 32 条订阅；缺：32 条订阅只登记名字，没把闭包交给 handler ⇒ 录音链路未闭环）	—
+0x003d8184	2720	GraphwarGameRecorder::save_game	src-fn	real	—	0x3d5740	yes	0x940	F1	name 锚（T83 已证明落盘字节逐字节不变）	src/graphwar_game_recorder.rs:496 save_game	body-partial	F2（有体：`Vec<EventInfo>` 序列化；缺：建目录 / 拼名 / `FileAccess::open` / `GzEncoder` 写盘这一段——本 crate 无压缩依赖，压缩口径在 src/_scaffold/replay_inflate.rs）	—
+0x0034aea0	108	core::ptr::drop_in_place<Result<EventInfo, serde_json::Error>>	drop-glue	na:other	名字逐字 = `core::ptr::drop_in_place<…>` ⇒ 编译器合成，源码层没有这一行 fn	—	no	—	—	—	na	na（E6 不适用：名字即物证）	—
+0x003b05c8	196	core::ptr::drop_in_place<Vec<EventInfo>>	drop-glue	na:other	同上（`EventInfo` 的 `Vec` 析构实例化）	—	no	—	—	—	na	na	—
+0x003ea8c0	168	core::ptr::drop_in_place<Result<EventInfo, serde_json::Error>>	drop-glue	na:other	同上（`0x34aea0` 的第二份实例化）	—	no	—	—	—	na	na	—
+0x003ea994	44	core::ptr::drop_in_place<GraphwarGameRecorder::subscribe_to_events::{{closure}}>	drop-glue	na:other	同上（闭包捕获体的析构）	—	no	—	—	—	na	na	—
+0x003eb234	196	core::ptr::drop_in_place<Vec<EventInfo>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004168f0	128	core::ptr::drop_in_place<GraphwarGameRecorder::new::{{closure}}>	drop-glue	na:other	同上（`new` 里那个订阅闭包的捕获体析构）	—	no	—	—	—	na	na	—
+0x00417434	40	core::ptr::drop_in_place<Weak<RefCell<GraphwarGameRecorder>, &alloc::alloc::Global>>	drop-glue	na:other	同上（自指 Weak 的析构）	—	no	—	—	—	na	na	—
+0x00417f18	196	core::ptr::drop_in_place<Vec<EventInfo>> (.llvm.8984855819550323253)	drop-glue	na:other	同上（`.llvm.` 后缀 = 同一函数的另一份克隆）	—	no	—	—	—	na	na	—
+0x0043398c	200	core::ptr::drop_in_place<std::sync::mpmc::zero::Packet<Vec<EventInfo>>>	drop-glue	na:other	同上；`mpmc` = 回放写盘线程的通道实例化（T83 证 `new` 里起 mpmc）	—	no	—	—	—	na	na	—
+0x00433bd8	276	core::ptr::drop_in_place<std::sync::mpmc::error::SendTimeoutError<Vec<EventInfo>>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004342c0	320	core::ptr::drop_in_place<std::sync::mpmc::counter::Counter<std::sync::mpmc::list::Channel<Vec<EventInfo>>>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004344a8	284	core::ptr::drop_in_place<Result<(), std::sync::mpmc::error::SendTimeoutError<Vec<EventInfo>>>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004346cc	312	core::ptr::drop_in_place<Option<std::sync::mpmc::zero::Channel<Vec<EventInfo>>::send::{{closure}}>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004352d0	196	core::ptr::drop_in_place<Vec<EventInfo>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004b2864	360	core::ptr::drop_in_place<RefCell<GraphwarGameRecorder>> (.llvm.15313919881979943870)	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004b40f4	196	core::ptr::drop_in_place<Vec<EventInfo>>	drop-glue	na:other	同上	—	no	—	—	—	na	na	—
+0x004d8a50	196	core::ptr::drop_in_place<Vec<EventInfo>>	drop-glue	na:other	同上（⚠️ 落在 `graphwar_setup_control` 的代码邻域里 —— 布局局部性，不改变它的归属）	—	no	—	—	—	na	na	—
+#
+# ---- 汇总（机读分节，`#` 注释行不参与计数亦可）----
+# A_addr = 20 ; A_src = 3 ; na:other = 17 ; na:gdext-glue = 0 ; na:std-mono = 0 ; unknown = 0
+# 源码函数 3 条的落地状态（严格按 plan §3 的 E-1/E-2 闸）：
+#   F1 = 0 ; F2 = 3（三条都有函数体，但都没有"原版那个函数边界"：闭包边界缺、new 的订阅链未闭环、save_game 的写盘段缺）
+#   F3 = 0 ; F4 = 0  ⇒ **从零要写的源码函数 = 0**
+# 「真实待写源码函数数」= 0 条从零写；3 条要补到 F1（其中 `subscribe_to_events` 是**唯一函数边界完全不存在**的一条）
+# ⚠️ 本轮不落码的理由（写清而不是含糊）：这 3 条都要动 `src/graphwar_game_recorder.rs` 之外的接口——
+#   ① 闭包的 tick 取数要 `GraphwarModuleContainer::get_module_wk::<GraphwarTickHandler>`（容器侧函数在另一模块）；
+#   ② `subscribe_to_events` 要 handler 收 boxed 闭包（`GraphwarEventHandler::subscribe_to_event` 现在只收名字）；
+#   ③ `save_game` 的写盘段要 gzip（本 crate 无依赖，走 `_scaffold/replay_inflate.rs`）。
+#   ⇒ 三条都超出「只动本模块就自洽」的范围，按 AGENTS.md §0.3 只登记不硬写；下一轮接手的入口在 docs/06 §148 遗留。
