@@ -154,6 +154,21 @@ impl BackendField {
     pub const MODULES: usize = 0x220;
     /// `Option<GraphwarServerBrokerHandler>`（内联）。
     pub const BROKER: usize = 0x228;
+    /// `+0x188`（**LAN 广播者对象内 `+0x78`**）：hashbrown 表。
+    /// `stop_lan_broadcaster` 的 `0x4070a4 add x0,x19,#0x188` + `0x4070a8 bl RawTable::drop` 就是它。
+    pub const LAN_TABLE: usize = 0x188;
+    /// `+0x1c8`（**LAN 广播者对象内 `+0xb8`**）：原始 socket fd（`i32`）。
+    /// 三处指令定死：`GraphwarLanBroadcasterV6::new` arm64 `0x3de0f0 str w8(=-1),[x19,#0xb8]` 写初值 −1；
+    /// `stop_lan_broadcaster` `0x40708c ldr w0,[x19,#0x1c8]` / `0x407090 cmn w0,#0x1`（−1 就不 close）/
+    /// `0x407098 bl close@plt` / `0x4070a0 str w8(=-1),[x19,#0x1c8]`（关完立刻写回 −1）。
+    pub const LAN_FD: usize = 0x1c8;
+    /// `+0x110..+0x1d0` = `GraphwarLanBroadcasterV6` 本体 **0xC0 = 192 字节**（内联，不是堆对象）。
+    /// 真值：`start_lan_broadcaster` `0x407258`–`0x407284` 共 8 组 `ldp q/stp q`，
+    /// 把栈上 `sp+0x00..sp+0xc0` 整块搬到 `self+0x110..self+0x1d0`。
+    pub const LAN_SLOT_SIZE: usize = 0xc0;
+    /// `+0x48` / `+0x50`（**内联回放播放器对象内**）：clip 检查点表的 `(ptr, len)`。
+    /// 见 [`GraphwarBackend::clip_checkpoints`] / [`GraphwarBackend::get_next_clip_checkpoint`]。
+    pub const CLIP_CHECKPOINTS: usize = 0x48;
 }
 
 /// 房间名默认值（13 字节）。
@@ -457,6 +472,8 @@ pub struct GraphwarBackend {
     /// 播放器结构体本身（`src/graphwar_replay_player.rs`）**不在 T106 的写范围** ⇒ 这个字段暂挂在本结构上，
     /// 偏移以注释为准；表值类型 `u32` 来自 `0x4074a4 ldr w14,[x8,x13,lsl #2]`（4 字节元素 = tick 口径）。
     pub clip_checkpoints: Vec<u32>,
+    /// `+0x110`：**内联 `GraphwarLanBroadcasterV6`**（0xC0 字节；空槽编码见 [`LAN_SLOT_EMPTY`]）。
+    pub lan_broadcaster: Option<LanBroadcasterSlot>,
 }
 
 /// `start_client_to_replay` 造的那个 `SocketAddr`：**`[::1]:0`**。
@@ -521,6 +538,59 @@ pub struct ServerSlot {
 /// 不是猜的；`==2`/`==4` 的比较点见 [`BackendField::MODE`] / [`BackendField::STATE`]。
 pub const PLAYER_SLOT_EMPTY: u32 = 2;
 pub const SERVER_SLOT_EMPTY: u32 = 4;
+
+/// LAN 广播者槽（`+0x110`）的**空**编码：`0x8000_0000_0000_0001`。
+///
+/// 三个写点/读点（arm64，全在 T106 本轮读到的指令里）：
+/// * `GraphwarBackend::new` `0x407e10 mov x9,#-0x7fffffffffffffff` + `0x407e1c str x9,[x21,#0x110]`
+///   ⇒ **初值就是这个值**（⇒ 它是"空"的编码，不是构造出来的对象）；
+/// * `stop_lan_broadcaster` `0x407080`/`0x407084`（`cmp x20,x21` / `b.eq` 早退）与 `0x4070cc`（写回）；
+/// * `start_lan_broadcaster` `0x407234`/`0x407238`/`0x40723c`（`cmp x8,x9` / `b.ne` 早退）。
+///
+/// ⚠️ **这个哨兵由什么机制产生（`Option<…>` 的 niche？哪个字段承载？）本轮未知** ——
+/// 已知的只是"它是 `+0x110` 首字（同时也是 `stop` 里 `__rust_dealloc` 的 size 实参）的非法值"。
+/// `0x8000_0000_0000_0000` 与 `0` 是另外两个"跳过 dealloc"的特例（`0x4070ac`/`0x4070b8`）。
+pub const LAN_SLOT_EMPTY: u64 = 0x8000_0000_0000_0001;
+
+/// LAN 广播者 socket fd 的"未打开"值（`i32` 的 −1）。
+///
+/// `GraphwarLanBroadcasterV6::new` arm64 `0x3de0f0 str w8(=-1),[x19,#0xb8]` 写它；
+/// `stop_lan_broadcaster` `0x407090 cmn w0,#0x1` 用它判"要不要 close"。
+pub const LAN_FD_CLOSED: i32 = -1;
+
+/// 内联 `GraphwarLanBroadcasterV6`（`+0x110..+0x1d0`，0xC0 字节）里**我方建模**的那部分。
+///
+/// 只有两件事有指令证据：socket fd 与那个被 `__rust_dealloc` 释放的堆缓冲长度。
+/// 其余 0xC0−12 字节没读出来 ⇒ 不建模（AGENTS.md §0.3：不猜）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LanBroadcasterSlot {
+    /// `GraphwarLanBroadcasterV6::new` 的第 1 个实参（`start_lan_broadcaster` `0x407244 mov x8,sp` /
+    /// `0x407248 mov w0,w1` ⇒ 本函数第 2 实参原样传进去，且是 **32 位**）。
+    pub port: u32,
+    /// `+0x1c8`（对象内 `+0xb8`）：原始 socket fd，`−1` = 未打开（见 [`LAN_FD_CLOSED`]）。
+    ///
+    /// ⚠️ **已知语义损失**：`GraphwarLanBroadcasterV6::start`（arm64 `0x3de19c`）的**体内本轮没读**
+    /// ⇒ "`start` 之后 fd 变成几"未知。因此 [`GraphwarBackend::start_lan_broadcaster`] 装进来的槽
+    /// 保持 `−1`，`stop` 时也就不会推 `CloseSocket` 步骤。要补这一格，缺的是 `0x3de19c` 的逐指令读
+    /// （`socket()`/`bind()`/`setsockopt()` 的返回值落地位置）。
+    pub fd: i32,
+    /// `+0x110`（对象首字）：堆缓冲的**长度**（`stop` 里的 `__rust_dealloc` 拿它当 `size`，
+    /// 指针取 `+0x118`：`0x4070bc ldr x0,[x19,#0x118]`）。`0` 与 `0x8000_0000_0000_0000` 时**跳过**释放
+    /// （`0x4070b0`/`0x4070b8` 两条判据）—— 也就是"空缓冲不收尾"。
+    pub buffer_len: u64,
+}
+
+/// `start_lan_broadcaster`（arm64 `0x407220` / 144 B）的步骤，顺序 = `bl` 地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartLanBroadcasterStep {
+    /// `GraphwarLanBroadcasterV6::new`（`0x40724c bl 0x3de064`，sret = `x8 = sp`，实参 `w0 = 端口`）。
+    /// 对象建在**栈上**（本函数 `sub sp,sp,#0xe0` 的 0xC0 字节区）。
+    NewBroadcaster,
+    /// `GraphwarLanBroadcasterV6::start`（`0x407254 bl 0x3de19c`，实参 `&mut 栈上对象`）。
+    StartBroadcaster,
+    /// 装槽：`0x407258`–`0x407284` 八组 `ldp q / stp q`，把栈上 0xC0 字节搬进 `self+0x110..+0x1d0`。
+    Install,
+}
 
 /// `setup_level`（arm64 `0x406b4c` / 88 B）的步骤。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -853,6 +923,52 @@ impl GraphwarBackend {
         };
         // 0x4074cc / 0x4074e4 越界 ⇒ None（w0=0）；否则 0x4074ec ldr w1 + 0x4074f0 mov w0,#1
         cps.get(idx).copied()
+    }
+
+    /// `start_lan_broadcaster` —— **原版 arm64 `0x407220` / 144 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x407220..0x4072b0`）：
+    ///
+    /// ```text
+    /// 0x407220  sub  sp,sp,#0xe0 / 存 x29,x30,x19     ; 0xC0 字节区给广播者对象，0x20 给帧
+    /// 0x407230  ldr  x8,[x0,#0x110]                   ; 槽首字（判别位，见 LAN_SLOT_EMPTY）
+    /// 0x407234  mov  x9,#-0x7fffffffffffffff
+    /// 0x407238  cmp  x8,x9
+    /// 0x40723c  b.ne 0x407288                        ; **已经装着 ⇒ 一步都不做**（直接 epilogue）
+    /// 0x407244  mov  x8,sp                           ; sret = 栈上对象
+    /// 0x407248  mov  w0,w1                           ; 实参 = 本函数第 2 实参（32 位口径）
+    /// 0x40724c  bl   0x3de064                        ; GraphwarLanBroadcasterV6::new
+    /// 0x407250  mov  x0,sp
+    /// 0x407254  bl   0x3de19c                        ; GraphwarLanBroadcasterV6::start(&mut 栈上)
+    /// 0x407258..0x407284  8 组 ldp q/stp q            ; 把 0xC0 字节从 sp 搬到 self+0x110..+0x1d0
+    ///                                                       （顺序：+0x190/+0x1b0 → +0x150/+0x170 → +0x110/+0x130）
+    /// 0x407288..  epilogue / ret
+    /// ```
+    ///
+    /// ⇒ 语义：**只在槽为空时装**（与 `start_server` 的"无条件重建"相反，见 [`Self::start_server`]）；
+    /// 装配顺序 = `new(端口)` → `start()` → **整块 0xC0 字节搬进槽**（`new`+`start` 都在栈上完成，
+    /// 失败/panic 时槽仍是原样）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。`start` 的体内没读 ⇒ 开 socket 之后 `+0x1c8` 的 fd 值未知
+    /// （见 [`LanBroadcasterSlot::fd`] 的已知语义损失）。
+    pub fn start_lan_broadcaster(&mut self, port: u32) -> Vec<StartLanBroadcasterStep> {
+        let mut steps = Vec::new();
+        // 0x407238/0x40723c：槽首字 != 空哨兵 ⇒ 直接返回（不 new、不 start）
+        if self.lan_broadcaster.is_some() {
+            return steps;
+        }
+        // 0x40724c：GraphwarLanBroadcasterV6::new(w0 = 端口)，对象在栈上
+        steps.push(StartLanBroadcasterStep::NewBroadcaster);
+        // 0x407254：GraphwarLanBroadcasterV6::start(&mut 栈上对象)
+        steps.push(StartLanBroadcasterStep::StartBroadcaster);
+        // 0x407258..0x407284：整块 0xC0 字节写入 self+0x110
+        self.lan_broadcaster = Some(LanBroadcasterSlot {
+            port,
+            fd: LAN_FD_CLOSED,
+            buffer_len: 0,
+        });
+        steps.push(StartLanBroadcasterStep::Install);
+        steps
     }
 
     /// `resubscribe_to_events`（x86 **`0x514d80`** / FDE `0x112`；arm64 `0x407114`）。
@@ -1271,6 +1387,42 @@ mod denom_t106_tests {
         b.replay_slot_tag = 0;
         b.clip_checkpoints.clear();
         assert_eq!(b.get_next_clip_checkpoint(5), None, "0x40746c cbz x9");
+    }
+
+    /// `0x407e10 mov x9,#-0x7fffffffffffffff` + `0x407e1c str x9,[x21,#0x110]`：LAN 槽的"空"编码。
+    /// 契约断言（不含语义）：钉住常量与指令立即数的对应关系。
+    #[test]
+    fn lan_slot_empty_sentinel_matches_instructions() {
+        assert_eq!(LAN_SLOT_EMPTY, 0x8000_0000_0000_0001, "0x407e10 / 0x407080 / 0x407234");
+        assert_eq!(LAN_FD_CLOSED, -1, "0x3de0f0 str w8(=-1)；0x407090 cmn w0,#0x1");
+        assert_eq!(BackendField::LAN_SLOT_SIZE, 0xc0, "8 组 ldp/stp q = 0xC0 字节");
+        assert_eq!(BackendField::LAN_FD, 0x110 + 0xb8, "对象内 +0xb8 ⇒ 绝对 +0x1c8");
+        assert_eq!(BackendField::LAN_TABLE, 0x110 + 0x78, "对象内 +0x78 ⇒ 绝对 +0x188");
+        // 新后端里 LAN 槽必须是空的（new 写的就是那个哨兵）
+        assert!(GraphwarBackend::new().lan_broadcaster.is_none());
+    }
+
+    /// `start_lan_broadcaster`：**只在空槽时装**（0x40723c `b.ne`），装的时候顺序是
+    /// new(0x40724c) → start(0x407254) → 整块搬入(0x407258..)。第二次调用一步都不推。
+    #[test]
+    fn start_lan_broadcaster_only_installs_into_an_empty_slot() {
+        let mut b = GraphwarBackend::new();
+        assert_eq!(
+            b.start_lan_broadcaster(35245),
+            vec![
+                StartLanBroadcasterStep::NewBroadcaster,
+                StartLanBroadcasterStep::StartBroadcaster,
+                StartLanBroadcasterStep::Install,
+            ],
+            "顺序 = bl 地址顺序 0x40724c → 0x407254 → 0x407258"
+        );
+        let slot = b.lan_broadcaster.expect("0x407284 之后槽里是活的广播者");
+        assert_eq!(slot.port, 35245, "0x407248 mov w0,w1：实参原样进 new");
+        assert_eq!(slot.fd, LAN_FD_CLOSED, "new 写 -1（0x3de0f0）；start 之后的真值本轮未知");
+
+        // 第二个次调用：槽非空 ⇒ 0x40723c b.ne 直接返回，连 new 都不调
+        assert!(b.start_lan_broadcaster(9999).is_empty(), "0x40723c b.ne 0x407288");
+        assert_eq!(b.lan_broadcaster.unwrap().port, 35245, "旧槽不被覆盖（与 start_server 相反）");
     }
 
     /// 差分对拍：我方这段循环与 `partition_point(|&c| c <= current)`（upper_bound 的另一种写法）
