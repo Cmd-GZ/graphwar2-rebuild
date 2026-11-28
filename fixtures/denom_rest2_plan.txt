@@ -1,0 +1,120 @@
+# denom_rest2_plan.txt —— T113 预注册：分母外真缺「难啃但可攻」6 条（2026-11-28，task-103 / 分支 agent/denom-rest2）
+
+本文件在**动任何代码之前**写定判据、取证方法与优先级。跑完不许改判据；判据被证伪就在
+`docs/06` §157 里如实写「判据改了/没达成」。
+
+## 0. 口径
+
+- **地址**：`arm64` = Android 2.0.60 未 strip 版（`.reference/steam/android-2.0.60/libgraphwarrust.so`，
+  `.symtab` 有完整 Rust legacy 名）；`x86` = Linux stripped 版（`.reference/game/libgraphwarrust.so`，
+  只能靠 `fixtures/hybrid_names.tsv` 的结构指纹候选名，**候选名逐条待核**）。
+  **不要**在两份 `.so` 之间做地址换算 —— 只用结构/常量对照。
+- **落码的判据（四条全满足才算"落"）**：
+  1. 函数体落在**原版模块文件**里、用 `symtab` 的真名（mangled 名可读出的那一节）；
+  2. 函数体第一段注释写 **vaddr + 字节数 + 一条关键指令链**；
+  3. 每个**实参常数**都能指到 `.rodata` 槽地址（或立即数编码），并给出该槽的**值**；
+  4. 单测的期望值**来自反汇编常数/分支**，不来自本实现的输出。
+- **证据档**：本轮最多到**观测**。理由写在 §2：两条 `append_*` 有 arm64/x86 双构建逐指令对照，
+  但**没有**运行时对拍（不能标逐位）。
+- **分母外真缺的口径**：以 `fixtures/denom_outside.tsv`（T105，**本轮只读，不动**；t110 在改）为基线。
+  本轮的"落了几条"按**源码函数**数（不是机器码数），并在文档里同时给两个数。
+- **不许动**：`fixtures/denom_outside.tsv`、`fixtures/function_coverage.tsv`、`client/**`、门槛/护栏、
+  t111 正在落码的模块（本任务只碰 `src/graphwar_root_node.rs`、`src/graphwar_play_screen_control.rs`、
+  `src/graphwar_player_screen_control.rs`）。
+
+## 1. 优先级与逐条判据
+
+### P1 `PlayScreenControl::append_debug_text`（arm64 `0x3deec8` / 436 B；x86 候选 `0x3d93c0`）
+
+**只欠读常数**（操作序列 T109 已读出），所以排第一。
+
+判据（逐条都要在代码注释里指到指令）：
+| # | 判据 | 取证方法 |
+|---|---|---|
+| 1.1 | 序列 = `push_color` → `Control::get_size` → `push_font_size` → `push_outline_size` → `push_outline_color` → `append_text(text)` → `append_text("\n")` → `pop`×3 | arm64 `bl` 目标名（symtab 未 strip）；x86 GOT 槽序（0x9baff8/0x9bb000/0x9bb008/0x9bb010/0x9bb018/0x9bb020）对照 |
+| 1.2 | `push_color` 实参 = `.rodata` 0x198ed0 的 **4×f32 = (1,1,1,1)**；x86 同值槽 `0x19ed00` | 读槽 16 字节 + 看 `0x7b4df0 ldr q0,[x19]` 证明 Color 是**按指针**传（x1 = 槽地址） |
+| 1.3 | 字号 = `(get_size().x / 25.0) as i32`；25.0 = arm64 `fmov s0,#25.0`，x86 `divss [0x1b9b8c]` | 追 `fmov s8,s0`（x 分量）+ `fdiv` + `fcvtzs`；x86 `cvttss2si` + 饱和 `cmov` 说明是 Rust `as i32` 饱和转换 |
+| 1.4 | `push_outline_size(4)`：立即数 `mov w1,#4` | arm64 0x3def64 / x86 `mov esi,4` |
+| 1.5 | `push_outline_color` 实参 = `.rodata` 0x197110 的 **4×f32 = (0,0,0,1)**；x86 `0x19cf70` | 读槽 |
+| 1.6 | 尾部 `"\n"` = `.rodata` **单字节 0x0a**（arm64 0x19bdfe / x86 0x1bf7e6） | 读字节 |
+| 1.7 | `pop` **3 次**（与 4 次 push **不对称**）：两构建都得 3 | 数 `bl`（arm64）/ 数 `call r15`（x86 pop 指针被提到寄存器） |
+
+**风险**：若 x86 候选地址 `0x3d93c0` 被判为不同函数 ⇒ 结构对照不成立，只能降成"arm64 单构建观测"。
+反证条件：x86 侧的 `push_color` 槽实参**不是** (1,1,1,1) 或序列不同。
+
+### P2 `PlayScreenControl::append_function_entry`（arm64 `0x3df07c` / 1424 B；x86 候选 `0x3d9590`）
+
+判据：
+| # | 判据 | 取证方法 |
+|---|---|---|
+| 2.1 | 前 5 步与 P1 同（push_color 的实参**来自调用方**，不是常量） | 调用点 arm64 `0x3e27dc` / `0x3e2a70`：`x4 = &Color` 由 `ucvtf`+`fdiv v0.4s` 从字节色算出（**颜色值不是常数，如实登记**） |
+| 2.2 | 第一段文本 = **arg1 + ": "**；": " 是 `mov w9,#0x203a; strh` 两字节 | arm64 0x3df1c0-0x3df1c4；x86 0x3d96d2 `mov word [rax+rsi],0x203a` |
+| 2.3 | 第二段 = `w3 != 0 ? "dy/dx = " : "f(x) = "`；两串 = `.rodata` 0x179a08(8 B) / 0x19bed0(7 B) | arm64 0x3df208-0x3df228 `csel`+`cinc`；x86 0x3d972d-0x3d973d `cmovne`+`lea rdx,[rax+7]` |
+| 2.4 | 第三段 = **arg2** 经 7 次 `str::replace`：`+`,`-`,`*`,`/`,`^`,`(`,`)` 各替换成 `U+200B`+自身 | 7 个 (from,to) 槽对：arm64 0x19bf7f/80, 87/88, 8f/90, 97/98, 9f/a0, a7/a8, af/b0；x86 0x1bf96f/70 … 0x1bf99f/a0；`U+200B` = `e2 80 8b` |
+| 2.5 | 尾部同样是 `append_text("\n")`，但 `pop` **4 次**（4 push/4 pop 对称） | arm64 0x3df4c0/4d8/4f0/508；x86 pop 指针提到 `r15` 后 `call r15`×4 |
+| 2.6 | arg1 = `&String`（首段用它 + 追加 ": "），arg2 = `String`（被 clone 后替换） | arm64 `ldr q0,[x20]`/`ldr x1,[x20+0x10]`（arg1 三字段）vs `ldr q0,[x21]`→`String::clone`→replace 链 |
+
+**判据被证伪时的处理**：若 `pop` 数与 push 数在某一构建里对不上（例：arm64=4 / x86=1 是我第一版误读，
+因为 x86 把 pop 指针提到 `r15`），**以两构建都能解释的读法为准并在注释里写清陷阱**。
+
+### P3 `RootNode::user_args`（arm64 `0x3ab2bc` / 672 B；x86 候选 `0x3b5390`）
+
+T109 把这条判给"clap derive 5752 B 读不通"——**本轮先证伪这条前提**：
+`symtab` 里 `_<graphwar_root_node::Args as clap_builder::derive::Args>::augment_args` 是**独立符号**
+（`0x3b0bd8` / 5752 B），所以 `user_args` 本身**不含** derive 展开。判据：
+
+| # | 判据 | 取证方法 |
+|---|---|---|
+| 3.1 | `user_args` = `std::env::args()` → `Vec<String>::from_iter` | arm64 0x3ab2e4 `bl std::env::args` + 0x3ab2f0 `Vec<String>::from_iter` |
+| 3.2 | 扫 Vec：只认 `len == 2` 且头两字节 == `"--"`（`mov w10,#0x2d2d`）的项，取**第一个** | 0x3ab334 `ldr x12,[x11,#0x10]; cmp x12,#2` + 0x3ab344 `ldrh w11,[x11]; cmp w11,w10` |
+| 3.3 | 结果首元素是合成串 **"graphwar"**（8 字节，`movk` 链 `0x7261_7768_7061_7267`） | 0x3ab3a0-0x3ab3c0 四条 `movk`/`str x8,[x0]` |
+| 3.4 | 其余元素 = `--` **之后**的全部参数（`String::clone` 逐条） | 0x3ab490 `add x23, x8, #0x18`（跳过 `--` 本身）+ 0x3ab4ac `String::clone` |
+| 3.5 | 没有 `--` ⇒ 结果只有 `["graphwar"]` | 0x3ab328 `cmp x8,x26; b.eq 0x3ab380`（0x3ab380 = 只造 "graphwar" 的臂） |
+
+**副产品（必交）**：从 `augment_args`（`0x3b0bd8`）+ `FromArgMatches::from_arg_matches_mut`（`0x3b2250`）
+把 5 个 CLI 参数全表导出到 `fixtures/user_args_table.tsv`：id / 长名 / value_name / 类型 / help 原文 +
+每个串的 `.rodata` 槽地址与长度。**类型**判据：`_<u16 as ValueParserFactory>::value_parser` 出现 3 次
+⇒ 3 个端口是 u16；另 2 个走 `Arg::value_parser::hf35e5b93a8`（String 的 factory）⇒ 2 个地址是 String；
+`from_arg_matches_mut` 里 `try_remove_one` 的两份单态分别被 14/20 与 14/11/11 长度使用，与之一致。
+
+**不做的事**：不引入 clap 依赖、不把 5 个 builder 调用链翻译成 clap 调用。落码只落
+**`user_args` 的取参语义**（`std::env::args` + `--` 过滤 + 合成 argv[0]），这是纯 `std` 可复现的。
+`augment_args` 的 builder 链**只登记不落**（缺 clap 依赖；且它属 `clap_builder`，不是游戏业务逻辑）。
+
+**风险**：`--` 取"第一个"还是"最后一个"若读错，语义恰好相反（取之后 vs 取之前）。判据 3.2 要求
+逐条指令走一遍循环出口；反证条件：若循环在命中后继续扫到末尾，说明取的是**最后**一个。
+
+### P4 `PlayerScreenControl::insert_button_in_vbox`（arm64 `0x44fa48` / 1012 B）+ `update_buttons_background_in_vbox`（`0x450020` / 1180 B）
+
+**最难、排最后**（缺的是"节点模板 + 名字表"）。判据：
+
+| # | 判据 | 取证方法 |
+|---|---|---|
+| 4.1 | `insert_button_in_vbox` 新建的节点**类名字面量**（`construct_engine_object` 的类名参） | 全函数 `adrp/add` 串导出 + `gdext` 的 `construct_engine_object` 调用点实参 |
+| 4.2 | 插入下标：`add_child`/`add_sibling`/`move_child` 的实参（常量 or 由 `get_child_count` 算） | 追 `children.len()` 算术与调用实参 |
+| 4.3 | `update_buttons_background_in_vbox` 的**完整名字→图标映射**：每个 (节点名, 图标名) 对都要有 `.rodata` 槽 | 全函数串导出（已知 `Skin`/`BackgroundButton`/`SkinBlock`/`PendingBlock`/`no_hat`/`soldier_helmet` 只是子集）+ `set_button_icon` 调用点 |
+| 4.4 | x86 侧是否有同源函数（`fixtures/hybrid_names.tsv` 给 `0x4f7bb0` 是"候选、待核"；`update_…` 是"歧义"） | 结构对照；**证不出就只落 arm64 单构建并明确写"x86 侧未知"** |
+
+**允许失败**：P4 若只能导出串表而不能定"哪个名字配哪张图"，就落"串表 + 调用序列"并把
+"映射的语义"标**推断/未知**，不许把猜测写成陈述句。
+
+### P5 `RootNode::print_help_and_exit_if_requested`（arm64 `0x3ab19c` / 288 B）
+
+T109 已落码，**本轮只复核**，判据 = 逐条指令与 T109 的落码注释一致：
+`bl user_args` → `bl Parser::try_parse_from` → `cmp x1,-0x7fff…f` 判 Err 臂 → `ldrb w8,[err+0xdd]`
+→ `orr w8,w8,#2` → `cmp w8,#0xe` → `Error::print` + `stdout` + `flush` + `fflush(0)` + `_exit(0)`；
+非该臂 ⇒ `drop_in_place<ErrorInner>` + `dealloc(0xe0,8)`。**复核通过就不改码**，只在报告里写"复核 PASS"。
+
+## 2. 档位纪律
+
+- 双构建（arm64 未 strip + x86 stripped）**逐指令同构** + 常数槽同值 ⇒ 仍只是**观测**：
+  没有运行时对拍（不能标逐位）。文档里逐条写"观测（arm64 指令 + x86 同值槽）"。
+- 颜色/字号的"值"是**从 `.rodata` 读出来的位模式**，属观测；`as i32` 的语义（饱和 vs 截断）
+  在 arm64 是 `fcvtzs`、x86 是 `cvttss2si`+`cmov` 夹取，两侧一致 ⇒ 观测。
+- `args` 的 `required`/默认值：只有静态串证据 ⇒ 标**推断**，并把缺什么写清。
+
+## 3. 报告口径
+
+`docs/06` §157 必须逐条给：**vaddr｜真名｜落点(文件:行)｜档位｜落了/没落 + 理由**；
+另给：实参值对照表（常量槽 = 值）、`user_args` 参数表摘要、分母外真缺变化的两个数
+（机器码 / 源码函数）、三个进度数（A/B/D_A，分开报）、门槛读数、复跑命令。
