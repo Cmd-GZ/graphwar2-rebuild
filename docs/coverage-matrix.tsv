@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: df581b7fd4747aa84bfa6cfe99dae9cd4c85afc241f19c09a9e7e66f1c1aad81
+# src_tree_sha256: bd693496bff2554ece5244d447d737968fdbace59bf66c5dd14fa13c69a13914
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 120
-# src_fns: 4125
+# src_fns: 4138
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	46	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	25	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
@@ -55,7 +55,7 @@ graphwar_name_manager.rs	graphwar	3	0	3	src/graphwar_name_manager.rs	17	观测	4
 graphwar_nodes.rs	graphwar	11	0	1	src/graphwar_nodes.rs	30	观测	11/11：**不造节点**，是全客户端唯一的「按名字/按类型在场景树里找节点」入口——get_node_by_name::<T>（11 个单态化薄壳）/ get_node_by_name_rec（17）/ get_node_by_type_rec（1）；另给 40 个节点名 + 80 个调用点三张表（docs/16 §28）
 graphwar_obstacle_manager.rs	graphwar	8	0	14	src/graphwar_obstacle_manager.rs	20	逐位	只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。⚠ 文件级归属未定：class_probe 给出的本模块锚函数是 0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0，0x4f15b0 不在其中（docs/02 §17.1 记录了这处冲突，不强行圆）
 graphwar_path_calculator.rs	graphwar	1	0	9	src/graphwar_path_calculator.rs	2	逐位	docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模
-graphwar_plane.rs	graphwar	10	1	19	src/graphwar_plane.rs+src/plane.rs	125	观测	12 个 GDExtension 类里的第 4 个，本轮补齐（docs/16-client.md §26）：8 个方法 + 1 个 `ready::{{closure}}` + 6 个 gdext 入口全部落到 x86 地址，判据是 arm64 `.symtab` 定名 + 三类指纹（19 个 Location 键集 / 被调者多重集 / 首尾相接链）。`draw` 的图元逐位（`Rect2(-25,-15,50,30)` + `Color(0,0,0,1)` + width `0.2` + `filled=false`），`obstacle_partial_update_event` 的坐标变换逐位（常量槽 `0x19fbd0`/`0x19faa8`/`0x19ee00`…）。⚠ 旧行写 `逐位` 是按**掩膜光栅化**算的，而掩膜属 `graphwar_obstacle_manager`（同一张表里另有一行）⇒ 本模块自身只到 `观测`：没有整函数的逐字节对拍。`src/plane.rs` 里剩下的掩膜 / 换算归 obstacle_manager 与 plane_pos_manager，见 docs/02 §17.4
+graphwar_plane.rs	graphwar	10	1	19	src/graphwar_plane.rs+src/plane.rs	128	观测	12 个 GDExtension 类里的第 4 个，本轮补齐（docs/16-client.md §26）：8 个方法 + 1 个 `ready::{{closure}}` + 6 个 gdext 入口全部落到 x86 地址，判据是 arm64 `.symtab` 定名 + 三类指纹（19 个 Location 键集 / 被调者多重集 / 首尾相接链）。`draw` 的图元逐位（`Rect2(-25,-15,50,30)` + `Color(0,0,0,1)` + width `0.2` + `filled=false`），`obstacle_partial_update_event` 的坐标变换逐位（常量槽 `0x19fbd0`/`0x19faa8`/`0x19ee00`…）。⚠ 旧行写 `逐位` 是按**掩膜光栅化**算的，而掩膜属 `graphwar_obstacle_manager`（同一张表里另有一行）⇒ 本模块自身只到 `观测`：没有整函数的逐字节对拍。`src/plane.rs` 里剩下的掩膜 / 换算归 obstacle_manager 与 plane_pos_manager，见 docs/02 §17.4
 graphwar_plane_pos_manager.rs	graphwar	6	0	9	src/graphwar_plane_pos_manager.rs	20	观测	docs/140：px = 20x + 500 由常量反查得出、准备圈画法已扒出；没有端到端逐位对拍
 graphwar_play_screen_control.rs	graphwar	10	3	64	src/graphwar_play_screen_control.rs	97	观测	docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正
 graphwar_player_config.rs	graphwar	0	0	0	src/graphwar_player_config.rs	8	观测	PlayerShowcase 读的 config（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8）；存档分隔符未解（docs/16 §33）
@@ -82,7 +82,7 @@ axis_drawer.rs	other	6	0	3	src/axis_drawer.rs	21	观测	3 个 pub fn / 24 常量
 backtracer.rs	other	0	0	0	src/backtracer.rs	2	观测	panic 钩子写 user://crash_log.txt；两侧都**没有** Backtrace::capture（名字误导）（docs/16 §33）
 button_manager.rs	other	2	0	3	src/button_manager.rs	7	观测	3 函数（9936 B 的 new + 两份 find_buttons 单态化）；地址只钉住 0x3a2e10（docs/16 §36）
 effect_drawer.rs	other	11	3	17	src/effect_drawer.rs	51	观测	7 个 pub fn / 36 常量：draw_circle×4 + polygon×1 + line×2 + 一次 draw_set_transform，半径 0.05/0.06；tick 制 60 tick = 1 秒，物理子步 1/600 s，相位推进 600 tick；与 client/ 有 10 处出入（docs/16 §21）
-entity_drawer.rs	other	14	6	36	src/entity_drawer.rs	130	观测	10 个函数全解：draw/ready/process/update_sprite/update_name_label/draw_offset_triangle/get_entity_{hat,name_label,face,skin}。**士兵/靶子不是图元而是子节点**——3 个 Sprite2D（skin/face/hat 贴图）+ 1 个 RichTextLabel（res://name_label.tscn），懒建缓存于 4 张 HashMap，由 process 每帧摆位置；draw() 只画准星（3 弧 + 3 箭头）。docs/16 §24
+entity_drawer.rs	other	14	6	36	src/entity_drawer.rs	140	观测	10 个函数全解：draw/ready/process/update_sprite/update_name_label/draw_offset_triangle/get_entity_{hat,name_label,face,skin}。**士兵/靶子不是图元而是子节点**——3 个 Sprite2D（skin/face/hat 贴图）+ 1 个 RichTextLabel（res://name_label.tscn），懒建缓存于 4 张 HashMap，由 process 每帧摆位置；draw() 只画准星（3 弧 + 3 箭头）。docs/16 §24
 function_button_manager.rs	other	2	0	3	src/function_button_manager.rs	6	观测	3 函数：函数输入键盘的**按键分发器**——按钮把自带 &str 交进来，闭包分发给 8 个 GraphwarFunctionInput 方法；按钮文本来自场景（Rust 里 0 个函数名字面量）（docs/16 §36）
 function_drawer.rs	other	1	0	1	src/function_drawer.rs	32	观测	5 方法（x86 落 4，唯一锚 0x498c70 = update_function）。**自己不画图元**：持 HashMap<i32(player id), (Gd<Line2D>, 已写入点数)>，GraphwarPlane::init 建 3 个并 add_child；update_function 仅在 new_len > 已写入数时，对 points[written..new_len] 逐点 Line2D::add_point（16B/点，两个 f64）=> **增量追加，不是整条重画**；变短时一点不加（docs/16 §36）
 function_history_recorder.rs	other	1	0	3	src/function_history_recorder.rs	20	观测	3 函数：**无上限、无预留、不去重**（推送就是 Vec::push）；上下键在两份二进制里都没有落点（ui_up/ui_down 各 0 处、无箭头键码）=> **只写不读，消费者未知**（docs/16 §36）

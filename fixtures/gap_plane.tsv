@@ -1,0 +1,38 @@
+# gap_plane.tsv —— T102：`graphwar_plane` 的 **27 条 Android 2.0.60 `.symtab` 真名函数**逐条分类
+# 判据 = **预注册** fixtures/gap_drawers2_plan.txt（§2.2 目标集合 / §4 判决规则 / §4.1 implemented 加严 / §4.3 S 算法）
+# 地址口径：`android_addr` = **Android** ELF vaddr（arm64）；`linux_addr` = **Linux** ELF vaddr（x86-64）。
+#   ⚠️ 两份构建地址**互不可换算**。Ghidra/REA 地址 = linux_addr + 0x100000（只加一次）。
+# `linux_527` = fixtures/function_coverage.tsv 的判档；`—` = Linux 527 分母里没有对应行（§4 R2 三种解释见 `note`）。
+# 计数（现算，27 行）：implemented **5** / real-missing **3** / na:gdext-glue **13** / na:other **6**（drop-glue 4 + closure-in-fn 2）
+#   ⇒ 源码函数 **8** = 5 implemented + 3 real-missing；**待写 3**（本轮落 1 = `on_resized`；另 2 条写明缺什么）。
+# ⚠️ **与 §143 的 `lin_F3_real = 0` 不矛盾、但口径不同**：`clear_state` / `update_entities` / `on_resized`
+#   **体内 `panic::Location` = 0** ⇒ 进不了 527 分母（= R2①），所以 M 口径永远看不到它们。
+#   源码级这 3 条是**真缺口**（S 口径）。详见 docs/06 §148.3/§148.4。
+android_addr	android_size	demangled	class	subclass	linux_addr	linux_527	rule	evidence	landing	note
+0x3940b4	156	core::ptr::drop_in_place<godot_core::storage::single_threaded::InstanceStorage<GraphwarPlane>>	na:other	drop-glue	—	—	R1-drop	glue 名首段 = `core::ptr`（`_ZN4core3ptr125…`）⇒ 源码层无 fn	—	N3 负对照：这条证明 `android_fns` 里天然含非源码产物
+0x394f60	256	core::ptr::drop_in_place<GraphwarPlane>	na:other	drop-glue	—	—	R1-drop	`_ZN4core3ptr64drop_in_place$LT$graphwarrust..graphwar_plane..GraphwarPlane$GT$`	—	—
+0x3af200	256	core::ptr::drop_in_place<GraphwarPlane>（.llvm. 克隆）	na:other	drop-glue	—	—	R1-drop	同上 + `.llvm.3942227251136142838`	—	—
+0x4b8e60	400	<GraphwarPlane as ImplementsGodotApi>::__register_methods	na:gdext-glue	register	0x4b2260	F3（na）	R1-glue	Linux 侧 f3_triage.tsv/function_coverage.tsv 已判 `na:gdext-glue`（`lock cmpxchg` 写可写全局 0x9c0e48 + 全 .text 零 call 调用点 + 只经数据表）	—	本行是 **M 与 A 都对上的唯一一对**（宏产物里的巧合，见 T97 §145「并列陷阱」）
+0x4b8ff0	400	<GraphwarPlane as ImplementsGodotApi>::__register_constants	na:gdext-glue	register	0x4b23e0	F3（na）	R1-glue	同上	—	同族 4 条 Linux 行：0x4b2260/0x4b23e0/0x4bc6b0/0x4bcab0
+0x4bc378	156	<GraphwarPlane as ImplementsGodotVirtual>::__virtual_call::virtual_fn	na:gdext-glue	virtual-call	—	—	R1-glue	156 B 薄壳 = gdext 虚调用分发（同 T97 §145 判定）；宏产物在两份构建间编号不可比	—	3 条：0x4bc378/0x4bc414/0x4bc4b0
+0x4bc414	156	<GraphwarPlane as ImplementsGodotVirtual>::__virtual_call::virtual_fn	na:gdext-glue	virtual-call	—	—	R1-glue	同上	—	—
+0x4bc4b0	156	<GraphwarPlane as ImplementsGodotVirtual>::__virtual_call::virtual_fn	na:gdext-glue	virtual-call	—	—	R1-glue	同上	—	—
+0x4bc54c	4592	<GraphwarPlane as IControl>::draw	implemented	virtual-draw	0x4b5df0	F1	P1	x86 Location 唯一锚 `src/graphwar_plane.rs:84:49`（9 个键 {84,87,90,93,108,110,274,276,292} 两侧逐个相等，`PLANE_FUNCS`）；我方 `fn draw` 在 src/graphwar_plane.rs:1738	既有	draw_rect(Rect2(-25,-15,50,30)) + draw_set_transform 逐位（docs/16 §23.3）
+0x4bd73c	1336	<GraphwarPlane as IControl>::init	implemented	virtual-init	0x4b7380	F1	P1	x86 唯一锚 `src/obstacle_drawer.rs:37:97`（内联进来的 ObstacleDrawer 构造）⇒ `name_src=name-other`；构造点 ← 槽 0x9bb730（T78）；我方 `fn init` 在 src/graphwar_plane.rs:1636	既有	尺寸 0x110 已由 T78 钉死
+0x4bdc74	1400	<GraphwarPlane as IControl>::ready	implemented	virtual-ready	0x4b7a70	F1	P1	x86 4 个 Location 键 {218,222,230,238} 相等 + 3× subscribe_to_event 两侧相等（`PLANE_FUNCS`）；我方 `fn ready` 在 src/graphwar_plane.rs:1675	既有	—
+0x4be1ec	404	<GraphwarPlane as IControl>::ready::{{closure}}	na:other	closure-in-fn	0x4b8210	—	R1-closure	`PLANE_FUNCS` 记 x86 0x4b8210 ↔ arm64 0x4be1ec：两侧都调 `obstacle_partial_update_event`（arm64 0x4be1ec → 0x4c38d8；x86 0x4b8210 → 0x4be3e0）⇒ 订阅闭包；父函数 ready 已 implemented	—	闭包体 = 把事件转发给 obstacle_partial_update_event（我方 `on_obstacle_partial_update` 有对应语义）
+0x4be380	436	<GraphwarPlane as IControl>::ready::{{closure}}	na:other	closure-in-fn	—	—	R1-closure	第二条闭包（436 B）：Linux 侧**未与 `PLANE_FUNCS` 的那一条对上**（0x4b8210 已配给 0x4be1ec）⇒ 缺 1 条映射	—	⚠️ 登记为「映射缺 1 条」；不影响判决（父函数 ready 已 implemented）
+0x4be534	956	<GraphwarPlane as IControl>::process	implemented	virtual-process	0x4b83f0	F1	P1	x86 2 个 Location 键 {254,256} 相等 + 2× ObstacleDrawer::update + 1× get_team_overview 两侧相等；我方 `fn process` 在 src/graphwar_plane.rs:1696	既有	—
+0x4c1c58	464	graphwar_plane::_::__init::__inner_init	na:gdext-glue	inner-init	0x4bc860	F3（na）	R1-glue	Linux 0x4bc860 的 Location = `src/graphwar_plane.rs:179:1` 且 f3_triage 判 `na:gdext-glue`（零 call 调用点 + 数据表 1 槽 + 0x78 步长）	—	`PLANE_GDEXT_ENTRIES` 里两条是**观测**（:33:10 → 0x4bc490 / :179:1 → 0x4bc860），另两条是**推断**（相对次序 + 等长）
+0x4c1e28	472	graphwar_plane::_::__init::__inner_init	na:gdext-glue	inner-init	0x4bc490	F3（na）	R1-glue	`PLANE_GDEXT_ENTRIES` 记 x86 0x4bc490 ↔ arm64 0x4c1e28（Location `src/graphwar_plane.rs:33:10` 双向唯一）	—	同族：0x4c1e28/0x4c1c58/0x4c2000/0x4c21c0
+0x4c2000	448	graphwar_plane::_::__init::__inner_init	na:gdext-glue	inner-init	0x4bc6b0	F3（na）	R1-glue	`PLANE_GDEXT_ENTRIES`：`:68:1` 组内相对次序 + 等长（448↔0x1b0）配对，**推断**	—	本表沿用仓库既有配对，不重新推断
+0x4c21c0	436	graphwar_plane::_::__init::__inner_init	na:gdext-glue	inner-init	0x4bcab0	F3（na）	R1-glue	同上（`docs/08` §3 那条 lazy static 初始化就是这一族）	—	—
+0x4c3308	256	GraphwarPlane::on_resized	real-missing	method	0x4bddb0	—	P2+R2①	**本轮把「3× `Control::set_*` 方法名未解」（`UNKNOWNS` 第 3 条、docs/16 §23.3）解了**：槽 0x9bc0c8 → thunk 0x8910e0，thunk 里两对 `(名指针,长度)` = `'Control'`(7) + `'set_size'`(8) ⇒ **`Control::set_size` ×3**；另 1 次 `Control::get_size`（槽 0x9bb000 → 0x8925f0，`'get_size'`(8)）。调用者 `addr_probe callers 0x4bddb0` = 3 点，其中唯一游戏内调用点 **0x4b7b0a 在 ready(0x4b7a70) 体内**	**本轮落码**	尾部 `+0x50/+0x58/+0x60`（脏矩形队列）重置 = 清空 + 一个 16 字节零元素（见 §148.5 的未解部分）
+0x4c3408	900	GraphwarPlane::clear_state	real-missing	method	0x4bded0	—	P2+R2①	调用序（本轮实跑 `dis 0x4bded0`）：`Node::queue_free`（`0x4be015 call %rbx`，rbx 来自槽 0x9ba7e8→0x8ca920 的取子节点）→ `0x4971e0`（FunctionDrawer 家族，docs/16 §23.3 第 13 条）→ 槽 0x9bbdf0→**0x460e50**（Vec 增长 helper，与 on_resized 尾部同一个）→ 2 次 `0x91e8d3`/`0x925430` → 槽 0x9ba5a0→0x528070 → 2× `0x47f890` + 2× `0x94b340`	**未落（登记）**	缺什么：`0x91e8d3`/`0x925430`/`0x528070` 三个 thunk 里**没有** `(名,长度)` 字面量对（L3：可能经 GOT 二次转发或内联）⇒ 方法名定不了；另 `EntityDrawer`/`EffectDrawer` 两个类名的用途仍未解（`UNKNOWNS` 第 5 条）
+0x4c378c	332	GraphwarPlane::update_entities	real-missing	method	0x4be270	—	P2+R2①	docs/16 §23.3 记「与 `clear_state` 同型但只 `queue_free` ×1」；`fixtures/hybrid_names.tsv` 记 x86 0x4be270 = `update_entities`（`fp` 高置信同源 score 0.7725）	**未落（登记）**	缺什么：同上（`queue_free` 的**对象**来自哪个字段未定；332 B 里另有 1 次 0x460e50 同族 helper）
+0x4c38d8	260	GraphwarPlane::obstacle_partial_update_event	implemented	method	0x4be3e0	F2	P1	x86 唯一锚 `src/graphwar_plane.rs:174:18` 两侧双向唯一 ⇒ 地址钉死；M 台账记 **F2** 的理由是「我方只有跨模块同名自由函数」—— 我方 `graphwar_plane::obstacle_partial_update_event`(src/graphwar_plane.rs:373) 有完整函数体（tag 判别 + `×1000/÷50` + 饱和截断，docs/16 §23.3 逐指令）	既有	⚠️ **边界不符**：原版是方法、我方是自由函数 ⇒ 源码级待归一（docs/06 §148.6）
+0x4c39dc	156	…::__init::__inner_init::{{closure}}::ptrcall_fn	na:gdext-glue	ptrcall	—	—	R1-glue	`ptrcall_fn` = gdext ptrcall 分发壳（156 B，T97 §145 同形）	—	—
+0x4c3a78	192	…::__init::__inner_init::{{closure}}::varcall_fn	na:gdext-glue	varcall	—	—	R1-glue	`varcall_fn`（192 B）	—	—
+0x4d7810	256	core::ptr::drop_in_place<GraphwarPlane>（.llvm. 克隆）	na:other	drop-glue	—	—	R1-drop	同 0x394f60 + `.llvm.3673274472031243879`	—	—
+0x4d9314	156	<GraphwarPlane as UserClass>::__default_virtual_call::virtual_fn	na:gdext-glue	default-virtual	—	—	R1-glue	宏生成的虚方法默认实现壳	—	—
+0x4d93b0	64	<GraphwarPlane as GodotClass>::class_id	na:gdext-glue	class-id	—	—	R1-glue	64 B 常量返回壳	—	—

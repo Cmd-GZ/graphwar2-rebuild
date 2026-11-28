@@ -386,6 +386,67 @@ pub fn obstacle_partial_update_event(
     rect
 }
 
+/// `GraphwarPlane::on_resized`（**x86 `0x4bddb0` / arm64 `0x4c3308`**）的**尾部语义**（纯逻辑部分）：
+/// 把脏矩形队列重置成「清空 + 一个零矩形」。
+///
+/// 逐位证据（`addr_probe.py dis 0x4bddb0`，函数末 12 条指令）：
+///
+/// ```text
+/// 0x4bde90  mov  qword ptr [rbx+0x60], 0      ; len = 0        ← 先清空
+/// 0x4bde98  cmp  qword ptr [rbx+0x50], 0      ; cap == 0 ?
+/// 0x4bde9d  jne  0x4bdea9
+/// 0x4bde9f  lea  rdi, [rbx+0x50]
+/// 0x4bdea3  call qword ptr [rip+0x4fdf47]     ; 槽 0x9bbdf0 → 0x460e50（RawVec 增长：
+///                                             ;   读 [rdi]=cap、新 cap = max(2·cap, 4)；
+///                                             ;   **min 4** 正是 Rust `RawVec` 对"元素 > 1 字节"的规则）
+/// 0x4bdea9  mov  rax, qword ptr [rbx+0x58]    ; rax = ptr
+/// 0x4bdead  movaps xmm0, [rip-0x321dd4]       ; 16 个 0 字节（.rodata 0x19c0e0）
+/// 0x4bdeb4  movups [rax], xmm0                ; *ptr = (0,0,0,0)
+/// 0x4bdeb7  mov  qword ptr [rbx+0x60], 1      ; len = 1
+/// ```
+///
+/// `+0x50`(cap) / `+0x58`(ptr) / `+0x60`(len) 就是 [`PlaneIntent::partial_updates`] 那个
+/// `Vec<PixelRect>`（本轮独立复核：这条字段恒等是 T88 那一轮钉的，见 [`UNKNOWNS`] 第 5 条），
+/// 16 字节 = [`PixelRect`] 的大小（4 × `i32`）⇒ **`rects = vec![PixelRect::default()]`**。
+/// 档位：指令序列 **逐位**；"那就是 Vec 的 clear+push" = **观测**（cap/ptr/len 三格 + 16 B 写入 + min-cap 4）。
+///
+/// 抽成独立函数的唯一理由：让这条语义能在**不链接引擎**的测试里断言（它不是原版的函数）。
+pub fn reset_partial_updates(rects: &mut Vec<PixelRect>) {
+    rects.clear();
+    rects.push(PixelRect {
+        min_x: 0,
+        min_y: 0,
+        max_x: 0,
+        max_y: 0,
+    });
+}
+
+/// `on_resized` 里那 3 次 `Control::set_size` 的**槽链**（本轮把 `docs/16` §23.3 的
+/// "`Control::set_*` ×3 方法名未解"解掉的产物）。
+///
+/// ```text
+/// 0x4bddc2  call *[0x9ba680] → 0x89b170    ; gdext base 助手（本个 thunk **没有** (类,方法) 字面量对）
+/// 0x4bddd1  …                              ; 取 size 的前半（Vector2 拆两半）
+/// 0x4bddfa  call *[0x9bb000] → 0x8925f0    ; thunk 里 ('Control',7) + ('get_size',8)  ⇒ Control::get_size
+/// 0x4bde39/0x4bde63/0x4bde8d call *r12     ; r12 = [0x9bc0c8] → 0x8910e0，
+///                                          ; thunk 里 ('Control',7) + ('set_size',8)  ⇒ Control::set_size ×3
+/// ```
+///
+/// 三次调用的实参都是 `(size.x, size.y)`（`movss xmm0,[rsp+4]` / `movss xmm1,[rsp]`，与
+/// `get_size` 的返回值同址）⇒ **三个子节点被设成平面自己的尺寸**。
+///
+/// 对象字段：`+0xc8` / `+0xe0` / `+0xf8`（三份 `Gd<Control>`，step 0x18 = `Ragd` 24 B）。
+/// 那三个子节点 = `init` 建的 3 个 `FunctionDrawer`（`FUNCTION_DRAWER_CHILDREN`，`docs/16` §23.2）。
+/// 档位：方法名/实参 **逐位**；"对象是那 3 个 FunctionDrawer" = **推断**（缺 0xc8 字段与 init 写入点的逐条对照）。
+pub const ON_RESIZED_ENGINE_SLOTS: [(&str, &str, u32, u32); 2] = [
+    // (类名, 方法名, GOT 槽, thunk)
+    ("Control", "get_size", 0x9bb000, 0x8925f0),
+    ("Control", "set_size", 0x9bc0c8, 0x8910e0),
+];
+
+/// `on_resized` 里那 3 个被 `set_size` 的子节点字段偏移（step 0x18）。**逐位**（`[rbx+0xc8]/[rbx+0xe0]/[rbx+0xf8]`）
+pub const ON_RESIZED_CHILD_OFFSETS: [u32; 3] = [0xc8, 0xe0, 0xf8];
+
 // ---------------------------------------------------------------------------
 // `draw`（0x4b5df0）的图元常量
 // ---------------------------------------------------------------------------
@@ -543,13 +604,18 @@ impl PlaneIntent {
 // ---------------------------------------------------------------------------
 
 /// 本模块**明确不知道**的东西（照实写；每条都写清缺什么证据）。
-pub const UNKNOWNS: [&str; 6] = [
+///
+/// ⚠️ **T102 结案了一条**：原来第 3 条是「`on_resized` 里 3 次 `Control::set_*` 设的是哪三个属性
+/// （方法名未解）」—— 本轮把槽→thunk→`(类名, 方法名)` 字面量解出来了，三条都是
+/// **`Control::set_size`**（另 1 次 `Control::get_size`），见 [`ON_RESIZED_ENGINE_SLOTS`]。
+/// 剩下没解的是「那三个对象（字段 `+0xc8/+0xe0/+0xf8`）到底是不是 `init` 建的 3 个
+/// `FunctionDrawer`」——**推断**级，缺的是那两个偏移与 `init` 写入点的逐条对照。
+pub const UNKNOWNS: [&str; 5] = [
     "实体 tag 0x28 / 0x29 各是哪一类（士兵 / 障碍 / 靶子）：0x4be3e0 只做判别，没有类型名可比",
     "draw 里那些游戏内被调者的语义：其中 5 个连 Location 锚都没有（无 module 可归）",
-    "on_resized 里 3 次 Control::set_* 设的是哪三个属性（走 GOT 槽，方法名未解）",
     "obstacle_partial_update_event 开头那次 call *0x9bb288（0x4be41f）是什么转换：入参是 size，出参直接乘 1000",
     "clear_state 里引用 EntityDrawer / EffectDrawer 类名的用途（只是 cast 目标？还是清子节点？）",
-    "GraphwarPlane 的字段真名与偏移（只确证了那个 Vec 的三个槽 +0x50 / +0x58 / +0x60）",
+    "GraphwarPlane 的字段真名与偏移（只确证了那个 Vec 的三个槽 +0x50 / +0x58 / +0x60；on_resized 的三个子节点字段 +0xc8/+0xe0/+0xf8 是推断）",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1088,6 +1154,57 @@ mod tests {
         assert_ne!(DRAW_RECT_SLOT, DRAW_LINE_SLOT);
         assert_eq!(DRAW_LINE_CALLS_IN_PLANE, 0);
     }
+
+    // -----------------------------------------------------------------------
+    // T102 落码：`on_resized`（x86 0x4bddb0）的尾部语义
+    //
+    // 期望值来自 `addr_probe.py dis 0x4bddb0` 的 12 条指令（见 `reset_partial_updates` 的文档），
+    // 不来自我方实现的输出（`AGENTS.md` §0.5）。
+    // -----------------------------------------------------------------------
+
+    /// 尾部 = 「清空 + 压一个**全零** 16 字节元素」。
+    ///
+    /// 逐位依据：`0x4bde90 len=0` → `0x4bde98 cmp cap,0` → `0x4bdea3 槽 0x9bbdf0→0x460e50`
+    /// （RawVec 增长，`min cap 4`）→ `0x4bdead movaps 16 个零字节` → `0x4bdeb4 movups [ptr]`
+    /// → `0x4bdeb7 len=1`。
+    #[test]
+    fn on_resized_tail_resets_partial_updates_to_one_zero_rect() {
+        let mut rects = vec![
+            PixelRect { min_x: 1, min_y: 2, max_x: 3, max_y: 4 },
+            PixelRect { min_x: -9, min_y: -9, max_x: 9, max_y: 9 },
+        ];
+        reset_partial_updates(&mut rects);
+        assert_eq!(rects.len(), 1, "尾部把 len 置 1（0x4bdeb7）");
+        assert_eq!(
+            rects[0],
+            PixelRect { min_x: 0, min_y: 0, max_x: 0, max_y: 0 },
+            "写进去的是 16 个零字节（0x4bdead/0x4bdeb4）"
+        );
+        // 元素大小必须是 16 B —— 这是"`movups` 写 16 字节 = 一个元素"的前提
+        assert_eq!(std::mem::size_of::<PixelRect>(), 16);
+        // 幂等：再调一次还是 1 个
+        reset_partial_updates(&mut rects);
+        assert_eq!(rects, vec![PixelRect { min_x: 0, min_y: 0, max_x: 0, max_y: 0 }]);
+    }
+
+    /// `on_resized` 的引擎调用链：`get_size` 1 次 + `set_size` 3 次，都是 `Control` 的方法。
+    ///
+    /// 槽→thunk→`(类名, 方法名)` 三对字面量是**逐位**（`docs/06` §148.2 的 C2 自校验：
+    /// gdext 助手 thunk 必须解不出名字，引擎方法 thunk 必须解得出来）。
+    #[test]
+    fn on_resized_slots_resolve_to_control_methods() {
+        assert_eq!(
+            ON_RESIZED_ENGINE_SLOTS.map(|s| (s.0, s.1)),
+            [("Control", "get_size"), ("Control", "set_size")]
+        );
+        assert_eq!(ON_RESIZED_ENGINE_SLOTS.map(|s| s.2), [0x9bb000, 0x9bc0c8]);
+        assert_eq!(ON_RESIZED_ENGINE_SLOTS.map(|s| s.3), [0x8925f0, 0x8910e0]);
+        // 三个子节点字段 step 0x18（Ragd 24 B），起点 0xc8
+        assert_eq!(ON_RESIZED_CHILD_OFFSETS, [0xc8, 0xe0, 0xf8]);
+        for w in ON_RESIZED_CHILD_OFFSETS.windows(2) {
+            assert_eq!(w[1] - w[0], 0x18, "子节点句柄 24 B 一份");
+        }
+    }
 }
 
 
@@ -1153,9 +1270,9 @@ mod node_class {
 //! | `ready` 的 3 个订阅 | `add_obstacle_event` / `destroy_obstacle_event` / `clear_obstacles_event`（`READY_EVENTS`） | **没订**（要 `GraphwarBackend`）；只把信号名与事件名**从纯逻辑里取出来用** | 名字与顺序**观测**；订阅**未做** |
 //! | `resized` → `on_resized` | 信号名 `"resized"`、处理者名 `"on_resized"`（`.rodata` 两条字面量） | 真连（信号名与处理者名都取 `graphwar_plane::RESIZED_*`，不另写字符串） | **观测** |
 //! | `process` 每帧 | `ObstacleDrawer::update` ×2 + 读一次队色（`process_plan` ⇒ `(2, true)`） | 用 `process_plan()` 的 `2` 当"本帧刷几次"并计数；**没有** `ObstacleDrawer` 节点、**没有**队色 | 数字**观测**；刷的是空操作 |
-//! | `on_resized` 里那 3 次 `Control::set_*` | 走 GOT 槽，**方法名未解**（`UNKNOWNS` 第 3 条） | 只 `queue_redraw()` | 原版**未知** |
+//! | `on_resized` 里那 3 次 `Control::set_*` | **T102 已解**：3 × `Control::set_size(size)` + 1 × `Control::get_size`（槽 0x9bc0c8/0x9bb000 → thunk 里 (类名,方法名) 字面量） | 现在**真调** `set_size` 三次 + 脏矩形队列重置（`reset_partial_updates`）；`queue_redraw()` 是我方接线 | **逐位**（方法名/实参）；对象是不是那 3 个 FunctionDrawer = **推断** |
 //! | `obstacle_partial_update_event` 的坏 tag | **`panic!()`**（消息是 `.rodata` 的 `"explicit panic"`） | **先拦**：`is_partial_update_tag` 为假就 `godot_warn!` + 返回空数组 | 原版**观测**；本类**故意不同**（panic 穿过 FFI 会 abort 整个进程） |
-//! | `clear_state` / `update_entities` | 两个方法存在（`0x4bded0` / `0x4be270`），语义未解 | **不实现**（`UNKNOWNS` 第 5 条：`clear_state` 引用 `EntityDrawer` / `EffectDrawer` 类名的用途未知） | **未知** |
+//! | `clear_state` / `update_entities` | 两个方法存在（`0x4bded0` / `0x4be270`），语义未解 | **不实现**（`UNKNOWNS` 第 4 条：`clear_state` 引用 `EntityDrawer` / `EffectDrawer` 类名的用途未知） | **未知** |
 //! | 曲线的点从哪来 | `GraphwarFunctionManager` 里存的采样点（bucket+0x58/+0x60），由 `set_function_points`（`0x456810`）写入 | **本类自己存一份**（`FunctionEntry`）+ 调用方注入；那个模块还没有 `src/` 文件 | 原版**观测**；存储是**替身**（§41.4） |
 //! | 曲线的上场速率 | `new_len = min(len, trunc(30*(fractional_tick - active_tick)))`，`30.0` = `.rodata 0x19ef90` | 同（[`revealed_points`]） | **逐位**（常量）/ **观测**（算式） |
 //! | tick 从哪来 | 每帧从 `GraphwarTickHandler` 读：u32 tick（`0x4b6317` 的 `mov 0x58(%rbp),%ebx`）+ `get_fractional_tick`（`0x4b631a` → `0x519530`） | **本类自己持有一个 [`GraphwarTickHandler`]**，调它的 `get_fractional_tick()`；[`GraphwarPlane::set_fractional_tick`] 只是把这台虚拟时钟摆到指定读数的**接线口** | 算式**观测**（`docs/16-client.md` §48.1）；时钟摆位是**我方接线** |
@@ -2433,10 +2550,56 @@ impl GraphwarPlane {
     /// `resized` 信号的处理者（原版名字就是 `on_resized`，`.rodata 0x1c2a7a`）。
     ///
     /// 它是 `#[func]` ⇒ GDScript 也能直接调（验收脚本用它验"树外不会自动触发"）。
+    ///
+    /// **T102 落码**：原版 `GraphwarPlane::on_resized` = **x86 `0x4bddb0` / arm64 `0x4c3308`**
+    /// （256 B，`addr_probe.py fde 0x4bddb0` span `0x120`）。调用者复核：
+    /// `addr_probe.py callers 0x4bddb0` = 3 个 `call rel32`，其中**唯一游戏内**的是
+    /// `0x4b7b0a`，落在 `ready`（`0x4b7a70`）体内 ⇒ 只有连上 `resized` 才会被调（与
+    /// `docs/16` §23.3 的"树外 `set_size` 不会触发"一致）。
+    ///
+    /// 体（**逐位**，见 [`ON_RESIZED_ENGINE_SLOTS`] / [`reset_partial_updates`] 的指令表）：
+    ///
+    /// ```text
+    /// size = Control::get_size()                ; 槽 0x9bb000 → thunk 0x8925f0 ('Control','get_size')
+    /// 3 × child(+0xc8/+0xe0/+0xf8).set_size(size)  ; 槽 0x9bc0c8 → thunk 0x8910e0 ('Control','set_size')
+    /// partial_updates = vec![PixelRect::default()] ; +0x50(cap)/+0x58(ptr)/+0x60(len) 重置
+    /// ```
+    ///
+    /// ⚠️ **`queue_redraw()` 是我方接线**：原版 `0x4bddb0` 的 12 个调用目标里**没有** `queue_redraw`
+    /// （槽表只出现 0x9ba680 / 0x9bb000 / 0x9bc0c8 / 0x9bbdf0 四个）。留着是因为我们的客户端
+    /// 会在"树外显式调 `on_resized`"时依赖它重画（`client/tools/*.gd` 的既有断言）；登记在 §148.6。
     #[func]
     fn on_resized(&mut self) {
         self.resized_calls += 1;
-        // 原版这里做 3 次 `Control::set_*`，方法名未解（`UNKNOWNS` 第 3 条）⇒ 只重画。
+
+        // ① `Control::get_size()`：原版 `0x4bddfa call *[0x9bb000]`，返回值是 Vector2。
+        let size = self.base().get_size();
+
+        // ② 三个子节点设成平面自己的尺寸：原版三次 `call *r12`（r12 = 槽 0x9bc0c8 的 thunk），
+        //    对象是 `+0xc8/+0xe0/+0xf8` 三份 `Gd<Control>`（= `init` 建的 3 个 FunctionDrawer）。
+        //    我方按 `function_drawers` 的**序**取子节点（第 i 个 = 第 i 个 FunctionDrawer）。
+        let children = self
+            .plane
+            .function_drawers
+            .len()
+            .min(gp::FUNCTION_DRAWER_CHILDREN);
+        for index in 0..children {
+            let Ok(child_index) = i32::try_from(index) else {
+                break;
+            };
+            let Some(child) = self.base_mut().get_child(child_index) else {
+                continue;
+            };
+            let Ok(mut control) = child.try_cast::<Control>() else {
+                continue;
+            };
+            control.set_size(size);
+        }
+
+        // ③ 脏矩形队列重置成「一个零矩形」（逐位指令见 [`reset_partial_updates`]）。
+        gp::reset_partial_updates(&mut self.plane.partial_updates);
+
+        // ④ 我方接线（原版没有这一步，见本函数文档末尾的 ⚠️）。
         self.base_mut().queue_redraw();
     }
 
