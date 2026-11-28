@@ -1,0 +1,319 @@
+# gap_setupevent_plan.txt —— T98 **预注册**：`graphwar_setup_control`（52 vs 21）与 `graphwar_event`（31 vs 0）
+# 两块"缺口"到底是真缺口，还是**口径假象**（先提交本文件，后跑）
+#
+# 为什么先写死再跑：这两行是 `fixtures/global_triage_modules.tsv` 里 `gap_proxy` 排第 3、第 5 的两个
+# （setup_control 33 / event 31），而任务书同时写着它们 `real-missing = 0`。两个数字都能"凑"：
+#   * 把 Android 侧的宏产物/derive 产物算成"缺口" ⇒ 缺口看起来很大（33 / 31），其实一条都不用写；
+#   * 把真有语义的函数（`clear_state`/`enable_play_chat_button`）也说成"编译器产物" ⇒ 缺口看起来是 0。
+# 所以：**判据先写死、目标集合先钉死、正负对照先跑**，然后才反汇编、才出 `fixtures/gap_setup.tsv`
+# 与 `fixtures/gap_event.tsv`。跑完若发现判据有洞，**只许在本文件末尾追加 §11「勘误」（追加式）**，
+# 不改 §1–§10 的规则文本；结论写进 `docs/06` 新节（本轮 §144）。
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**。x86 侧 = `.reference/steam/2026-08-28/libgraphwarrust.so`
+#     （sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`）；
+#     **arm64 侧** = `.reference/steam/android-2.0.60/libgraphwarrust.so`（未 strip，18,793 个 FUNC）。
+#     ⚠️ 两份构建的地址**绝不能互相换算**（布局不同）。
+#   * Android 真名 = `.symtab` 的 legacy mangled 名，`c++filt -s rust` 还原；
+#     同一个地址上可能有多个别名（`.llvm.` 克隆 / `$LT$` 模板），**按地址去重**。
+#   * Linux 函数边界 = `.eh_frame` FDE（`tools/addr_probe.py fde <va>`）；归属 = `panic::Location` 多数投票
+#     （`fixtures/boundary_audit.tsv`）。
+#   * 二进制里的**数据串**一律按 `.rodata` 的 vaddr 读（本 .so 的 `.rodata` 文件偏移 == vaddr）；
+#     **`.text` 的 vaddr 与文件偏移差 `+0x1000`**（本轮实测踩到一次：直接 `DATA[va:]` 反汇编会整体错一页）。
+#
+# ================================================================================
+
+## 0. 本轮要回答什么
+
+`fixtures/global_triage_modules.tsv` 的两行（T96 / §143 刷新后）：
+
+| 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `graphwar_setup_control.rs` | **52** | 21 | 19 | 2 | **0** | 33 |
+| `graphwar_event.rs` | **31** | **0** | 0 | 0 | **0** | 31 |
+
+⚠️ `gap_proxy = android_fns − lin_F1F2` 在这两行上**跨了三个口径**（§1）：52/31 是**机器码条数**，
+21 是**Linux 硬归属行数**，19 是**台账实现的条数**。拿 `52 − 19 = 33` 当工作量，等于把
+"一份源码函数的多副机器码副本 + gdext 宏产物 + serde derive 产物 + drop glue" 全算成要手写的函数。
+
+三个问题：
+1. **`setup_control` 的 52 与 21 差在哪 31 条？** 逐条判：`na:gdext-glue` / `na:other`（derive/drop/闭包）/
+   `real-missing` / `unknown`，并说明 **Linux 侧那 21 条为什么要少**（是宏产物没有、还是被内联、
+   还是被 527 台账的归属口径压平）。
+2. **`graphwar_event` 在二进制里是什么形态？** 31 条 android 真名逐条判，回答
+   "这个原版模块是不是只有 `enum` + derive，没有独立函数"，并解释 `lin527 = 0` 是不是正常。
+3. **若真有 `real-missing`：落码**（只限 `src/graphwar_setup_control.rs`；理由见 §7.2）。
+
+## 1. 三个口径（**分开定义、分开报，禁止合并**）
+
+| 口径 | 定义 | 复算方法 |
+|---|---|---|
+| **M：机器码条数** | 某份构建里 `地址互不相同` 的函数个数。Android 侧 = `.symtab` FUNC 按地址去重、模块名取自**该地址的第一个符号名**（= census 口径，`tools/global_triage.py --android-census`）；Linux 侧 = FDE 条数 | census |
+| **S：源码函数数** | 把同一源码条目的多副机器码副本**合并**后的条数：`{{closure}}` 并入父函数、泛型单态化多副本算 1、`#[derive]`/宏产物算 0、drop glue 算 0 | §4 规则 |
+| **1:1：严格一一对应** | `S` 里**恰好一条**机器码副本、在 Linux 侧**恰好一个** FDE、且那个 FDE 在 527 台账里**恰好一行**的条数 | §4 + 527 台账 |
+| **G：Linux 硬归属行** | 527 台账里 `ours_file` == 本模块的行（本表 21 / 0）。⚠️ 这是**归属口径**，不是函数个数：`setup_control` 自己的 Location 锚函数是 **37** 条（`fixtures/module_funcs.tsv`），其中 16 条被 527 的多数投票压到别的模块去了 | `fixtures/function_coverage.tsv` |
+
+> ⚠️ **不许**用 `M − G` 当工作量（那是 census 口径差），也不许用 `M − F1F2`（`gap_proxy` 就是它）。
+> 工作量 = §4 判成 `real-missing` 的 **S** 条数。
+
+## 2. 目标集合（**跑前固定**，来自 Android 2.0.60 `.symtab` 按地址去重 + census 模块归属）
+
+### 2.1 `graphwar_setup_control`：52 条（M 口径）
+
+（列：arm64 vaddr｜st_size｜demangled 名（去 crate 前缀与哈希）。`shape` 列见 TSV。）
+
+| arm64 vaddr | size | 真名（demangled） |
+|---|---|---|
+| `0x3943d0` | 156 | `core::ptr::drop_in_place<godot_core::storage::single_threaded::InstanceStorage<GraphwarSetupControl>>::h87be37e5a9832bb2` |
+| `0x395bc4` | 628 | `core::ptr::drop_in_place<GraphwarSetupControl>::h15644b5ddd1f9293` |
+| `0x3aff54` | 628 | `core::ptr::drop_in_place<GraphwarSetupControl>::h15644b5ddd1f9293` |
+| `0x4b9180` | 156 | `<GraphwarSetupControl as godot_core::obj::traits::UserClass>::__default_virtual_call::virtual_fn::h2355bd728cc2da9c` |
+| `0x4b93f0` | 64 | `<GraphwarSetupControl as godot_core::obj::traits::GodotClass>::class_id::hbfc7b7e5da97ac59` |
+| `0x4be9cc` | 400 | `<GraphwarSetupControl as godot_core::obj::traits::cap::ImplementsGodotApi>::__register_methods::h87a3a53e68c25ac3` |
+| `0x4beb5c` | 400 | `<GraphwarSetupControl as godot_core::obj::traits::cap::ImplementsGodotApi>::__register_constants::h355c526fdfbea80c` |
+| `0x4c2374` | 448 | `_::__init::__inner_init::h3c4cdf527b6eb31a` |
+| `0x4c2534` | 464 | `_::__init::__inner_init::h71dfb499bd7417dd` |
+| `0x4c2704` | 436 | `_::__init::__inner_init::hdfe57b106a1a855c` |
+| `0x4c28b8` | 472 | `_::__init::__inner_init::hff211348c8fb3ed4` |
+| `0x4c6310` | 156 | `_::__init::__inner_init::{{closure}}::ptrcall_fn::h2821123e5d57f3cb` |
+| `0x4c63ac` | 156 | `_::__init::__inner_init::{{closure}}::ptrcall_fn::h406a188241f09e7e` |
+| `0x4c6448` | 156 | `_::__init::__inner_init::{{closure}}::ptrcall_fn::h7aa74c7e934e6826` |
+| `0x4c64e4` | 152 | `_::__init::__inner_init::{{closure}}::ptrcall_fn::hbb8a7ff469af08f9` |
+| `0x4c657c` | 192 | `_::__init::__inner_init::{{closure}}::varcall_fn::h0bb613afb6c0bb79` |
+| `0x4c663c` | 188 | `_::__init::__inner_init::{{closure}}::varcall_fn::h1367b630437a1a24` |
+| `0x4c66f8` | 192 | `_::__init::__inner_init::{{closure}}::varcall_fn::h58491d22fdbbed41` |
+| `0x4c67b8` | 192 | `_::__init::__inner_init::{{closure}}::varcall_fn::hab90f632950bbf3e` |
+| `0x4c6878` | 804 | `GraphwarSetupControl::clear_state::ha7fc16882dc43e16` |
+| `0x4c6b9c` | 792 | `GraphwarSetupControl::update_name::h468a8b658ab1f6fe` |
+| `0x4c6eb4` | 1580 | `GraphwarSetupControl::update_rank::hc9a78666bbf44df2` |
+| `0x4c74e0` | 864 | `GraphwarSetupControl::on_text_change::h3368ed4ff9183cc2` |
+| `0x4c7840` | 988 | `GraphwarSetupControl::is_leader_local::hd1dafbc0616d53cc` |
+| `0x4c7c1c` | 3792 | `GraphwarSetupControl::update_soldiers::ha81fbaf90d4814ca` |
+| `0x4c8aec` | 872 | `GraphwarSetupControl::on_chat_submitted::h417697c4bec76e84` |
+| `0x4c8e54` | 912 | `GraphwarSetupControl::force_title_update::h5ef8c2a3e05b2481` |
+| `0x4c91e4` | 140 | `GraphwarSetupControl::on_visibility_change::h2ce5a79040656163` |
+| `0x4c9270` | 3332 | `GraphwarSetupControl::connect_entry_buttons::hdada3a2ebcf5b1fc` |
+| `0x4c9f74` | 224 | `GraphwarSetupControl::connect_entry_buttons::{{closure}}::h28c2e05c61a28194` |
+| `0x4ca054` | 224 | `GraphwarSetupControl::connect_entry_buttons::{{closure}}::ha082bde33e252dd2` |
+| `0x4ca134` | 224 | `GraphwarSetupControl::connect_entry_buttons::{{closure}}::had2ba337de861647` |
+| `0x4ca214` | 224 | `GraphwarSetupControl::connect_entry_buttons::{{closure}}::hd3dea4c3a2e40c22` |
+| `0x4ca2f4` | 76 | `GraphwarSetupControl::enable_play_chat_button::h56f929e189bcb776` |
+| `0x4ccba0` | 156 | `<GraphwarSetupControl as godot_core::obj::traits::cap::ImplementsGodotVirtual>::__virtual_call::virtual_fn::h5baef9b51fbe4250` |
+| `0x4ccc3c` | 156 | `<GraphwarSetupControl as godot_core::obj::traits::cap::ImplementsGodotVirtual>::__virtual_call::virtual_fn::h6f88630b8489e605` |
+| `0x4cccd8` | 480 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::init::hed8b7e190a731e04` |
+| `0x4cceb8` | 7764 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::h7f6ac9245fc99153` |
+| `0x4ced0c` | 216 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::h1a4bdab006aef691` |
+| `0x4cede4` | 216 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::h6d3668b41a704a70` |
+| `0x4ceebc` | 216 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::h7c215685b96e713b` |
+| `0x4cef94` | 2160 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::h9c56ac603719d1e7` |
+| `0x4cf804` | 456 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::ha6183cc83eea894e` |
+| `0x4cf9cc` | 100 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::haf388e2fdbffff0b` |
+| `0x4cfa30` | 1440 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::hebf899669c890354` |
+| `0x4cffd0` | 216 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}::hee940a32d0a561f8` |
+| `0x4d00a8` | 13564 | `<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::process::hd418565245c4dbfa` |
+| `0x4d6d78` | 28 | `core::ptr::drop_in_place<GraphwarSetupControl::connect_entry_buttons::{{closure}}>::h5969486acd9b1054` |
+| `0x4d7038` | 28 | `core::ptr::drop_in_place<<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}>::h14d3852143180d3c` |
+| `0x4d7054` | 28 | `core::ptr::drop_in_place<<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}>::ha299c8ec18be934f` |
+| `0x4d7070` | 28 | `core::ptr::drop_in_place<<GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::{{closure}}>::hd635ce9c9503ed3c` |
+| `0x4d85fc` | 628 | `core::ptr::drop_in_place<GraphwarSetupControl>::h15644b5ddd1f9293` |
+
+### 2.2 `graphwar_event`：31 条（M 口径）
+
+⚠️ 这 31 条**本身就是 census 的产物**：它只数"该地址的**第一个**符号名带模块路径"的那些地址。
+同一片 serde 代码里还有 **75 个地址**的第一个符号名是泛型别名 `_ZN41_$LT$T$u20$as$u20$serde..de..Expected$GT$3fmt…`
+（模块名 `<none>`）—— 它们与上面 31 条里的 `serde::de::Visitor::expecting` 是**同一个地址的另一个符号名**
+（同址两别名）。⇒ §5 的 C4/C5 对照要专门核这一条，报告里 M 必须同时给
+**31（census 口径）**与 **96（把同址别名算进来的地址数）**两个数。
+
+| arm64 vaddr | size | 真名（demangled） |
+|---|---|---|
+| `0x34aaa0` | 92 | `core::ptr::drop_in_place<core::result::Result<TickEvent,serde_json::error::Error>>::h802232de2209bb9d` |
+| `0x34aafc` | 92 | `core::ptr::drop_in_place<core::result::Result<PosInfoEvent,serde_json::error::Error>>::hd28a5d73777c8379` |
+| `0x34abd8` | 96 | `core::ptr::drop_in_place<core::result::Result<LockInfoEvent,serde_json::error::Error>>::h7cb99a6c81b146cc` |
+| `0x34ac38` | 96 | `core::ptr::drop_in_place<core::result::Result<EffectInfoEvent,serde_json::error::Error>>::h972ef41d4155d70d` |
+| `0x34ac98` | 100 | `core::ptr::drop_in_place<core::result::Result<GameRemovedEvent,serde_json::error::Error>>::h6f839f6c047b9515` |
+| `0x34acfc` | 88 | `core::ptr::drop_in_place<core::result::Result<TickRequestEvent,serde_json::error::Error>>::h19002c5fe9cf0785` |
+| `0x34ad54` | 160 | `core::ptr::drop_in_place<core::result::Result<VersionInfoEvent,serde_json::error::Error>>::hbbd844879c49bbff` |
+| `0x34adf4` | 172 | `core::ptr::drop_in_place<core::result::Result<FunctionInfoEvent,serde_json::error::Error>>::h9275e3fd4539b00e` |
+| `0x34af0c` | 144 | `core::ptr::drop_in_place<core::result::Result<ConnectionRemovedEvent,serde_json::error::Error>>::h98b795965de6c702` |
+| `0x34b080` | 352 | `core::ptr::drop_in_place<GraphwarEvent>::haf13a7f4c03d9d82` |
+| `0x3bb1a0` | 220 | `core::ptr::drop_in_place<GraphwarEvent>::haf13a7f4c03d9d82` |
+| `0x3eac9c` | 352 | `core::ptr::drop_in_place<GraphwarEvent>::haf13a7f4c03d9d82` |
+| `0x3eaf64` | 76 | `core::ptr::drop_in_place<NewConnectionRequestEvent>::h5ba8db1e55f76554` |
+| `0x3eb058` | 196 | `core::ptr::drop_in_place<alloc::vec::Vec<GraphwarEvent>>::h28cacb358266137c` |
+| `0x3ee82c` | 1340 | `<GraphwarEvent as core::clone::Clone>::clone::h9dedec2890ad406d` |
+| `0x3eed68` | 128 | `<VersionInfoEvent as core::clone::Clone>::clone::h4bdc034aa598b042` |
+| `0x3eede8` | 164 | `<FunctionInfoEvent as core::clone::Clone>::clone::ha102d7fa3f6a1f1e` |
+| `0x417660` | 120 | `core::ptr::drop_in_place<alloc::boxed::Box<dyn core::ops::function::FnMut<(&GraphwarEvent,)>+Output = ()>>::h1d4bc3bf3669b88f` |
+| `0x417cc0` | 196 | `core::ptr::drop_in_place<alloc::vec::Vec<GraphwarEvent>>::h28cacb358266137c` |
+| `0x45d83c` | 120 | `core::ptr::drop_in_place<alloc::boxed::Box<dyn core::ops::function::FnMut<(&GraphwarEvent,)>+Output = ()>>::h1d4bc3bf3669b88f` |
+| `0x45d8b4` | 132 | `core::ptr::drop_in_place<(alloc::string::String,alloc::boxed::Box<dyn core::ops::function::FnMut<(&GraphwarEvent,)>+Output = ()>)>::h1da1fcd92db67fb3` |
+| `0x4691a4` | 540 | `GraphwarEvent::deserialize::h98d2c86e1b39a211` |
+| `0x4693c0` | 188 | `GraphwarEvent::make_new_connection_request_event::h7d60726133dc0eff` |
+| `0x46947c` | 304 | `GraphwarEvent::serialize::hec7c21f7eb819b8d` |
+| `0x4695ac` | 1704 | `_::<impl serde::ser::Serialize for GraphwarEvent>::serialize::he0928d94534c5695` |
+| `0x469c54` | 5564 | `_::<impl serde::de::Deserialize for GraphwarEvent>::deserialize::h47b513a73e0ca3a5` |
+| `0x46b9f8` | 4668 | `<_::<impl serde::de::Deserialize for GraphwarEvent>::deserialize::__FieldVisitor as serde::de::Visitor>::visit_str::hf96480154023a8e5` |
+| `0x46d874` | 168 | `core::ptr::drop_in_place<core::result::Result<GraphwarEvent,serde_json::error::Error>>::hde32b8ac22f10572` |
+| `0x46dca0` | 352 | `core::ptr::drop_in_place<GraphwarEvent>::haf13a7f4c03d9d82` |
+| `0x4936cc` | 220 | `core::ptr::drop_in_place<GraphwarEvent>::haf13a7f4c03d9d82` |
+| `0x493e90` | 196 | `core::ptr::drop_in_place<alloc::vec::Vec<GraphwarEvent>>::h28cacb358266137c` |
+
+## 3. 类别定义（**原样继承** T82 `fixtures/f3_triage_plan.txt` §1 / T86 §134.3，不新增类别）
+
+| 类别 | 定义 | 进不进"诚实缺口" |
+|---|---|---|
+| `real-missing` | **原版有我方没有的源码级函数**：函数体承载原版模块自己的语义，能按源码写出来 | **进** |
+| `na:std-mono` | **std/core/alloc 的单态化**：函数体是标准库的，本模块只贡献被内联进去的实参 | 不进 |
+| `na:gdext-glue` | **gdext 宏产物**：类注册胶水 / 属性访问器 / `#[func]` 分发壳 / 信号 connect 闭包 / `__inner_init` / vcall 适配器 | 不进 |
+| `na:other` | **其它不该手写的编译器生成物**：drop glue / panic 展开 / `#[derive]` 产物 / trait 对象 shim / 泛型单态化实例 | 不进 |
+| `unknown` | **判不了**（必须写清缺什么证据） | **进**（保守） |
+
+### 3.1 本轮必须用到的四个 `subclass`（只写在 `subclass` 列，不改类别语义）
+
+* `na:other / derive-product` —— `#[derive(Serialize/Deserialize/Clone/…)]` 生成物：
+  `<… as serde::ser::Serialize>::serialize`、`<… as serde::de::Deserialize>::deserialize`、
+  `__FieldVisitor::visit_str`、`__Visitor as Visitor>::expecting`、`<T as Expected>::fmt`、
+  `<T as core::clone::Clone>::clone`。**源码那一行是 `#[derive(...)]` 属性，不是 `fn`**。
+* `na:other / drop-glue` —— `core::ptr::drop_in_place<…>`。
+* `na:other / closure-in-fn` —— `…::{{closure}}`：源码级**不是独立 `fn`**，是父函数体内的一段闭包体。
+  ⇒ 源码函数数 **+0**；但**必须**在 TSV 的 `note` 列写清"父函数是否已实现、闭包体是否已复现"，
+  因为"闭包体没实现"是**行为缺口**（只是不进 527 的分母）。
+* `na:gdext-glue / vcall-adapter` —— `__init::__inner_init::{closure}::{ptrcall_fn,varcall_fn}`、
+  `__virtual_call::virtual_fn`、`__default_virtual_call::virtual_fn`、`__register_methods`、
+  `__register_constants`、`class_id`。
+
+## 4. 判决规则（命中即停；逐条写进 TSV 的 `rule` 列）
+
+**顺序（优先级）**：`gdext-glue` → `derive/drop` → `closure-in-fn` → `real-missing` → `unknown`。
+
+* **R-G1（名字即判）`na:gdext-glue`**：demangled 名含 `godot_core::` / `godot_cell::` /
+  `godot_ffi::` 的 trait impl 段，或等于 `_::__init::__inner_init`（含其 `{{closure}}`），
+  或 `<… as …UserClass/GodotClass/ImplementsGodot{Aoi,Virtual}>::…`。
+  *例外*：`<X as IControl>::init` / `::ready` / `::process` **不是**宏产物（gdext 的宏只生成薄包装，
+  用户写的 `fn init/ready/process` 是源码级函数），走 R-R1。判据见 §5 C6。
+* **R-G2（名字即判）`na:other / drop-glue`**：名以 `core::ptr::drop_in_place<…>` 开头。
+* **R-G3（名字即判）`na:other / derive-product`**：名里出现 `<impl serde::…>` / `serde::de::Visitor` /
+  `serde::de::Expected` / `<… as core::clone::Clone>::clone`。
+  ⚠️ `VOL_CAP` 不适用于 R-G1/G2/G3（它们是**名字判定**，不是结构推断）；但 TSV 必须记 size。
+* **R-C1（`na:other / closure-in-fn`）**：名含 `::{{closure}}` 且父段不是 `_::__init`（那是 R-G1）。
+  要求同时满足：能指到父函数名 + 在父函数 FDE 之外有自己的 FDE（真独立边界）。
+* **R-R1（`real-missing` 候选）**：名形如 `GraphwarSetupControl::<method>` / `GraphwarEvent::<method>`
+  （或 `impl` 段里的业务方法名），即**手写方法**。判定为 `real-missing` 还需 §4.1 两条同时成立。
+* **R-U（`unknown`）**：以上都不干净命中，或体没读完（>0x1000 未读完 ⇒ `unknown`，必须写缺什么）。
+
+### 4.1 `real-missing` 的追加要求（比 T82 的 R-REAL 更严一档）
+
+1. **独立边界**：arm64 侧有自己的 `.symtab` FUNC 符号（`st_size > 0`）**且**不是 `::{{closure}}`、
+   不是 `_::` 宏段；Linux 侧若有 FDE 则记地址，没有则写"无 Location 锚 / 可能被内联"（**推断**）。
+2. **语义可写**：能写出该函数做什么的至少一句可复核描述，并带 ≥1 条**具体指令证据**
+   （字段偏移 / 立即数 / `.rodata` 串 / 被调者地址）。写不出 ⇒ `unknown`，不许猜。
+
+### 4.2 Linux 侧缺席的三种解释（**R4，本轮新增**；判"缺不缺"必须先排除前两种）
+
+| # | 解释 | 判据 | 后果 |
+|---|---|---|---|
+| ① | **没有 `panic::Location`** ⇒ 不进 527 分母（527 只收按 Location 硬归属的函数） | `tools/loc_xrefs.py` 扫全 `.so`，本模块的 Location 结构体数 | 该函数**在分母外**，`real-missing` 只能说"源码级缺"，不能说"527 里缺" |
+| ② | **归属被多数投票压到别的模块** | `fixtures/boundary_audit.tsv` 的 `loc_other_files` / `multi` | 不是缺口 |
+| ③ | **被内联进父函数**（Linux 无独立 FDE） | Android 有独立 FDE 但 Linux 找不到对应；或调用点直接内联 | `real-missing(inlined)`：**只登记不落码**（T48 纪律） |
+
+## 5. 调用形态闸（T89 `docs/06` §137.5，**本轮强制、逐条记录**）
+
+对**每一条**目标行记 `bl`（arm64 直接调用点数）与 `slot`（**重定位 addend == 本函数地址**的槽数）：
+
+| 形态 | 含义 | 结论约束 |
+|---|---|---|
+| `bl ≥ 1` 且 `slot = 0` | 被**直接调用** | 泛型单态化的必要形态；但**单靠它不能定案** |
+| `bl = 0` 且 `slot ≥ 1` | 地址只出现在**数据槽**里（交给 API 的闭包 / 注册表项 / vtable） | **禁止**据此判 `na:std-mono`（T89 驳回 `0x438880` 的教训） |
+| `bl = 0` 且 `slot = 0` | 只经 vtable/间接调用 | 必须另找间接调用链，否则 `unknown` |
+
+**本轮的 arm64 实现法（写死，跑的时候不许改）**：
+* `bl`：扫 Android `.text` 的每条 4 字节指令，判 `(word >> 26) == 0b100101`，`target = pc + sign_extend(imm26)*4`，
+  计数 `target == addr`。
+* `slot`：解 Android `.rela.dyn` 的 `R_AARCH64_RELATIVE`（类型 1027）项，计数 `addend == addr`。
+* ⚠️ arm64 侧没有 `rel32` 这个概念，本表用 `bl` 代 `rel32`；Linux 侧若已有 527 行，另记 Linux 的
+  `call rel32`/slot（`tools/addr_probe.py callers`）。
+
+## 6. 正 / 负对照（**先跑，全对才允许进全量**）
+
+| 组 | 条数 | 地址 | 期望 | 为什么要它 |
+|---|---|---|---|---|
+| C1 gdext 正对照 | 2 | `0x4b88d0` / `0x4b8a50`（setup_control，527 里已判 `na:gdext-glue` 的 F3 行） | R-G1 判 `na:gdext-glue` | 判法不能退化 |
+| C2 业务正对照 | 2 | `0x4c1e40`（`update_name`）/ `0x4c2ef0`（`update_soldiers`），arm64 `0x4c6b9c` / `0x4c7c1c` | R-R1 判"手写方法"，**不许**判 na | 判法不能把业务函数吞成 na |
+| C3 小体积负对照 | 1 | arm64 `0x4ca2f4`（`enable_play_chat_button`，**76 B = 本模块最小**） | **不许**因体积小判 na | 体积诱饵 |
+| C4 derive 正对照 | 3 | arm64 `0x4695ac` / `0x469c54` / `0x3ee82c` | 全 `na:other / derive-product` | derive 判据有效 |
+| C5 同址别名闸 | 1 | arm64 `0x46b700`（2 个别名：`Expected::fmt` + `__Visitor::expecting`） | census 只数一次；报告要同时给 31 / 96 | 防"同一函数数两遍/漏数" |
+| C6 gdext/用户代码分界 | 2 | arm64 `0x4cccd8`（`<X as IControl>::init`，480 B）/ `0x4cceb8`（`::ready`，7764 B） | 都判**手写**（非 na），理由 = 体里有用户逻辑（`__inner_init` 调用 / 11 个 get_node） | R-G1 的例外 |
+
+**机判自校验**：本脚本算出的 52 / 31 必须与 `fixtures/global_triage_modules.tsv` 的
+`android_fns` 列**逐值相同**；不等 ⇒ 先查口径（census 用"第一个符号名 + 长度前缀/点号回退"），不许继续。
+
+## 7. 落码口径
+
+### 7.1 什么算"这条真落下来了"
+
+1. **落点 = `src/graphwar_setup_control.rs`**（原版模块名，`AGENTS.md` §4；`function_coverage.py` 的 R1
+   不认 `_scaffold/` 里的同名函数）。
+2. 函数名 = arm64 demangled 名的**方法段**原样（`snake_case` 不改）。
+3. 函数体第 1 行写 `//!`/`///` 级的 **arm64 vaddr + size + 证据档**，行内注释写关键指令
+   （字段偏移 / 立即数 / `.rodata` 串 vaddr / 被调者地址）。**只写"对应 0x…"不算**。
+4. 单测期望值**只能来自反汇编**（立即数/字段偏移/被调者/串），不许来自我方输出（`AGENTS.md` §0.5）。
+5. 每条 `real-missing` **单独一个 commit**。
+
+### 7.2 `graphwar_event` 本轮**不落码**（写死理由，免得被当成"漏了"）
+
+`graphwar_event` 的 3 个手写方法（`serialize` / `deserialize` / `make_new_connection_request_event`）
+是**源码级真函数**，但落码需要：
+① 新建 `src/graphwar_event.rs`；② `src/lib.rs` 加 `pub mod graphwar_event;`；
+③ `tools/coverage_matrix.py` 里 `mod("graphwar_event.rs", …, ("src/events.rs",))` 的 ours_file 改成新文件；
+④ 决定 `enum Event`（74 变体）留在 `src/events.rs` 还是搬走（`docs/02` §17.4 已登记"混装待拆"）。
+**①–④ 全在 T98 的写入边界之外**（本轮只许动两个 `src/` 文件 + fixtures + `docs/06`）⇒
+本轮**只登记、不落码**，并把"要动哪四个地方"写进 `docs/06` §144 的遗留，交 lead 排下一轮。
+
+## 8. 交付物 / 门槛 / 复跑命令
+
+**交付物**
+* `fixtures/gap_setupevent_plan.txt`（本文件，**先单独 commit**）；
+* `fixtures/gap_setup.tsv`（52 行）、`fixtures/gap_event.tsv`（31 行）+ 正/负对照分节；
+* `src/graphwar_setup_control.rs` 的落码（每条单独 commit）；
+* `docs/06` §144（本轮新节；先 `tools/docsec.py check docs/06-verification.md` 确认空号 = 144）。
+
+**门槛（跑完必跑，读数照抄；一位不许退）**
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
+cargo test --offline                            # 基线：本分支起点自己跑出来的读数
+cargo test --offline --features gdext-bindings  # 同上
+python3 tools/coverage_matrix.py --check        # OK（COVERAGE_MATRIX_UPSTREAM=.../.reference/upstream）
+python3 tools/check_doc_refs.py                 # rc=0
+python3 tools/docsec.py check docs/06-verification.md
+python3 tools/boundary_audit.py --check         # mismatch 0
+# 三轴（快照 = .reference/replays/gw2-replays-snapshot/replays，401 份回放，只读）
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict
+```
+
+## 9. 不做什么（边界，**先划死**）
+
+* **不动** `src/graphwar_root_node.rs` / `src/graphwar_button.rs`（t97 在用）、`src/_scaffold/**`、`client/**`、
+  别人的台账（`fixtures/f3_triage.tsv`、`fixtures/global_triage*.tsv`、`fixtures/function_coverage.tsv`、
+  `fixtures/boundary_audit.tsv` 只读引用）、门槛/护栏文件、`tools/**`、`src/lib.rs`、`src/events.rs`。
+* **不重翻历史裁决**：`fixtures/f3_triage.tsv` 里 setup_control 的 2 条 F3（`0x4b88d0`/`0x4b8a50`）
+  判 `na:macro-generated`（T82）——本轮**复算**，一致就沿用、不一致写清冲突。
+* 不 merge/push master；主工作区只读；提交作者用仓库配置（`Cmd-GZ`）。
+
+## 10. 已知风险 + **诚实声明（写这个文件时我已经看过什么）**
+
+* 我**已经**把两个模块的 Android `.symtab` 名字按地址去重列出来了（= §2 的两张表）。
+  理由：目标集合不钉死，"判据"就没法在跑之前写。**但这不等于结论**——类别列全部在 TSV 里现判。
+* 我**已经**看到 `src/graphwar_event.rs` **不存在**（内容在 `src/events.rs`，`docs/02` §17 有登记），
+  也看到 Linux `.so` 里 `src/graphwar_event.rs` 的 `panic::Location` 结构体数 = 0。
+  ⇒ 任务书里"这个文件在 `src/` 里"这句是**错的**，报告里要写清（不是悄悄绕过）。
+* **L1** 名字是**观测**（未 strip 的兄弟构建），不是逐位；它对"源码里有没有这一行 fn"是**推断**级
+  （我们没有原版源码）。TSV 的 `证据` 列必须写"观测：arm64 .symtab"。
+* **L2** `na:*` 每条**至少 2 个独立证据**（名字 + size/形态/被调者之一）；单条 ⇒ `unknown`。
+* **L3** `unknown` 计入缺口 ⇒ 本轮缺口读数偏大（保守方向）。
+* **L4** 本模块在 `coverage-matrix` 是 `观测` 档 ⇒ 落码只是"观测级"，**不等于**逐位验证。
+* **L5** `census` 的模块归属对同址别名**不敏感**（只取第一个符号名）⇒ M 口径会**少计**；
+  本轮要同时报 `31`（census）与 `96`（地址数，含同址别名）两个数。
