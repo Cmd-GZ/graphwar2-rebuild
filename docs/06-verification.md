@@ -25655,10 +25655,11 @@ $PY tools/docsec.py check docs/06-verification.md      # 通过
   `subscribe_to_event` 的实参），源码层是**一个**闭包字面量。⇒ 合并成 1 条。
 * **2 条 serde derive**：`<impl Serialize for GraphwarGameState>::serialize`（`0x4a52f4`）、
   `<impl Deserialize>::deserialize`（`0x4a53e8`）⇒ `na:other`。
-* 44 − 6（闭包同源去重）− 0 = 38 具名源码条目 + 2 条 derive = **40 行**？—— 不：44 个地址里
-  含 7 个闭包副本与 2 个 derive，所以具名源码条目 = 44 − 7 − 2 = **35 个方法** + 1 个闭包 +
-  2 条 derive = **38 行**（`fixtures/gap_gamestate.tsv` 正好 38 行，其中 34 个方法 + 1 闭包 + 2 derive + 1 个
-  被合并后的 `queue_end_turn_trigger::{{closure}}`）。
+* **44 个地址的精确分解**（每一类都能在 `fixtures/gap_gamestate.tsv` 里数出来）：
+  **34 个普通方法**（各 1 个地址）+ **1 个** `queue_end_turn_trigger::{{closure}}`（1 个地址）+
+  **1 个** `subscribe_to_events_event_handler::{{closure}}`（**7 个地址、7 副 48 字节副本**）+
+  **2 条** serde derive ≈ 34 + 1 + 7 + 2 = **44** ✓
+  ⇒ 源码条目（S）= 34 + 1 + 1 + 2 = **38** = `fixtures/gap_gamestate.tsv` 的行数 ✓
 
 **③ Linux 侧的反向：1 条源码函数 ↔ 2 副机器码**
 
