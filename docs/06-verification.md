@@ -29786,3 +29786,337 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    这正是 T102 §148 报的「P2 判据被注释欺骗」的同款形态：**注释里贴地址 ≠ 实现**。
 6. **本轮不落任何 `src/` 代码**（写码不在任务范围）：55 个真缺的落码是下一轮的活，**每处都能从 TSV 的 android vaddr 起手**。
 7. 口径 D 的**分子混档**（D_A+）不要单独当招牌引用；引用时必须同时给 `D_A`（严）与 `X` 的分档。
+
+## 153. T107 分母外 serde 类 **16 条机器码**的裁决：**13 条是 `#[derive(Serialize/Deserialize)]` 的展开体（改判 `na`）、3 条是原版手写固有方法（1 条落码）** —— 分母外真缺 **55 → 43 组**，**D_A 50.1 % → 51.0 %**（⚠️ 这一涨是**口径更准**，不是新工作）（2026-11-28，任务 T107 / `task-99` / 分支 `agent/denom-modemisc`）
+
+> 预注册：[`fixtures/denom_serde_plan.txt`](../fixtures/denom_serde_plan.txt)（commit `cabe0b6`，**先单独提交、后跑**；
+> 跑完只在 §8 追加 **5 条勘误 E1–E5**，§1–§7 一字未改）。
+> 逐条证据：[`fixtures/denom_serde_evidence.tsv`](../fixtures/denom_serde_evidence.tsv)（16 行 + 头部 5 组对照；
+> 生成器 [`fixtures/denom_serde_collect.py`](../fixtures/denom_serde_collect.py)，入库存量可复跑）。
+> 台账改判留痕：[`fixtures/denom_outside.tsv`](../fixtures/denom_outside.tsv) 文件尾 `§MANUAL-T107` 块（**经 lead 授权、逐行留痕**）。
+> 地址口径：本节所有 `0x…` 一律 **Android 2.0.60 arm64 的 ELF vaddr**（未 strip，`.symtab` 真名可用）；
+> **不要**与 Linux x86-64 那份换算（两份布局无关）。
+
+### 153.0 一页结论
+
+| # | 问题 | 答案 |
+|---|---|---|
+| ① | 这 16 条里**有几个是原版真源码函数**（该我们手写）？ | **3 条 / 3 个源码组**（全是**固有方法**：`GraphwarEvent::{serialize, deserialize, make_new_connection_request_event}`）。其余 **13 条 / 11 组**是 serde derive 的展开体 ⇒ **不该手写**，改判 `na:other/serde-derive`。 |
+| ② | 判据是什么（怎么区分"手写 impl"与"derive 产物"）？ | **P1 名字形态是决定性的那条**：`#[derive(X)]` 只生成 `impl X for T`，**永不生成固有方法** ⇒ 名字是 `module::Type::method`（固有）的一定是人手写的。trait impl 侧再用 **P2（同 `(module, Type)` 有 `__Visitor`/`__FieldVisitor` 私有类型）+ P4（体内 own_game = 0 的纯模板体）**交叉。见 §153.1。 |
+| ③ | **T105 为什么把它们全判成 `business/real-missing`？** | 它用的是**按名字**的宏判据（"impl 头是不是 `Visitor`/`Expected`"），而 `<X as serde::Serialize>::serialize` 的 impl 头**天然不是** `Visitor` ⇒ 那条规则**结构上不可能**判出 `Serialize`/`Deserialize` 的 derive。这是**口径天花板**，不是数错。见 §153.1.3。 |
+| ④ | 有没有**独立裁判**证明改判对？ | 有，而且是 T105 **自己的台账**：这 13 条 impl 的 `__FieldVisitor`/`__Visitor` **兄弟符号**在 `fixtures/denom_outside.tsv` 里**已经是** `na:other/macro-derive`（`0x46b9f8` 那条是 `unknown/volume-gate` + `form=macro-derive`）⇒ **同一族辅助函数被判宏产物、父 impl 被判业务**，是台账**内部矛盾**。C2 = **13/13**。见 §153.2。 |
+| ⑤ | 落码了几条？ | **1 条函数体**（`make_new_connection_request_event`，`0x4693c0` 的 47 条指令全读通）+ **3 条的函数边界与全部常量**（`src/graphwar_event.rs`，配 12 条单测）。另外 2 条**体没写**：体内是 `serde_json` + `chrono` + `print!`，本 crate **零依赖** ⇒ 缺 3 个外部 crate + 72 个载荷结构体（§153.5）。 |
+| ⑥ | 分母外真缺变了多少？ | **55 组 / 57 条 → 43 组 / 43 条**（−11 组/13 条改判 na、−1 组/1 条落码）；分母外源码函数 **X 143 组 / 207 条 → 132 组 / 194 条**。 |
+| ⑦ | 三个数（**分开报**） | **A `336/527 = 63.8 %` 一位未动**；**B `336/438 = 76.7 %`（招牌）一位未动**；**D_A `336/(527+143)` = 50.1 % → `336/(527+132)` = `336/659` = 51.0 %**。⚠️ **涨的这 0.9 个点是分母变小（口径修正），不是做了新工作** —— 见 §153.7。 |
+
+### 153.1 判据：怎么区分「原版手写的 impl」与「serde derive 展开产物」
+
+#### 153.1.1 问题在哪：名字这一层**分不开**
+
+`graphwar_event` 里这 5 条的 Android `.symtab` 真名（demangle 后）是：
+
+| vaddr | 真名（`$RP$` 已还原成 `::`） | 是**固有方法**还是 trait impl |
+|---|---|---|
+| `0x4691a4` | `graphwarrust::graphwar_event::GraphwarEvent::deserialize` | **固有** |
+| `0x4693c0` | `graphwarrust::graphwar_event::GraphwarEvent::make_new_connection_request_event` | **固有** |
+| `0x46947c` | `graphwarrust::graphwar_event::GraphwarEvent::serialize` | **固有** |
+| `0x4695ac` | `graphwarrust::graphwar_event::_::_<impl serde::ser::Serialize for …GraphwarEvent>::serialize` | trait impl |
+| `0x469c54` | `graphwarrust::graphwar_event::_::_<impl serde::de::Deserialize for …GraphwarEvent>::deserialize` | trait impl |
+
+关键：**手写的 `impl Serialize for X` 与 `#[derive(Serialize)]` 产生的符号名逐字相同**
+（都长成 `_::_<impl serde::ser::Serialize for X>::serialize`）⇒ 名字这一层**没有任何信息量**。
+所以必须换判据。预注册的 P1–P6 见 plan §1，这里只写结论性内容。
+
+#### 153.1.2 **P1 是承重的那条**（语言事实，不是观察）
+
+**`#[derive(X)]` 只生成 `impl X for T`，不生成任何固有方法。** 反过来，`impl T { fn m() }`
+这种固有方法**只可能**是人写的 —— 编译器没有任何机制替你生成它。⇒
+
+> 名字形态是 `graphwarrust::<module>::<Type>::<method>`（**固有**）⇒ **手写**（单向、无例外）。
+
+这条就是本轮全部裁决的地基。C5a 做了它的必要性对照（§153.2）：**去掉 P1 重跑，16/16 全判错**。
+
+trait impl 那一侧**不能只看名字**（手写 trait impl 也长这样），所以再加两条**加强**判据：
+
+| 判据 | 内容 | 本轮实测 |
+|---|---|---|
+| **P2 家族闭包** | `#[derive(Deserialize)]` 除 `impl` 外**必然**再生成 `__Visitor` / `__Field` / `__FieldVisitor` 三个私有类型（名字由 `serde_derive` **硬编码**，人手写不会用）。查同 `(module, Type)` 有没有这些符号 | **13/13 命中** |
+| **P3 调用配位** | 若固有方法体内 `bl` 到同 Type 的 trait impl，则"固有 = 手写包装 / trait impl = derive 本体"这一对成立（T98 §147.3.2② 的形态） | `0x46947c` → `0x4695ac` ✓ |
+| **P4 体内模板** | 体里 `bl` 目标全部属于 serde/serde_json/core/std/alloc/chrono/… ⇒ `own_game = 0` = 纯模板体 | **16/16 全 = 0** |
+
+⚠️ **P4 在这批样本上其实没有区分力**（16 条全是 0，见 plan §8-E1/E2）。承重的只有 P1：
+trait impl 那一侧靠 **P1 + C2 的独立裁判**（T105 自己的台账）站住。
+
+#### 153.1.3 为什么 T105 会判错（这条是**本轮最要紧的发现**，plan §8-E4）
+
+§152.2 判据 1 写着：
+
+> ⚠️ **`<X as serde::Serialize>::serialize` 不算 macro-derive**（impl 头不是 Visitor/Expected）——
+> T98 已证 `graphwar_event` 的手写 `serialize`/`deserialize` 是**真源码函数**，这条边界由 C4c 把关。
+
+这句话把 T98 的结论**套错了对象**：T98 证的是**固有方法** `GraphwarEvent::serialize`（`0x46947c`）
+与 `::deserialize`（`0x4691a4`）；而 `<X as serde::Serialize>::serialize` 是**另一个地址** `0x4695ac` ——
+T98 §147.3.2② 的原话正是「`serialize` 体内 **`bl 0x4695ac`**（= 直接调 derive 的
+`<impl Serialize>::serialize`）」⇒ **T98 把 `0x4695ac` 明确当 derive 本体**。
+
+于是 §152 的 C4c 把 5 条机器码全判 `business`：其中 3 条（固有）**判对了**，
+另 2 条（derive 本体）被同一个"名字规则"**顺手放行** —— 随后 11 条同病。
+**不是 T105 数错，是按名字分类的天花板**：那条规则结构上判不出 `Serialize`/`Deserialize` 的 derive。
+本轮把天花板压下来：13 条改判。
+
+### 153.2 正/负对照 C1–C6（结果全在证据 tsv 头部，可复跑）
+
+| 组 | 对象 | 结果 |
+|---|---|---|
+| **C1** 正对照（手写侧） | G1/G2/G3 = 固有方法 | ✓ **3/3 判手写** |
+| **C1b** P3 调用配位 | `0x46947c` 体内 `bl` 到 `0x4695ac` | ✓ |
+| **C2** 同族一致性（**最有力的独立裁判**） | 13 条 trait impl 的 `__FieldVisitor`/`__Visitor` 兄弟符号在 T105 台账里的判决 | ✓ **13/13** 全是 `na:other/macro-derive`（`0x46b9f8` 是 `unknown/volume-gate` + `form=macro-derive`） |
+| **C3** 自我证伪点 | 若把规则写成「P2 **or** P4 ⇒ derive」会误判几条 | **3 条**（固有方法同类型也有家族；构造函数 own 也是 0）⇒ **P1 不可省** |
+| **C4** 全量无遗漏 | `.text` 里 **game crate** 的 `<impl serde::{ser::Serialize\|de::Deserialize} for …>` 去重 | **恰好 13 条**，与本轮 13 条**逐条相同** ⇒ 全二进制不存在第 14 条（也就没有"被漏掉的手写 trait impl"）。<br>（全二进制含 serde 自己的 `Option<T>` 实现是 15 条，多出的 2 条在 `serde::de::impls` 里，不是游戏代码） |
+| **C5a** 必要性（去掉 P1） | 重跑判决规则 | **16/16 全误判成 derive** ⇒ P1 必要 |
+| **C5b** 预注册的那条 | 去掉 P2 ⇒ 13 条里判 unknown 的条数 | **= 0 ⇒ vacuous**（13/13 全命中家族，样本里根本没有负例）。**按 plan §2 纪律如实记为"对照失败"，不许拿结果去改判据**；按同样目的补 C5b′ |
+| **C5b′** 替代对照（P2 的**特异性**） | ⑴ 已知**手写**的 trait impl：`<impl core::fmt::Debug for bytes::…>` 2 条<br>⑵ `.symtab` 里 20 个**没有 serde 实现**的 crate 类型 | ⑴ 家族命中 **0/2** ✓<br>⑵ 家族命中 **0/20** ✓ ⇒ P2 不乱开火 |
+
+> **诚实说明**：plan §2 已经写明这套判据**不是盲测**（写判据前已经看过符号名与几条体）。
+> 事后构造的判据只能靠**能被数据证伪的对照**站住 —— 所以 C5b 那条 vacuous 必须原样报出来，
+> 而且必须报"承重的只有 P1"（C5a 16/16），不许把 P2/P4 说成必要条件。
+
+### 153.3 逐条裁决（16 条机器码 = 14 个源码组）
+
+`kind` = 名字形态（`inherent` 固有方法 / `trait-impl` trait 实现）；`P2` = derive 私有辅助类型是否命中；
+`n_bl` = 体内 `bl` 条数；`own_game` = 其中**属于游戏逻辑**的条数（P4，已扣掉 crate 内其它 serde impl 与运行时函数）。
+
+| # | android vaddr | st_size | kind | P2 | n_bl | own_game | 裁决 |
+|---|---|---|---|---|---|---|---|
+| G1 | `0x4691a4` | 540 | inherent | hit | 17 | 0 | **real-missing（手写）** |
+| G2 | `0x4693c0` | 188 | inherent | hit | 8 | 0 | **real-missing（手写）→ 本轮落码** |
+| G3 | `0x46947c` | 304 | inherent | hit | 10 | 0 | **real-missing（手写）** |
+| G4 | `0x4695ac` | 1704 | trait-impl `serde::ser::Serialize` | hit | 63 | 0 | **na:other/serde-derive** |
+| G5 | `0x469c54` | 5564 | trait-impl `serde::de::Deserialize` | hit | 84 | 0 | **na:other/serde-derive** |
+| G6 | `0x40b834` | 748 | trait-impl `serde::de::Deserialize` | hit | 6 | 0 | **na:other/serde-derive** |
+| G7 | `0x46b210` | 1264 | trait-impl `serde::ser::Serialize` | hit | 27 | 0（1 条 `bl` 到 `GraphwarGameState::serialize` = 另一个 derive impl） | **na:other/serde-derive** |
+| G8 | `0x4981c8` / `0x498574` / `0x498860` | 724 / 748 / 764 | trait-impl `serde::de::Deserialize` ×3 | hit | 6 / 6 / 6 | 0 | **na:other/serde-derive**（同一源码组） |
+| G9 | `0x49849c` | 216 | trait-impl `serde::ser::Serialize` | hit | 5 | 0 | **na:other/serde-derive** |
+| G10 | `0x4999a0` | 724 | trait-impl `serde::de::Deserialize` | hit | 6 | 0 | **na:other/serde-derive** |
+| G11 | `0x49be14` | 724 | trait-impl `serde::de::Deserialize` | hit | 6 | 0 | **na:other/serde-derive** |
+| G12 | `0x49c0e8` | 348 | trait-impl `serde::ser::Serialize` | hit | 5 | 0 | **na:other/serde-derive** |
+| G13 | `0x4a52f4` | 244 | trait-impl `serde::ser::Serialize` | hit | 1 | 0 | **na:other/serde-derive** |
+| G14 | `0x4a53e8` | 796 | trait-impl `serde::de::Deserialize` | hit | 6 | 0 | **na:other/serde-derive** |
+
+**⇒ 3 条 / 3 组 = 真缺（手写）；13 条 / 11 组 = `na:other/serde-derive`；`unknown` = 0 条。**
+（任务书写"15 条"，逐台账数是 **16 条机器码 / 14 个组** —— 差在 `game_state_manager` 的
+`_::serialize` 与 `_::deserialize` 是**两条机器码**，plan §8-E3。）
+
+体形态补充（都在证据 tsv 里）：
+* `0x4695ac`（G4，`<GraphwarEvent as Serialize>::serialize`）：**63 条 `bl` 去重后只有 1 个目标** ——
+  `serde_json::Serializer::serialize_newtype_variant`（63 个不同实例化）⇒ "每个 newtype 变体一次
+  变体序列化"的 derive 展开形态，**一条游戏逻辑调用都没有**。
+* `0x469c54`（G5，`<GraphwarEvent as Deserialize>::deserialize`）：**84 条 `bl` / 7 个不同目标**，
+  其中 **74 条**是 `serde_json::Deserializer::deserialize_struct` 的不同实例化
+  （**74 = 变体数**，`events::ALL_VARIANTS.len()` 也是 74 —— 两条独立取证互证），其余是
+  `peek_error` ×2 / `PhantomData as DeserializeSeed::deserialize` ×2 / `error` ×2 /
+  `drop_in_place<GraphwarEvent>` ×2 / `Error::invalid_type` ×1。**游戏逻辑调用 0 条。**
+  变体名的匹配在兄弟符号 `0x46b9f8`（`__FieldVisitor as Visitor>::visit_str`，4668 B）里做。
+* `0x49849c`（G9，`TimeMode::serialize`，216 B）：5 条 `bl` **全到**
+  `serde_json::ser::format_escaped_str`，配 `mov w3,#0x7`（写成名的长度）+ `.rodata` 里的
+  `Timer30s` ⇒ 单元变体枚举的 derive 形态。⚠️ 我方 `TimeMode` 有 **6** 个变体
+  （`Timer30s/Timer1m/Timer2m/Timer3m/Timer5m/TimerInf`）而机器码里只有 **5** 个调用点
+  ⇒ 有一个臂与相邻臂**共用调用点**（**推断**，未逐臂核对；不影响裁决）。
+* `0x4981c8`/`0x498574`/`0x498860`（G8，三个枚举的 `Deserialize`）：各 6 条 `bl` / 4 个不同目标 =
+  `peek_error` ×2 + `PhantomData as DeserializeSeed::deserialize` ×2 +
+  `serde_json::de::VariantAccess::unit_variant` ×1 + `Deserializer::error` ×1 ⇒ **单元变体枚举**的
+  derive 形态。
+
+### 153.4 落码：`src/graphwar_event.rs`（新文件，原版模块名）
+
+| # | 落到什么程度 | 证据 |
+|---|---|---|
+| **G2 `make_new_connection_request_event`** | ✅ **函数体复原**：`0x4693c0` 47 条指令全读 —— **无入参**（`x0–x7` 一个都没读，只有 sret `x8`）；`__rust_alloc(3,1)` 写 `"2.0"`（`mov w9,#0x2e32` = `'2','.'` + `mov w8,#0x30` = `'0'`）、`__rust_alloc(2,1)` 写 `"60"`（`mov w9,#0x3036`）；`.rodata 0x196c60` 的 16 字节常量 `{0x8000_0000_0000_0004, 3}` 写返回值 `+0x00/+0x08`、`0x199090` 的 `{3, 2}` 写 `+0x18/+0x20`、两个堆指针写 `+0x10/+0x28` ⇒ `GraphwarEvent::NewConnectionRequest(NewConnectionRequestEvent{major:"2.0", minor:"60"})` | **观测**（全指令） |
+| **G1 `deserialize`** | 🟡 **结构 + 全部常量已落，体未写**。控制流全读：`str::from_utf8` → 失败臂 A；`serde_json::from_str` → 失败臂 B；两臂都是 `Utc::now()` + `format!` + **`std::io::stdio::_print`**（**stdout**，不是 stderr），返回首字写 `TAG_INVALID`；成功路径逐字拷 **0x48 = 72 字节** | **观测**（全指令） |
+| **G3 `serialize`** | 🟡 **结构 + 常量已落，体未写**。`__rust_alloc(0x80, 1)` = `Vec::with_capacity(128)` → `bl 0x4695ac`（derive 本体）→ 成功把 24 字节 Vec 写 sret / 失败释放缓冲 ⇒ **就是 `serde_json::to_vec(self)` 的形态** | **观测** |
+
+落进 `src/graphwar_event.rs` 的东西（4 条是**本轮新挖**，T98/T105 都没有）：
+
+| 常量 | 值 | 出处 |
+|---|---|---|
+| `TAG_NEW_CONNECTION_REQUEST` | `0x8000_0000_0000_0004` | `0x46941c`+`0x46942c` 的 16 字节常量首字 |
+| `TAG_INVALID` | `0x8000_0000_0000_004a` | `0x469244` / `0x469268`+`0x469318`（`0x4a` = 74 = **变体数**，越界一格） |
+| `EVENT_BYTES` | `0x48` = 72 | `0x469334..0x469350` 的逐字拷贝宽度 |
+| `SERIALIZE_VEC_CAPACITY` | `0x80` = 128 | `0x469498 mov w0,#0x80` = `serde_json::to_vec` 的字面量 |
+| `MSG_DESERIALIZE_JSON_FAIL` | `"[{}] src/graphwar_event.rs:1149 - {}\n"` | `0x4692f0` → `.rodata 0x18cc2c` |
+| `MSG_DESERIALIZE_UTF8_FAIL` | `"[{}] src/graphwar_event.rs:1154 - {}\n"` | `0x469220` → `.rodata 0x17c634` |
+| `MSG_DESERIALIZE_INNER` | `"Failed to deserialize {}"` | `.rodata 0x180e61`，长度前缀 `0x16` = 22（`{}` 之前那截） |
+
+**行号归属是新的**：T98 §147.3.2 ④ 只证了 `.rodata` 里有 `graphwar_event.rs:1149` 与 `:1154` 两条串，
+**没说哪条对应哪个分支**。本轮从两条 `adrp`+`add` 定位到具体指令 ⇒ **`:1149` = serde_json 失败、
+`:1154` = UTF-8 失败**。这条同时解释了 T98 的疑问「为什么两个行号都在、却只有一个错误函数」。
+
+单测：`tests/graphwar_event.rs`（12 条，其中 6 条在 `src/graphwar_event.rs` 的 `#[cfg(test)]` 里）。
+**6 条是"交叉一致性"**（两个独立落点必须给出同一真值，这类断言才不可能自洽地骗人）：
+
+1. 两个版本串必须与 `graphwar_client_connection_handler::{NEW_CONNECTION_REQUEST_MAJOR,MINOR}`
+   （T52/T55 从**同一条** arm64 指令独立读出的）**逐字节相同**；
+2. `TAG_NEW_CONNECTION_REQUEST` 低 32 位必须等于 `events::Event::NewConnectionRequest`；
+3. `TAG_INVALID` 低 32 位必须等于 `ALL_VARIANTS.len()` **且严格大于** `len-1`（挡"把哨兵写成 73"）；
+4. `MSG_DESERIALIZE_INNER` 去尾 `{}` 之后必须**恰好 22 字节**（挡"把 `{}` 也算进长度"与"少个尾空格"）；
+5. `DeserializeFailure` 两条臂的行号必须**互不相等**（挡"两条串其实是同一条"）；
+6. `make_new_connection_request_event` 两次调用必须逐字段相等（无入参 ⇒ 纯构造函数，无隐藏状态）。
+
+> ⚠️ 按 `AGENTS.md` §0.2：这些断言是**回归保护，不是复原证据**。复原证据是 §153.3/§153.4 的地址与立即数。
+
+### 153.5 没落码的 2 条 + 缺什么（**诚实清单**）
+
+`serialize`（G3）/ `deserialize`（G1）的**体**没写，理由**不是缺证据**（体内已 100 % 读完），是缺**依赖**：
+
+| 缺什么 | 为什么是拦路虎 |
+|---|---|
+| `serde` / `serde_json` / `chrono` 三个 crate | 本 crate 现在**零依赖**（`Cargo.toml` 只有可选的 `godot`，默认关闭；`cargo tree` 只有自己一行）。加依赖要改 `Cargo.toml`/`Cargo.lock` + 离线 registry，**是项目级决定**。 |
+| 72 个 `*Event` 载荷结构体 + 它们的 `#[derive(Serialize, Deserialize)]` | 我方的事件模型是**判别值枚举 + 手搓 JSON**（`src/events.rs` 的 `enum Event` 只有 74 个判别值、无载荷；载荷编码在 `src/_scaffold/protocol.rs`）。原版是**载荷型枚举**（74 个 newtype 变体）⇒ 没有这些类型，`serialize`/`deserialize` 的 `self` 就没类型可指。 |
+| `GraphwarEvent` 这个**枚举本身** | 同上。`impl GraphwarEvent { … }` 现在无处可写（`enum Event` 是判别值表，不是同一个数据模型）。 |
+
+⇒ 按 T45 纪律：**不写伪实现**（拿我方手搓 JSON 顶上去冒充 `serde_json::to_vec` 就是"自造语义"）。
+登记为 `real-missing`，缺的东西写在上表；`src/graphwar_event.rs` 里落的是**结构 + 常量**，
+它们逐条有地址、有单测。
+
+另有两条**边界偏差**（登记，交 lead）：
+
+1. **`src/graphwar_event.rs` 暂不在 crate 里**：`src/lib.rs` 加 `pub mod graphwar_event;` 是
+   `AGENTS.md`「合并纪律」列的**禁区**。文件用 `#[path]` 编进 `tests/graphwar_event.rs`
+   （先例 `tests/graphwar_computer_player_manager.rs`）⇒ **有编译、有单测**，但还没被生产路径调用。
+   要进 crate：① `src/lib.rs` 一行，或 ② `src/events.rs` 两行 `#[path = "graphwar_event.rs"] pub mod graphwar_event;`
+   —— 两条都在本轮写范围之外。
+2. **`docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` 是重跑生成物**（`src/` 变了）：
+   `src_files` 120 → **121**、`src_fns` 4187 → **4193**、`src_tree_sha256` 更新。
+   **527 口径一位未动**（逐位 89 / 观测 435 / 推断 3）。`fixtures/function_coverage.tsv` 实测**不变**。
+
+### 153.6 口径后果：分母外真缺 55 → 43
+
+| 桶 | T105 原值 | T107 后 | 差 |
+|---|---|---|---|
+| `real-missing/denom:no-loc` | **55 组 / 57 条** | **43 组 / 43 条** | −11 组/−13 条（改判 na）+ −1 组/−1 条（落码） |
+| `implemented/denom:no-loc` | 79 组 / 141 条 | **80 组 / 142 条** | +1（`make_new_connection_request_event` 落码） |
+| `implemented-alt/denom:no-loc` | 9 组 / 9 条 | 9 组 / 9 条 | — |
+| `na:other`（含新子类 `serde-derive`） | 491 条 | **504 条**（其中 **13 条 `serde-derive`**） | +13 |
+| **X（分母外真实源码函数）** | **143 组 / 207 条** | **132 组 / 194 条** | −11 组/−13 条 |
+
+台账逐行留痕在 [`fixtures/denom_outside.tsv`](../fixtures/denom_outside.tsv) 文件尾 `§MANUAL-T107`
+（行号 | vaddr | 原值 | 新值 | 依据）。
+
+⚠️ **登记一条工具缺陷（本轮不修）**：`tools/global_triage.py --denom-outside` **没有 MANUAL 层**
+（对比 T93 的 `T93_MANUAL_NA` 有）⇒ **重跑该工具会把这 13 行冲回 `real-missing`**。
+在那之前以台账的 `§MANUAL-T107` 块为准；要修就得给工具加一张 `T107_MANUAL_NA`（`tools/` 不在本轮写范围）。
+
+### 153.7 三个数**分开报** —— 涨的这部分是**口径修正**，不是新工作
+
+| 口径 | 定义 | T105 读数 | **T107 读数** | 变了吗 |
+|---|---|---|---|---|
+| **A** | F1（有实现+有物证）/ 527 | `336/527 = 63.8 %` | **`336/527 = 63.8 %`** | **一位未动** |
+| **B**（招牌） | F1 / (527 − 89 na) = 336/438 | `76.7 %` | **`336/438 = 76.7 %`** | **一位未动** |
+| **D_A**（第四口径，严） | F1 / (527 + X) | `336/(527+143) = 336/670 = 50.1 %` | **`336/(527+132) = 336/659 = 51.0 %`** | **+0.9 个点** |
+| **D_B** | F1 / (438 + X) | `336/581 = 57.8 %` | **`336/570 = 58.9 %`** | +1.1 个点 |
+| **D_B′** | F1 / (445 + X) | `336/588 = 57.1 %` | **`336/577 = 58.2 %`** | +1.1 个点 |
+
+**为什么 D 涨**：D 的分母是 `527 + X`，而 `X` = `real-missing + implemented + implemented-alt`。
+13 条改判 `na` ⇒ 它们**同时退出 X 的分子桶与分母** ⇒ `X` 从 143 掉到 132 ⇒ 分母 670 → 659 ⇒ D_A 涨。
+
+> ⚠️ **这不是"做了更多"，而是"口径更准"**：serde derive 的展开产物**本来就不是**「原版源码函数」，
+> 不该占 X 的分母。A/B 两个口径**不受影响**（它们的分子分母都不含 X），所以本轮**没有**任何
+> 新的复原证据进 336。
+> 换句话说：**D_A 涨的 0.9 个点全部来自"分母少算了 11 个本来就不该算的函数"**；
+> 真工作（落码 1 条）在 D 口径里体现为 `real-missing → implemented` 的桶移动，**不改 D 的数值**。
+
+### 153.8 复跑命令（照抄可跑；`$WT` = 本工作树，`$AND` = Android 未 strip 版）
+
+```bash
+export GW2_ARM64_SO=$WT/.reference/steam/android-2.0.60/libgraphwarrust.so
+
+# ① 逐条证据表（16 行 + 5 组对照）—— 一条命令重算全部
+$WT/.reference/venv/bin/python fixtures/denom_serde_collect.py \
+    --so $WT/.reference/steam/android-2.0.60/libgraphwarrust.so --ledger fixtures/denom_outside.tsv
+
+# ② 单条手查：符号名（固有 / trait impl 一眼分）
+$WT/.reference/venv/bin/python tools/arm64_sym.py at 0x4695ac
+#   期望：graphwarrust::graphwar_event::_::_<impl serde..ser::Serialize for ..GraphwarEvent>::serialize::h…
+$WT/.reference/venv/bin/python tools/arm64_sym.py at 0x46947c
+#   期望：graphwarrust::graphwar_event::GraphwarEvent::serialize::h…（**固有** ⇒ 手写）
+
+# ③ 体内 bl 目标（判 P4 / P3）：两段各自反汇编
+llvm-objdump -d --arch-name=aarch64 --start-address=0x4695ac --stop-address=0x469c54 $AND | grep ' bl '
+llvm-objdump -d --arch-name=aarch64 --start-address=0x46947c --stop-address=0x4695ac $AND | grep ' bl '
+#   前者 63 条全是 serde_json::Serializer::serialize_newtype_variant；后者含一条 0x4695ac
+
+# ④ 两条 P1 的证明：派生枚举的兄弟符号（P2 家族）与体积闸无关
+$WT/.reference/venv/bin/python tools/arm64_sym.py find '__FieldVisitor' | head
+
+# ⑤ 单测
+CARGO_HOME=$WT/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target \
+    cargo test --offline --test graphwar_event
+
+# ⑥ 台账改判留痕（人工块，工具重跑会冲掉 —— 见 §153.6）
+tail -40 fixtures/denom_outside.tsv
+```
+
+### 153.9 遗留 / 建议下一步
+
+1. **`src/graphwar_event.rs` 进 crate**（1 行或 2 行，见 §153.5 边界偏差 1）—— 需要 lead 决定。
+2. **`serialize`/`deserialize` 的体**：前提是**先决定事件 JSON 用不用 serde**。三条路：
+   ① 引入 `serde`/`serde_json`/`chrono` + 把 72 个 `*Event` 补成载荷结构体（能逐位对上原版，但要改依赖策略）；
+   ② 维持零依赖，把这两个函数实现成对 `_scaffold/protocol` 的薄转发（**语义等价但源码形态不是原版**，证据档只能 `推断`）；
+   ③ 继续登记 `real-missing`。**本项目的标准（`AGENTS.md` §0）指 ①，但那是项目级决定。**
+3. **`tools/global_triage.py --denom-outside` 加 MANUAL 层**（`T107_MANUAL_NA`，13 行），
+   否则这份台账下一次重跑就回到 55 / 57，D_A 回到 50.1 %。**这是本轮唯一的"会自己坏掉"的东西。**
+4. **同型样本还有没有？** 本轮把**全二进制 13 条 serde trait impl** 全查了（C4 = 13/13），
+   `graphwar_event` 的 72 个载荷结构体的 impl 因为体积小被 LLVM 内联掉了（没有独立机器码）⇒
+   **这一类（serde derive 被误判成 business）已经清零**。下一批该看的是其余 43 组的 `real-missing`。
+5. `fixtures/denom_serde_plan.txt` §2 的"不是盲测"这条方法学问题：本轮的补法是 C5b′ 那组替代对照。
+   以后凡是**事后构造**判据，都必须带一组"能证伪判据本身"的对照，并把 vacuous 的对照原样报出来。
+
+### 153.10 本轮改了什么（范围核对）+ 门槛读数
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `fixtures/denom_serde_plan.txt` | 新增（201 行 = §1–§7 预注册 + §8 勘误 E1–E5） | 单独 commit `cabe0b6`（预注册）/ `463225c`（§8 勘误） |
+| `fixtures/denom_serde_evidence.tsv` | 新增（16 行 + 头部 5 组对照） | 逐条证据 |
+| `fixtures/denom_serde_collect.py` | 新增（363 行，入库） | 证据表生成器（纯 stdlib + capstone），一条命令重算 |
+| `src/graphwar_event.rs` | 新增（285 行） | G2 体复原 + G1/G3 结构与常量 + 12 条单测（6 条在 `#[cfg(test)]`） |
+| `tests/graphwar_event.rs` | 新增（140 行） | `#[path]` 取源编进测试二进制 + 6 条交叉一致性断言 |
+| `fixtures/denom_outside.tsv` | 13 行 verdict + 3 行 ours_src + 头部计数 + 文件尾 `§MANUAL-T107` | **经 lead 授权、逐行留痕**（commit `ba3950c`） |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑生成物 | `src_files` 120→121、`src_fns` 4187→4193、`src_tree_sha256` 变；527 口径未动 |
+| `docs/06-verification.md` | 追加本节 | 不动既有节 |
+| **没动** | `src/lib.rs`（禁区）、`src/events.rs`（只读）、`src/graphwar_mode_manager.rs`（本轮判出**不需要写**，见 G8/G9 ⇒ 文件一行没动）、`tools/**`、`client/**`、`fixtures/guardrails.json`、`fixtures/function_coverage.tsv`（实测不变）、三轴语料 | 只读引用 |
+
+⚠️ 任务书里的写范围包含 `src/graphwar_mode_manager.rs`（预期要落码）。**实测该模块的 4 条
+机器码 100 % 是 derive 展开体**（G8/G9）⇒ 该文件**一行都不用改**。这是任务书假设被证伪的一条，如实登记。
+
+### 153.11 门槛读数（本机实跑，读数为本分支终点）
+
+| 门槛 | 读数 | 与任务书门槛的关系 |
+|---|---|---|
+| `cargo test --offline` | **1686 passed / 0 failed / 1 ignored** | 任务书写 1666。**本树起点实测 1674**（= 1666 + 8，门槛基线比本树旧 8 条），本轮 **+12** 条新单测 ⇒ 1686。**只增不减 ✓** |
+| `cargo test --offline --features gdext-bindings` | **1846 / 0 / 1 ignored** | 任务书写 1826。起点 1834 是**推断**（= 1846 − 12，本轮只新增 12 条测试、没删改任何既有测试，`git diff --stat` 可核）；同款 +8 偏移。**只增不减 ✓** |
+| `tools/coverage_matrix.py --check` | **OK**（527 个可归属：逐位 89 / 观测 435 / 推断 3） | 改了 `src/` ⇒ 生成物已重跑（`src_files` 120→121、`src_fns` 4187→4193） |
+| `tools/check_doc_refs.py` | **rc=0**（无死链；豁免 7 条逐条有理由） | ✓ |
+| `tools/docsec.py check docs/06-verification.md` | **通过**（节数 151，范围 1..153，断号 [43, 89] 是两个历史缺口） | ✓ |
+| 三轴 · `fire`（`replay_attrib --drive fire --policy default`，冻结快照 **401** 份） | 内容命中 **647** | 一位未退 ✓ |
+| 三轴 · `batch`（`--drive batch --policy default`） | 内容命中 **647** | ✓ |
+| 三轴 · `batch_conv`（`batch_conv --policy strict`） | 内容命中 **637** | ✓ |
+| `tools/boundary_audit.py --check` | **OK**：527 个可归属函数 match **441** / **mismatch 0** / multi 86 | ✓ |
+
+> ⚠️ 三轴必须带 `--dir <快照>/replays`（快照目录本身还有一个 `replays/` 子目录）。
+> 我第一次把 `--dir` 指到快照根 ⇒ 输出 `文件 0（读失败 1）… 内容命中 0` —— **退出码仍然是 0**，
+> 这就是 AGENTS.md 那条"两侧都停在同一个错误状态会假装通过"的同类陷阱（这里的形态是"读 0 个文件
+> 也报 0 命中、rc=0"）。**报三轴数之前必须眼看 `文件 N` 等于 401。**
+
+### 153.12 复跑命令（门槛部分）
+
+```bash
+export CARGO_HOME=$WT/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cargo test --offline && cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$WT/.reference/upstream $WT/.reference/venv/bin/python tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py && python3 tools/docsec.py check docs/06-verification.md
+$WT/.reference/venv/bin/python tools/boundary_audit.py --check
+SNAP=$WT/.reference/replays/gw2-replays-snapshot/replays          # ⚠️ 是 replays 子目录
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+```
