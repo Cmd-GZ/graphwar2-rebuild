@@ -148,3 +148,28 @@
 三轴 `fire/batch/batch_conv` = 647 / 647 / 637（冻结快照 401 份回放）· `tools/boundary_audit.py --check` mismatch 0。
 
 ## 9. 勘误（追加式；跑数过程中若发现判据有洞，只许往这里加）
+
+## 9. 勘误（追加式；跑数过程中若发现判据有洞，只许往这里加）
+
+### E1（2026-11-28，跑数中途）：F 轴的「vtable 首字 → `drop_in_place<RefCell<M>>` 名」**不是单射**
+
+* 观测：25 条 `add_module` 里有 **3 条**从 vtable 首字读出**同一个**名字 `GraphwarSoldierManager`，
+  但它们的 16 字节 `TypeId` 常量**互不相同**（同一个型不可能有两个 TypeId）。
+* 原因：`GraphwarPlayerManager` / `GraphwarRankManager` / `GraphwarSoldierManager` 三个 **72 字节、布局相同**的
+  manager，其 `drop_in_place<RefCell<M>>` 被**合并到同一地址 arm64 `0x4b2350`**（252 B，`.symtab` 里 3 个 FUNC 别名同址）。
+* 处理（**判据与阈值一字未改**，只补提取法）：① 给 F 轴加一条"vtable **第 4 字**（`<M as Any>::type_id` shim）
+  必须两两不同"的检查，用来证明这几个 vtable 确实属于不同的型；② 命名改用 §4 之外新登记的
+  **T 构造器邻接轴**（装配点里 `bl add_module` 的前一条 `bl` 是 `M::new`，而 `M::new` 有真名）。
+  22 型的 vtable 名与构造器名逐条一致；歧义的 3 条由构造器给出。
+* 影响的判定行：A 组 3 条（`0x49ef10` / `0x49f18c` / `0x49f260`）。**类别不变**
+  （仍全是 `na:other / own-generic-mono`），只影响 `type` 列。
+* 结论：**这一条是 §5 的 C3 闸逼出来的**（C3 要求"类型并集 = 25 型"，第一版只出 23 型）。
+  没有这条闸，本轮会写下"23 型"的错结论 ⇒ C3 保留在判据里。
+
+### E2（同日）：arm64 `.eh_frame` 在本工具链上解析会**失步**
+
+`tools/loc_xrefs.py::parse_eh_frame` 对 arm64 2.0.60 解析到 `0x49e368` 后直接跳到 `0x4a52f4`，
+并产出一条 `0x52dc00116fd8` 的假 FDE（12,556 条里至少这一条是垃圾）。
+⇒ arm64 的函数边界一律改用 `.symtab` 的 `st_size`（本来就更硬：那就是编译器给的函数单元）。
+不影响任何结论（FDE 尺寸比在预注册里只是旁证，arm64 侧改用 st_size 只会更准），
+但登记为此后所有用 arm64 FDE 的轮的**已知限制**。
