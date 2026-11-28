@@ -820,6 +820,59 @@ pub const FN_UPDATE_SOLDIERS: u64 = 0x4c_2ef0;
 /// 名字来源：唯一锚（`257:133`）。既有常量 [`FN_PLAYER_ROW`]。
 pub const FN_CONNECT_ENTRY_BUTTONS: u64 = 0x4c_4c20;
 
+// ===========================================================================
+// 1b. **arm64 2.0.60 侧**的三条手写方法（T98 / `docs/06` §144）
+// ===========================================================================
+//
+// ⚠️ 口径：上面那一节的地址是 **x86-64 2.0.60**（ELF vaddr）。下面这三条只在
+// **arm64 2.0.60**（`.reference/steam/android-2.0.60/libgraphwarrust.so`，未 strip）里有**真名**，
+// 因此只能标成 `*_ARM64`，**绝不能**与 x86 地址互相换算（两份构建布局完全不同）。
+//
+// 为什么 X86 侧没有它们的名字：它们的函数体里**没有 `panic::Location`**（不 panic、不 unwrap），
+// 而 527 台账的归属机制就是 Location 多数投票 ⇒ 它们在 x86 侧**进不了分母**。
+// 复算：`tools/loc_xrefs.py` 全量扫 5301 个 Location，`file == src/graphwar_setup_control.rs` 的
+// 结构体 70 个，**没有一个**落在这三条的体内（附录 T98 `fixtures/gap_setup.tsv`）。
+
+/// `GraphwarSetupControl::clear_state` —— **arm64 `0x4c6878`**（`st_size` = **804 B**；`bl` 调用点 1、数据槽 0）。
+///
+/// 名字来源：Android 2.0.60 `.symtab` 的 legacy mangled 名
+/// `_ZN12graphwarrust22graphwar_setup_control20GraphwarSetupControl11clear_state17h…E`
+/// （`c++filt -s rust` 还原；同一地址无别名）。档位：**观测**（兄弟构建真名）。
+///
+/// 体（**观测**，逐条见 `fixtures/gap_setup.tsv` 的这一行）：
+/// * `0x4c68b8` `RichTextLabel::clear()` —— 作用于 `self+0x118`（聊天记录控件）；
+/// * `0x4c68e0` `strb wzr,[sp,#0x10]` → `0x4c68f0` `BuildHasher::hash_one` —— 用**单字节 `false`** 作键
+///   在 hashbrown 表里查图标（`self+0x210/0x218/0x228/0x230` 是调用者传进来的 map），
+///   `0x4c699c` / `0x4c6adc` 两次 `Button::set_button_icon`（作用于 `self+0xc0` / `self+0xe0`）；
+/// * `0x4c6b34` `strb wzr,[x19,#0x1f6]` —— 把一个 bool 字段清 `false`；
+/// * `0x4c6b58` `CanvasItem::set_visible(false)` —— 作用于 `self+0x100`。
+///
+/// **未落码**（`fixtures/gap_setup.tsv` 判 `real-missing`，但本轮只登记）：缺 `self+0xb8/0xd8/0xf8/0x110`
+/// 四个字段的**节点名**与那张 `bool → Texture2D` 表的类型。11 个 `get_node` 名字里
+/// `ChatButtonSetup` / `ChatButtonPlay` / `ChatBox` 是候选，但 arm64 `ready` 的 onready 赋值点没逐条对上
+/// ⇒ 按 T45 纪律**不编语义**。
+pub const FN_CLEAR_STATE_ARM64: u64 = 0x4c_6878;
+/// 见 [`FN_CLEAR_STATE_ARM64`]：`.symtab` 的 `st_size`。
+pub const FN_CLEAR_STATE_ARM64_SIZE: u32 = 804;
+
+/// `GraphwarSetupControl::on_visibility_change` —— **arm64 `0x4c91e4`**（`st_size` = **140 B**）。
+///
+/// 体（**观测**，全读）：`0x4c9200` `base_mut()` → `0x4c9214` `check_rtti(…,"upcast_ref",10)`
+/// → `0x4c9234` `Object::call_deferred(<名>, 长度 18, 无参)` → 两次 guard drop。
+/// 方法名字面量在 `.rodata` **`0x1a1617`**（长度立即数 `0x12` = 18）⇒ 见 [`DEFERRED_FORCE_TITLE_UPDATE`]。
+///
+/// ⚠️ x86 侧没有它的 Location（体内无 panic）⇒ 527 分母里没有它；Linux 侧是否被内联**未证**。
+pub const FN_ON_VISIBILITY_CHANGE_ARM64: u64 = 0x4c_91e4;
+/// 见 [`FN_ON_VISIBILITY_CHANGE_ARM64`]：`.symtab` 的 `st_size`。
+pub const FN_ON_VISIBILITY_CHANGE_ARM64_SIZE: u32 = 140;
+
+/// `on_visibility_change` 里 `call_deferred` 的**方法名** —— `.rodata` `0x1a1617`，长度 18。
+///
+/// 档位：**逐位**（字节 = `force_title_update`，长度立即数 `mov w2,#0x12` 在 `0x4c9228`；
+/// arm64 与 x86 都能在 `.rodata` 里按同一串找到）。它和 `#[func] fn force_title_update` 同名
+/// ⇒ 原版是"延迟调自己"的写法（**观测**）。
+pub const DEFERRED_FORCE_TITLE_UPDATE: &str = "force_title_update";
+
 /// `graphwar_setup_control::_::__init::__inner_init`（第 1 份实例）—— **x86 `0x4bd030`**
 /// （FDE `0x4bd030..0x4bd27f`，`0x24f` = **591 B**；唯一 Location `608:1`）。
 ///
@@ -2029,9 +2082,18 @@ impl GraphwarSetupControl {
     }
 
     /// `ChatPopUp.visibility_changed` 的落点（原版方法名 `on_visibility_change`）。
+    ///
+    /// 原版 **arm64 `0x4c91e4`（140 B）**：`self.base_mut()` → `Object::call_deferred("force_title_update")`
+    /// （`0x4c9234`；方法名在 `.rodata 0x1a1617`，长度立即数 18 = `0x4c9228 mov w2,#0x12`）。
+    /// 档位：**观测**（体逐条读完，见 [`setup::FN_ON_VISIBILITY_CHANGE_ARM64`]）。
+    ///
+    /// 我方差异：原版是 `call_deferred`（下个空闲帧才跑），这里用 `Callable::call_deferred` 保持
+    /// **同样的延迟语义**，**不**直接 `self.force_title_update()`（那会变成同帧同步调用）。
     #[func]
     fn on_visibility_change(&mut self) {
         self.visibility_change_calls += 1;
+        let deferred = self.to_gd().callable(setup::DEFERRED_FORCE_TITLE_UPDATE);
+        let _ = deferred.call_deferred(&[]);
     }
 
     /// `ChatLineEdit.text_submitted` 的落点（原版方法名 `on_chat_submitted`）。
@@ -2643,6 +2705,32 @@ mod f3_landing_tests {
         let mut e = FakeEngine { fail_upcast: true, ..Default::default() };
         let mut m = FakeModules::default();
         SetupControlIntent::update_name(&mut e, &mut m, 0, GdHandle::new(0x10, 0x20));
+    }
+
+    /// **T98**：`clear_state` / `enable_play_chat_button` / `on_visibility_change` 三条**只在 arm64
+    /// 2.0.60 里有真名**的手写方法 —— 地址与 `st_size` 都来自 `.symtab`（观测），不许改。
+    ///
+    /// 复算：
+    /// ```bash
+    /// readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E 'clear_state|enable_play_chat_button|on_visibility_change'
+    /// ```
+    #[test]
+    fn arm64_only_hand_written_methods_keep_their_symbol_evidence() {
+        assert_eq!(FN_CLEAR_STATE_ARM64, 0x4c_6878);
+        assert_eq!(FN_CLEAR_STATE_ARM64_SIZE, 804);
+        assert_eq!(FN_ON_VISIBILITY_CHANGE_ARM64, 0x4c_91e4);
+        assert_eq!(FN_ON_VISIBILITY_CHANGE_ARM64_SIZE, 140);
+        assert!(FN_ON_VISIBILITY_CHANGE_ARM64_SIZE < FN_CLEAR_STATE_ARM64_SIZE);
+    }
+
+    /// **T98**：`on_visibility_change` 的 `call_deferred` 方法名 = `.rodata 0x1a1617`，长度 **18**。
+    ///
+    /// 期望值来自指令：`0x4c9228 mov w2,#0x12`（= 18）+ 该地址的字节（`force_title_update`）。
+    /// 复算：`python3 -c "d=open('.reference/steam/android-2.0.60/libgraphwarrust.so','rb').read(); print(d[0x1a1617:0x1a1617+18])"`
+    #[test]
+    fn deferred_title_update_name_matches_the_rodata_literal() {
+        assert_eq!(DEFERRED_FORCE_TITLE_UPDATE, "force_title_update");
+        assert_eq!(DEFERRED_FORCE_TITLE_UPDATE.len(), 18);
     }
 
     /// 三条宏产物 / 未定名的常量：`.text` 里的内嵌函数指针与 GOT 槽被调者。
