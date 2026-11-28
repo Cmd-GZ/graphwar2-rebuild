@@ -86,7 +86,17 @@ pub const ENV_VAR: &str = "CRASH_REPORT_ADDRESS";
 /// 命令行风格写法（同块）。
 pub const CLI_ARG_KEBAB: &str = "crash-report-address";
 
-/// 崩溃日志里时间戳的格式（`逐位`：`.rodata` 字面量，被本模块与 `backtracer` 共用）。
+/// 时间戳格式串 `%Y-%m-%d %H:%M:%S`（`逐位`：`.rodata` 字面量在 arm64 `0x1a177c`，17 字节）。
+///
+/// ⚠️ **T106 更正（2026-11-28）**：旧注释写"被本模块与 `backtracer` 共用"—— **不成立**。
+/// 全 `.text` 里指向 `0x1a177c` 的 `adrp+add` 只有 **1 处**（`0x4cb478`/`0x4cb47c`），
+/// 所属函数是 `graphwar_replay_control::GraphwarReplayScreenControl::process`
+/// （`0x4cb138`，回放播放时钟那一段），**不是**本模块、也不是 `backtracer`。
+/// 本模块与 `backtracer` 的时间戳都是 **`chrono::Utc::now()` 的默认 Display**
+/// （`clear_report` `0x4ca36c bl Utc::now` + `0x4ca3b8 DateTime<Tz> as Display::fmt`；
+///  hook 闭包 `0x4bf0b4 bl Utc::now` + `0x4bf0bc` 同一 fmt）。
+/// 复跑：`llvm-objdump -d --no-show-raw-insn <.so> | grep -B1 '#0x77c'`（只该有一处 `adrp …0x1a1000`）。
+/// ⇒ 这个常量留在本模块只因为它确实是同一份构建里的字面量，**不被本模块任何函数引用**。
 pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// `clear_report` 的动作：**把日志truncate 成空**。`逐位`：
@@ -180,3 +190,155 @@ pub const PARSE_MESSAGES: [&str; 2] = [
     "Failed to parse --crash_report_address: ",
     "Failed to parse global server address for crash reporting: ",
 ];
+
+
+// ===========================================================================
+// T106 落码：`clear_report`（arm64 `0x4ca340` / 260 B，527 分母外）
+// ===========================================================================
+
+/// `clear_report` 的动作：`std::fs::write(path, &[])` —— 把日志 **truncate 成空**。
+///
+/// 逐指令（Android 2.0.60 arm64 `0x4ca340..0x4ca444`）：
+///
+/// ```text
+/// 0x4ca350  mov  w2,#0x1 / 0x4ca354 mov x3,xzr    ; contents = &[]（**指针 1 = 悬垂、长度 0**）
+/// 0x4ca358  stp  x0,x1,[sp]                       ; (x0,x1) = path 的 (ptr,len) —— **没有 &self**
+/// 0x4ca35c  bl   std::fs::write::inner            ; fs::write::<&Path, &[u8]>(path, &[])
+/// 0x4ca360  cbz  x0,0x4ca400                      ; Ok ⇒ **静默返回**（连日志都不打）
+///   ── 失败才走下面 ──
+/// 0x4ca36c  bl   chrono::offset::utc::Utc::now    ; 时间戳（**默认 Display**，不是 TIMESTAMP_FORMAT）
+/// 0x4ca3a0  bl   alloc::fmt::format_inner         ; format! 串在 0x1805a0（见 CLEAR_FAILED_PIECES）
+/// 0x4ca3e0  bl   std::io::stdio::_print           ; 串在 0x18769c（见 CLEAR_LOG_PIECES）⇒ **stdout**
+/// 0x4ca3f8  bl   drop_in_place<std::io::Error>
+/// 0x4ca400  ldp/ret
+/// ```
+///
+/// 两个不显然的点：
+/// 1. **`contents` 是空切片**：`x2 = 1`（`NonNull::dangling()` 形式的合法空切片指针）、`x3 = 0`（长度）
+///    ⇒ 不是"写一行提示"，是**清空文件**；
+/// 2. 时间戳被 **格式化两次**：先作为"错误消息"的一部分、再作为 `_print` 行的前缀 —— 但
+///    `Utc::now()` **只调一次**（`0x4ca36c`），两次显示的**是同一个时刻**。
+///
+/// ⚠️ 档位：**观测**（逐指令 + `.rodata` 逐字解出的两段格式串）。
+/// `GraphwarCrashReporter` 是**无 `self` 的关联函数/自由函数集合**（`x0/x1` 直接就是 path 的
+/// (ptr,len)，没有 self 寄存器）⇒ 原版类型大概率是 ZST（`推断`：没读 `new`，因为它没有）。
+pub struct GraphwarCrashReporter;
+
+/// `clear_report` **失败消息**的格式片段（`.rodata` 紧凑格式串 `0x1805a0` 逐字解出）。
+///
+/// 编码方式（本轮实测）：`[len][piece]` 交错 `0xC0<下一段长度>` 的占位符`，`0x00` 收尾：
+/// `\x1d` + `"Failed to clear crash log at "` + `\xC0\x02` + `": "` + `\xC0\x01` + `"."` + `\x00`
+/// ⇒ 2 个占位符、3 段文本、**结尾一个句点**。
+pub const CLEAR_FAILED_PIECES: [&str; 3] =
+    ["Failed to clear crash log at ", ": ", "."];
+
+/// `clear_report` **打印行**的格式片段（`.rodata` `0x18769c` 逐字解出）：
+/// `\x01` + `"["` + `\xC0\x27` + `"] src/graphwar_crash_reporter.rs:100 - "` + `\xC0\x01` + `"\n"`
+/// ⇒ 2 个占位符，第二段里那条硬编码的 **`src/graphwar_crash_reporter.rs:100`**
+/// 是原版这行 `log!`/`println!` 的**源码行号**（⇒ 该打印语句在原版文件第 100 行）。
+pub const CLEAR_LOG_PIECES: [&str; 3] =
+    ["[", "] src/graphwar_crash_reporter.rs:100 - ", "\n"];
+
+impl GraphwarCrashReporter {
+    /// `clear_report` —— **原版 arm64 `0x4ca340` / 260 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 语义：`std::fs::write(path, &[])`；**成功什么都不做**，失败打印一行后返回。
+    ///
+    /// * 参数 `timestamp`：原版在**体内**取 `chrono::Utc::now()` 的默认 Display（`0x4ca36c`）。
+    ///   本 crate 没有 `chrono` 依赖（`Cargo.toml` 只有 gdext/serde 那几个）⇒ 由调用方给，
+    ///   **这是与真二进制的已知差异**：时间戳的取法不在本函数里。要补：给 crate 加 chrono 后
+    ///   在函数内取 `Utc::now()`（缺的是依赖，不是逻辑）。
+    /// * 返回值：失败时返回那行**已经打印出去的文本**（便于单测；原版无返回值 —— `0x4ca40c ret`）。
+    pub fn clear_report(path: &std::path::Path, timestamp: &str) -> Result<(), String> {
+        // 0x4ca35c：fs::write(path, &[])（空内容 = 指针 1/长度 0）
+        match std::fs::write(path, []) {
+            // 0x4ca360 cbz x0 → 静默返回
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // 0x4ca3a0：format!("Failed to clear crash log at {ts}: {err}.")
+                let message = clear_report_error_message(timestamp, &e.to_string());
+                // 0x4ca3e0：_print（**stdout**）"[{ts}] src/graphwar_crash_reporter.rs:100 - {msg}\n"
+                let line = clear_report_log_line(timestamp, &message);
+                print!("{}", line);
+                Err(line)
+            }
+        }
+    }
+}
+
+/// `"Failed to clear crash log at {timestamp}: {error}."`（片段见 [`CLEAR_FAILED_PIECES`]）。
+pub fn clear_report_error_message(timestamp: &str, error: &str) -> String {
+    let p = CLEAR_FAILED_PIECES;
+    format!("{}{}{}{}{}", p[0], timestamp, p[1], error, p[2])
+}
+
+/// `"[{timestamp}] src/graphwar_crash_reporter.rs:100 - {message}\n"`（片段见 [`CLEAR_LOG_PIECES`]）。
+pub fn clear_report_log_line(timestamp: &str, message: &str) -> String {
+    let p = CLEAR_LOG_PIECES;
+    format!("{}{}{}{}{}", p[0], timestamp, p[1], message, p[2])
+}
+
+#[cfg(test)]
+mod clear_report_tests {
+    //! 期望值来源：arm64 `0x4ca340..0x4ca444` 的指令 + `.rodata` 两段格式串**逐字**解出
+    //! （`0x1805a0` / `0x18769c`），不来自我方实现的输出（AGENTS.md §0.5）。
+    use super::*;
+
+    /// 两段格式片段是**逐字**从 `.rodata` 读出来的：段数、占位符个数、结尾标点都要对上。
+    #[test]
+    fn pieces_match_the_rodata_templates() {
+        // 0x1805a0：\x1d"Failed to clear crash log at "\xC0\x02": "\xC0\x01"."\x00
+        assert_eq!(CLEAR_FAILED_PIECES[0], "Failed to clear crash log at ");
+        assert_eq!(CLEAR_FAILED_PIECES[0].len(), 0x1d, "紧凑串第一字节就是 0x1d = 29");
+        assert_eq!(CLEAR_FAILED_PIECES[1], ": ");
+        assert_eq!(CLEAR_FAILED_PIECES[1].len(), 0x02, "\\xC0\\x02 里的 0x02");
+        assert_eq!(CLEAR_FAILED_PIECES[2], ".", "结尾句点（\\xC0\\x01 后的 1 字节段）");
+        assert_eq!(CLEAR_FAILED_PIECES[2].len(), 0x01);
+
+        // 0x18769c：\x01"["\xC0\x27"] src/graphwar_crash_reporter.rs:100 - "\xC0\x01"\n"
+        assert_eq!(CLEAR_LOG_PIECES[0], "[");
+        assert_eq!(CLEAR_LOG_PIECES[0].len(), 0x01);
+        assert_eq!(CLEAR_LOG_PIECES[1], "] src/graphwar_crash_reporter.rs:100 - ");
+        assert_eq!(CLEAR_LOG_PIECES[1].len(), 0x27, "紧凑串里的 0x27 = 39");
+        assert_eq!(CLEAR_LOG_PIECES[2], "\n");
+        assert_eq!(CLEAR_LOG_PIECES[2].len(), 0x01);
+    }
+
+    /// 失败行的形状：`[ts] src/…:100 - Failed to clear crash log at ts: err.\n`
+    /// （时间戳出现两次 —— `0x4ca36c` 只取一次 `Utc::now()`，两处显示同一时刻）。
+    #[test]
+    fn failure_line_has_timestamp_twice_and_the_line_100_prefix() {
+        let ts = "2026-11-28 22:15:48 UTC";
+        let msg = clear_report_error_message(ts, "No such file or directory (os error 2)");
+        assert_eq!(msg, format!("Failed to clear crash log at {ts}: No such file or directory (os error 2)."));
+        let line = clear_report_log_line(ts, &msg);
+        assert!(line.starts_with(&format!("[{ts}] src/graphwar_crash_reporter.rs:100 - Failed")), "{line}");
+        assert!(line.ends_with(".\n"), "{line}");
+        assert_eq!(line.matches(ts).count(), 2, "时间戳在打印行里出现两次（前缀 + 消息内）");
+        assert_eq!(line.matches("src/graphwar_crash_reporter.rs:100").count(), 1);
+    }
+
+    /// 真行为：**已存在的文件被清空**（0x4ca354 `x3 = 0` ⇒ 长度 0 的空切片），不是"写一行提示"。
+    #[test]
+    fn clear_report_truncates_an_existing_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("gw2_t106_clear_report_{}.txt", std::process::id()));
+        std::fs::write(&path, b"2026-11-28 00:00:00 boom\nsecond line\n").unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() > 0);
+
+        let r = GraphwarCrashReporter::clear_report(&path, "2026-11-28 22:15:48 UTC");
+        assert!(r.is_ok(), "写成功 ⇒ 0x4ca360 cbz 走 0x4ca400 静默返回：{r:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), Vec::<u8>::new(), "文件必须变空");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 反面对照：路径不存在 ⇒ 返回那行（并且已经 print 出去），行里带 `io::Error` 的 Display 文本。
+    #[test]
+    fn clear_report_reports_the_io_error_on_failure() {
+        let mut path = std::env::temp_dir();
+        path.push("gw2_t106_no_such_dir/definitely_missing/gw2_crash_log.txt");
+        let line = GraphwarCrashReporter::clear_report(&path, "TS").unwrap_err();
+        assert!(line.starts_with("[TS] src/graphwar_crash_reporter.rs:100 - Failed to clear crash log at TS: "));
+        assert!(line.ends_with(".\n"), "{line}");
+    }
+}
