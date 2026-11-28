@@ -1,0 +1,175 @@
+# gap_modcontainer_plan.txt —— T93 **预注册**：`graphwar_module_container.rs` 的 49 条"代理缺口"到底是不是业务函数
+#
+# 为什么先写死再跑：T86 §134.6 的 `gap_proxy` 表把这 49 条列为**全仓最大缺口**（Android 真名 69 − Linux 可按
+# Location 归属 20），但 T87 已在 527 内证明 `get_module_wk` **一条源码函数在 Linux 里占 20 个机器码副本**
+# （泛型单态化）。若 69 与 20 的差主要是同一批单态化副本 + 编译器产物，那么"49 条缺口"是**口径假象**；
+# 反之若真有 49 个业务函数，本模块就该是全仓最该动手的地方。两个结论差 49 个函数的工作量。
+# 判据边跑边改，结论必然是"想让它是多少就是多少"⇒ 本文件**先单独 commit**，然后才写提取脚本、才出
+# `fixtures/gap_modcontainer.tsv`。跑完若发现判据有洞，只许在文件末尾追加 §9「勘误」（追加式），
+# 不许改上文；全量跑完后再发现洞 ⇒ 只登记到 `docs/06`，不回改本文件。
+#
+# ⚠️ 诚实声明（本文件不是"盲判"）：写作时我**已经看过** `readelf -sW <android> | grep graphwar_module_container
+#    | grep FUNC | wc -l` = **69**，以及一次 `awk|c++filt` 的**分组计数**（25 / 23 / 20 / 1）。
+#    另外 `src/graphwar_module_container.rs` 的文件头（前几轮写的）已经声称"全模块只有 3 个方法 + 68 个单态化"。
+#    ⇒ 本预注册**不**声称"我不知道答案"；它规定的是：**什么样的证据组合才允许把这 49 条判成 na**、
+#    以及**什么样的观测会推翻**那个说法（§5 的负对照/证伪闸）。若三个轴任一不成立，行必须落
+#    `real-missing` 或 `unknown`，不许按"文件头说它是单态化"直接判。
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#   * Android = `.reference/steam/android-2.0.60/libgraphwarrust.so`（ELF64 aarch64，`.symtab` **未剥离**，
+#     18,793 个 FUNC）。arm64 侧**有真名**，是本轮的判据来源（`观测`：`.symtab` 逐条）。
+#   * Linux   = `.reference/steam/2026-08-28/libgraphwarrust.so`（ELF64 x86-64，stripped，
+#     sha256 见 `fixtures/boundary_audit.tsv` 文件头）。x86 侧**无符号**，函数边界取 `.eh_frame` FDE。
+#   * 69 = Android `.symtab` 里名字（mangled 或 demangled 模板实参）含 `graphwar_module_container` 的
+#     `.text` FUNC 符号数（按地址去重）。与 T86 `fixtures/global_triage_android_census.tsv` 的
+#     `game_module graphwar_module_container 69` **是同一批**（该表把 `core::ptr::drop_in_place<…>` 这条
+#     按模板实参里的模块名归到这里，见 §3 第 4 组）。
+#   * Linux 侧的"20"= 527 台账里 `loc_main_file = graphwar_module_container.rs` 的行数
+#     （`fixtures/boundary_audit.tsv` + `fixtures/function_coverage.tsv`）。
+#   * 体积上限：沿用 T82 §129.3 / T86 §134.3 的 `VOL_CAP = 0x721`。本模块各族实测体积都 ≤ 0x721
+#     （arm64 212 / 432 / 644 / 40），⇒ **L2 结构规则在本模块是可以启用的**（不受体积上限排除）。
+
+## 1. 五类定义（原样继承 T82 §129.1 / T86 §134.3，**不新增类别**；本模块需要的细分只允许写进「子类」列）
+
+| 类别 | 定义（判成它的唯一理由） | 进不进"诚实缺口" |
+|---|---|---|
+| `real-missing` | **原版有我方没有的业务函数**：函数体承载原版模块自己的语义，且能写出**该函数做什么**的一句话 | **进** |
+| `na:std-mono` | **std/core/alloc 的单态化**：函数体是标准库的（`Vec::retain` / `LocalKey::with` / `Rc::new_cyclic_in` …），本 crate 只贡献被内联进去的实参 | 不进 |
+| `na:gdext-glue` | **gdext/Godot 宏产物**：类注册胶水 / 属性访问器 / `#[func]` 分发壳 | 不进 |
+| `na:other` | **其它不该手写的编译器生成物**：drop glue、panic 展开、`#[derive]` 产物、trait 对象 shim、**泛型单态化实例** | 不进 |
+| `unknown` | **判不了**（必须写清缺什么证据） | **进**（保守） |
+
+### 1.1 本模块必须用到的两个子类（写在 `subclass` 列，不改上面的类别语义）
+
+* `na:other / own-generic-mono` —— **本 crate 自己的泛型方法的第 i 个实例化副本**。
+  判定语义：源码里**只有一行 `fn`**（一个泛型定义），机器码里 N 份。所以它既不是 `real-missing`
+  （源码级我们**有**这个函数，且有实现），也不是"std 的代码"（`na:std-mono` 要求函数体是标准库的）。
+  T86 §134.3 的 `na:other` 定义里本来就列了「**泛型单态化实例**」⇒ 用它，不另立类别。
+  **必须在 TSV 里同时记 `src_status = implemented-generic` 与 `mono_group_size`**，否则读者会把它
+  当成"没写"，或者反过来把 N 份副本当 N 条业务函数（这正是 §7 要防的口径罪）。
+* `na:other / drop-glue` —— 编译器生成的 `core::ptr::drop_in_place<…>`（T82 明文举例）。
+
+## 2. 三条**互相独立**的轴（数据来源不同；L/F 沿用 T87 `fixtures/naming_android_plan.txt` §2 的定义）
+
+| 轴 | 内容 | 独立性 |
+|---|---|---|
+| **L 位置轴** | `panic::Location` 键集 = `(src/<file>.rs, line, col)`（`.data.rel.ro` 的 24 字节结构 + `.rela.dyn` 还原指针）。跨构建、跨 ISA 不变 | 与名字无关；**这是 527 的归属机制** |
+| **F 结构轴** | 函数体里与 ISA 无关的常量/身份：①**`.rodata` 16 字节常量内容**（`TypeId::of::<T>()` 的内联值）②**`.data.rel.ro` 4 字 `dyn Any` vtable 的首字**（= `drop_in_place<RefCell<M>>` 的地址，Android 侧该地址**有符号名** ⇒ 直接给出 `M`）③`.rodata` 串集合 ④小立即数集合（含块内步长）；另记 FDE 尺寸与 arm64 size 的比 | **不含任何符号名当特征**；Android 侧的名字只在"给 M 定名"时用（=答案，不是特征） |
+| **S 形态轴（T89 §138.5 的调用形态闸）** | `call rel32` 条数（**直接调用**）与"本函数地址出现在数据槽里"的条数（**slot**，值等于本函数入口的重定位表项） | 与 L/F 都无关（看的是调用者/被调用关系，不是函数体常量） |
+
+**F 轴的可复算提取法（先写死，跑的时候不许改）**：
+* 16 字节常量 = 反汇编里 `movups xmm, [rip+d]` / `lea reg,[rip+d]`（x86）、`ldr q,[x]` + 字面量池
+  （arm64）目标落在 `.rodata` 且**至少 8 字节是编译器算出来的非零随机样值**（TypeId 的特征：高 64 位
+  非 0、且同模块内互不相同）。全 `.so` 逐 8 字节建 `{内容 → 地址}` 索引后反查，避免"读错地址"。
+* vtable 首字 = `.data.rel.ro` 里 4 个连续 8 字节，其第 0 字由 `R_*_RELATIVE` 重定位指向
+  `core::ptr::drop_in_place<…>`（Android 侧可直接读 `.symtab` 名）。
+* **FDE 尺寸比** = `min(linux_fde, arm64_size) / max(...)`。只作旁证（跨 ISA 天然不等，
+  x86 实测 add≈0.71×arm64、get≈0.82×），**不许单靠它定案**；判据见 §4 R5。
+
+## 3. 69 条的四个先验分组（只用于"分组"这件事，不用于"类别"）
+
+分组依据 = Android `.symtab` 的 demangle 名（抹 `h<hash>`）的**第 4 段**（`Type::method`）：
+
+| 组 | 名字（demangle 后去掉 `h<hash>`） | Android size | 先验判断（**待 §4 规则确认，不是结论**） |
+|---|---|---|---|
+| A | `GraphwarModuleContainer::add_module` | 212 | 同一泛型方法的实例化副本 |
+| B | `GraphwarModuleContainer::get_module` | 432 | 同上 |
+| C | `GraphwarModuleContainer::get_module_wk` | 644 | 同上（**T87 已证：本组的 L 键在 Linux 侧唯一命中 20 条**） |
+| D | `core::ptr::drop_in_place<Weak<RefCell<GraphwarModuleContainer>>>` | 40 | 编译器 drop glue |
+
+**分组是事实、类别是裁决**：分组只说明"这 25 条名字相同"，不说明"这 25 条只有 1 个源码函数"——
+后者必须由 §4 的 R-GM 用 F/形态轴自己验出来（见 §5 的证伪闸）。
+
+## 4. 判决规则（预注册；命中即停，逐条写进 TSV 的 `rule` 列）
+
+**R-L（L 轴硬归属）**：Linux 侧该地址引用 `src/graphwar_module_container.rs` 的 Location ⇒ 该函数**属于本模块**，
+与 527 台账的归属一致。C 组 20 条必须有（正对照）。
+
+**R-REAL ⇒ `real-missing`**：满足任一：
+  * `F` 轴显示该 arm64 函数的 vtable 首字所指 `drop_in_place<RefCell<M>>` 给出的 `M` **不在**已注册的 25 型里；
+  * 或该函数**没有** `dyn Any`/`TypeId` 形态（不是本模块三个泛型方法的实例）；
+  * 或 Linux 侧**没有**对应机器码（等距块断裂、或块内某序号无 FDE 起点）。
+  且能写出一句"它做什么"。
+
+**R-GM ⇒ `na:other / own-generic-mono`**（必须**同时**满足，缺一条就降 `unknown`）：
+  1. **组内一致性**：本组所有成员的 F 轴"骨架"相同（同一条指令序列的模板），只有身份常量变；
+  2. **身份可变**：组内每条的 `M` 互不相同（A 组 25 个不同 `M`），且**并集恰好等于**我方 `MODULES` 的型集合；
+  3. **L 轴对齐**：Linux 侧同组地址的形态与 arm64 同组**逐条对应**（A 组 25 / B 组 23 / C 组 20 的块内序号
+     一一对上），且 C 组的 L 键集必须落在 `:30:28` 这一个键上（与 527 一致）；
+  4. **形态轴**（T89 闸）：`call rel32 ≥ 1` **且** `slot = 0`（泛型单态化是**被直接调用**的，地址不被取走）。
+     * 若某条是 `rel32 = 0 且 slot ≥ 1` ⇒ 它可能是"交给 API 的闭包/回调"，**不许**判 `na`，落 `unknown`
+       （T89 驳回 `0x438880` 的教训：被内联进 std 的游戏闭包会伪装成单态化）。
+  5. **源码级唯一性**：`M` 的不同取值只改 vtable/TypeId，**不改本方法的方法名**——即 demangle 名去 hash 后
+     组内只有 1 个方法名。
+
+**R-DROP ⇒ `na:other / drop-glue`**：函数体只做 `dec qword [reg]` / `__rust_dealloc` / `free`，
+  无业务常量/串/分支（T82 的 R-OTHER 原文），且 arm64 名就是 `core::ptr::drop_in_place<…>`。
+
+**R-UNKNOWN ⇒ `unknown`**：任一闸不干净命中、或命中互相冲突。必须写「缺什么」。
+
+**纪律**（继承 T82 §3）：`na:*` 每条至少 **2 个独立证据**（不同轴）；单轴 ⇒ `unknown`。
+机器/脚本给的只是**候选**；TSV 的 `category` 列是我的人工裁决结果，与脚本候选不同时必须写理由。
+
+## 5. 正 / 负对照（**先做；不全会退回判据，不许先看 49 条的结论**）
+
+| 组 | 做法 | 通过条件 |
+|---|---|---|
+| **C1 正对照（L）** | C 组 20 条：Linux 20 个地址的 L 键集 ∩ {`graphwar_module_container.rs:*`} | 每个地址**恰好** 1 个键且都是 `:30:28`，20/20 |
+| **C2 正对照（F）** | 对 C 组 / A 组 / B 组各取 1 条，人工读 `dis` 输出，确认骨架（§3 的 `dyn Any` vtable + TypeId）读法成立；再全组机判 | 3 组骨架都能被同一套提取器读出来，读不出 ⇒ 先修提取器 |
+| **C3 身份并集** | A 组 25 条的 `M` 并集 vs `MODULES` 25 型；B 组 23 / C 组 20 的并集 vs `MODULES` 中 `has_get` / `has_wk` 的子集 | **完全相等**（不是"大体相等"） |
+| **C4 负对照（防"总说同意"）** | 把 A 组第 i 条的 `M` 换成第 i+1 条的 `M` 后，Linux 侧按同一提取器应匹配到**另一条** Linux 地址；即映射必须**一一**，不许"任取一个 M 都对得上" | 打乱后匹配率骤降（≤ 同尺寸条数分之一） |
+| **C5 证伪闸** | 若 A/B/C 任一组出现：块内序号与 Linux 块不一一对应 / 块内有洞 / 某条 `M` 不在 25 型里 / 某条 L 键与本组不同 | 该行**不许判 na**，落 `real-missing` 或 `unknown` |
+
+## 6. 若 `real-missing` 非空：落码规格（与任务书一致）
+
+* 落点 = `src/graphwar_module_container.rs`（**原版模块名**，不新建 `_scaffold` 文件）；
+* 函数用**真名**（demangle 后的 `Type::method`，抹 `h<hash>`）；
+* 函数体**第 1 行**是 `// vaddr 0x… (arm64 2.0.60) / 0x… (x86 2.0.60)`，关键指令/分支在行内注释到地址；
+* 能单测的加单测，**期望值必须来自反汇编常数/分支**（不许自写自证），测试放 `tests/graphwar_module_container.rs`
+  或本文件的 `#[cfg(test)]`（本任务只允许动这两个位置）；
+* 每处单独 commit。
+
+## 7. 计数口径（**报告里必须三档分开写，不许合并**）
+
+| 口径 | 定义 | 本模块预期 |
+|---|---|---|
+| **机器码条数** | `.text` 里能指到本模块的名字/归属的函数个数（Android 真名 69 / Linux Location 归属 20 / Linux 实际机器码 68+1） | 三个数分别报 |
+| **源码函数数** | 原版 `graphwar_module_container.rs` 里**有 `fn` 行**的函数个数（由 §4 的"组内只有 1 个方法名"+ 25 型并集推出） | 3（待验） |
+| **严格 1:1** | 我方 `src/graphwar_module_container.rs` 里有对应源码函数、且有物证（地址/反汇编）的**源码函数**个数 | 3（待验） |
+
+**禁止**：把 N 份单态化副本算成"完成 N 条业务函数"；也**禁止**把"3 个源码函数"说成"69 条全做完"
+（607 式的双面虚报）。`docs/06` 正文与给 lead 的报告都必须同时写这三档。
+
+## 8. 门槛（跑完必跑，读数照抄）
+
+`cargo test --offline`（含 `--features gdext-bindings`）只增不减 · `tools/coverage_matrix.py --check` ·
+`tools/check_doc_refs.py` rc=0 · `tools/docsec.py check docs/06-verification.md` rc=0 ·
+三轴 `fire/batch/batch_conv` = 647 / 647 / 637（冻结快照 401 份回放）· `tools/boundary_audit.py --check` mismatch 0。
+
+## 9. 勘误（追加式；跑数过程中若发现判据有洞，只许往这里加）
+
+## 9. 勘误（追加式；跑数过程中若发现判据有洞，只许往这里加）
+
+### E1（2026-11-28，跑数中途）：F 轴的「vtable 首字 → `drop_in_place<RefCell<M>>` 名」**不是单射**
+
+* 观测：25 条 `add_module` 里有 **3 条**从 vtable 首字读出**同一个**名字 `GraphwarSoldierManager`，
+  但它们的 16 字节 `TypeId` 常量**互不相同**（同一个型不可能有两个 TypeId）。
+* 原因：`GraphwarPlayerManager` / `GraphwarRankManager` / `GraphwarSoldierManager` 三个 **72 字节、布局相同**的
+  manager，其 `drop_in_place<RefCell<M>>` 被**合并到同一地址 arm64 `0x4b2350`**（252 B，`.symtab` 里 3 个 FUNC 别名同址）。
+* 处理（**判据与阈值一字未改**，只补提取法）：① 给 F 轴加一条"vtable **第 4 字**（`<M as Any>::type_id` shim）
+  必须两两不同"的检查，用来证明这几个 vtable 确实属于不同的型；② 命名改用 §4 之外新登记的
+  **T 构造器邻接轴**（装配点里 `bl add_module` 的前一条 `bl` 是 `M::new`，而 `M::new` 有真名）。
+  22 型的 vtable 名与构造器名逐条一致；歧义的 3 条由构造器给出。
+* 影响的判定行：A 组 3 条（`0x49ef10` / `0x49f18c` / `0x49f260`）。**类别不变**
+  （仍全是 `na:other / own-generic-mono`），只影响 `type` 列。
+* 结论：**这一条是 §5 的 C3 闸逼出来的**（C3 要求"类型并集 = 25 型"，第一版只出 23 型）。
+  没有这条闸，本轮会写下"23 型"的错结论 ⇒ C3 保留在判据里。
+
+### E2（同日）：arm64 `.eh_frame` 在本工具链上解析会**失步**
+
+`tools/loc_xrefs.py::parse_eh_frame` 对 arm64 2.0.60 解析到 `0x49e368` 后直接跳到 `0x4a52f4`，
+并产出一条 `0x52dc00116fd8` 的假 FDE（12,556 条里至少这一条是垃圾）。
+⇒ arm64 的函数边界一律改用 `.symtab` 的 `st_size`（本来就更硬：那就是编译器给的函数单元）。
+不影响任何结论（FDE 尺寸比在预注册里只是旁证，arm64 侧改用 st_size 只会更准），
+但登记为此后所有用 arm64 FDE 的轮的**已知限制**。
