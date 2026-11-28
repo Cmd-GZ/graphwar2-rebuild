@@ -27719,3 +27719,310 @@ $PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv 
    但它的体积**超过**预注册 §2.4 的 `VOL_CAP = 0x800`。第一版 TSV 里生成器把「≤VOL_CAP ✓」这句**无条件**印上去
    （对着 5752 B 也印），属**假陈述**。已改成：>0x800 的 `na` 候选**一律降 `unknown`** 并在「依据」里写明原因；
    要翻成 `na` 得由 lead 认「名字形态可单独豁免体积闸」（理由与清单写在 plan §9 勘误 E1）。
+
+## 146. T100 两处「确定的遗留」收口：**① 弹道淡出尾巴 —— 删掉客户端"到点即清"（原版没有这个动作，退场归平面按活跃窗口）**；**② 断线提示「You have been disconnected.」的触发点定到指令 —— 而 T84 登记的「我方没弹」被证伪：两侧同一帧都弹了，22 925 px 的真因是「对局拆场」的两处视觉状态**（2026-11-28，任务 `task-91` / 分支 `agent/pixel-leftover`）
+
+> 起因：两处**别人登记的**遗留 —— `docs/06` §137.6 第 1 条（T88：「淡出尾巴我没照原版做完」）与
+> `docs/06` §135.5 第 2 条 / §135.6 第 2 条（T84：「原版断线时会弹 `You have been disconnected.` + `Ok`，
+> 我方在同一时刻没弹（跨侧差异 22 925 px）。**根因未查**」）。
+> 判据先预注册在 [`fixtures/pixel_leftover_plan.txt`](../fixtures/pixel_leftover_plan.txt)（单独 commit，先于任何代码改动与读数）。
+> **门槛一个数没改**：`fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）、
+> `fixtures/frame_capture_freeze_plan.txt`（sha256 `aa23b64d…`）、排除区 `999,1062,1008,1160` 三样都没动；
+> `tools/frame_capture.py` / `tools/frame_diff.py` 也一行没改（密集采样用的是 `.agent-work/` 里的**scratch 拷贝**）。
+
+### 146.0 一页结论
+
+| # | 问 | 答 | 证据档 |
+|---|---|---|---|
+| ①-1 | 原版有没有"弹道到点就清线"这个动作？ | **没有。** 线只有一条退场路径：`GraphwarPlane::draw` 尾部循环里"出了活跃窗口 ⇒ `FunctionDrawer::remove_function`"（`0x4b6418` → `0x498b70`，只 `queue_free` + 删抽屉的表）。窗口 = 揭示 `len/30` tick **+ 60 tick 淡出**，淡出 `alpha = max(0, 1 − (d − len/30)/60)` | **逐位**（`0x3be60b` 的 `$0x708`=1800、`0x455b2e` 的 −60.0、`0x455a40` 全函数；T88 §137.3 已翻，本轮复核） |
+| ①-2 | 那我方错在哪？ | **只在客户端一处**：`_on_shot_arrived()` 一到"落地"就 `_clear_curve()`（= `clear_function_points()` + 对每个 drawer `remove_function()`）⇒ 淡出段**整段**被砍掉。Rust 侧（`function_fade_on_tick` / `is_active_function` / `feed_functions` 的 `update_function_fade`）T88 已经做对了 | **观测**（改前帧 + 源码；Rust 侧算式逐位） |
+| ①-3 | 改法 | 联机路径**不再清线**，退场交给平面自己按 tick 轴走；回放 / 本地局**保留**清线（两条各自的时钟到"揭完"就夹住不走 ⇒ 不清就永远不退场，§137.6 第 4/5 条） | 本文件 §146.1 |
+| ①-4 | 像素读数 | 停帧判据 `match_play` raw **1 645 → 1 550 px**（−95 px，−0.0042 pp），L2 **0 块**，**≤ 预注册上限 1 740 px** ✓；`match_ready` 2 179 → **2 112 px（0.0949 %）**，仍在预注册带 `[0.070, 0.100] %` 内 ✓ | **观测**（两侧串行 + 私有 netns） |
+| ①-5 | 淡出段两侧一致了吗？ | **帧集合与揭示曲线一致，淡出段"拍不到"**：密集采样里两侧弹道出现在**同一帧**、逐帧像素量差 **≤1.6 %**；但 `import -window` 的**单帧成本 ≈1.0 s**（实测：phase2 → 服务端关连接 8.18 s 恰好跨第 1→9 帧），而淡出只有 **60 tick = 1.00 s** ⇒ **一个帧间隔就跨完整段淡出**，采集分辨率低于被判据的分辨率。T88 那张表里"#14 = 1 743 px"就是**恰好有一帧落进这 1 s** | **观测**（逐帧读数 + 帧间隔实测）；**这条是采集天花板，不是判据没生效** |
+| ②-1 | 原版这条提示的**触发点** | **不是"收到某个事件"，是每帧一次的状态轮询**：三条串（`DisconnectedLabel` / `You have been disconnected.` / `DisconnectedPopUp`）在 `.text` 里**各只有 1 条** `lea`，全部落在 **`GraphwarRootNode::process`（`0x3a5760`，FDE `0x3a5760..0x3aa696`，20 288 B）** 里的一条支路：先 `GraphwarGameClient::disconnect`（`0x516370`），再"取 `DisconnectedLabel` → `set_text` → 取 `DisconnectedPopUp`" | **逐位**（字符串地址 + 全部 `lea` 交叉引用）/ **观测**（所在函数 FDE） |
+| ②-2 | 我方才是不弹？ | **弹了。** 同一份采集里，**两侧在同一帧（#31）**出现同一个弹窗（`You have been disconnected.` + `Ok`，面板/按钮位置逐项相同）。⇒ T84 的「我方在同一时刻没弹」**被证伪**（那次大概率只看了跨侧差异大小，没核我方帧） | **观测**（两侧各 45 帧、逐帧 `compare_screen`） |
+| ②-3 | 那 22 925 px 是什么？ | **「对局拆场」的两处视觉状态**，与弹窗无关：① `ShowExtraButtons`（∨）**我方在断线那一刻从禁用态翻回启用态**（灰面 `#383838`+暗图标 → 深绿面+白图标）= **12 552 px**；② **棋盘 3 px 黑框**原版断线后**不再画**、我方还在画 = **8 797 px**（`GraphwarPlane::draw` 里 `0x4b614c test %rbx,%rbx / je`，`rbx = [容器+0x1f8]` = `GraphwarGameClient` 句柄 ⇒ 句柄没了就不再画框/不再喂点） | **观测**（逐块拆分 + 8× 放大对照）/ **逐位**（那条闸门指令） |
+| ②-4 | 本轮改了吗？ | **没有**，只取证 + 登记（见 §146.6 第 1 条）。理由：它是"拆场口径"与"平面绘制闸门"两件事，不是"断线提示"缺失；预注册 B2 的**前提**（我方没弹）已被②-2 证伪，把它硬压到 ≤2 000 px 需要动 `end_match()` 的拆场口径 + 给 `graphwar_plane.rs` 加 `game client 在场` 闸门，都超出本任务书范围 | —— |
+
+**本轮改了什么**：只改了 **1 个文件** `client/src/screens/play_screen.gd`（`_on_shot_arrived()` 里那条清线加上
+`if phase != "online":`），外加本文件、`docs/00` 与 `docs/HANDOVER` 的像素行、以及预注册 fixture。
+**没改**：`src/**`（一行没改）、`tools/frame_capture.py`、`tools/frame_diff.py`、`tools/match_serve.py`、
+`recovered-src/`、别的 `screens`、门槛/停帧表/排除区、`fixtures/frame_match_events.txt`。
+
+### 146.1 ① 淡出尾巴：真值、缺口、改法
+
+#### 144.1.1 原版的弹道生命周期只有一条退场路
+
+```text
+GraphwarPlane::draw（0x4b5df0）
+  for id in function_manager.get_active_functions_on_tick(tick)   ; 0x4b6339 / 谓词 0x3be540
+      drawer.update_function(id, points, len, new_len, color)      ; 0x4b69ec -> 0x498c70
+      alpha = get_function_fade_on_tick(id, tick)                  ; 0x4b69fe -> 槽 0x9bbd08 -> 0x455a40
+      drawer.update_function_fade(id, alpha)                       ; 0x4b6a0e -> 0x4992b0
+  for id in 管理器全表:  !is_active_function(...) ⇒ drawer.remove_function(id)   ; 0x4b6418 -> 0x498b70
+```
+
+两条判据（**逐位**，两处独立给出同一个 60）：
+
+| 项 | 指令 | 含义 |
+|---|---|---|
+| 在场窗口 | `0x3be5fb jbe skip` / `0x3be60b add $0x708,%edi` / `0x3be611 cmp %edi,%edx; jae skip` | `tick > active_tick` ∧ `30·d < len + 1800` ⇒ 揭示 `len/30` tick **+ 60 tick** |
+| 淡出 alpha | `0x455b15`（`len/30` 无符号除）× `0x455b2e divsd [−60.0]` × `0x455b36 addsd 1.0` × `0x455b42 maxsd 0` | `d ≤ len/30 ⇒ 1.0`；否则 `max(0, 1 − (d − len/30)/60)` |
+
+**⇒ 原版里根本没有"弹道到点（落地）就清"这个动作**：线在屏幕上多活 60 tick，按 alpha 线性淡到 0 才被删。
+
+#### 144.1.2 我方的缺口只有客户端一处
+
+`GraphwarPlane::draw` 那条循环我方已经有（`src/graphwar_plane.rs::feed_functions`，T88 落码，
+并且**出窗口只删 `Line2D`、不删管理器那一格**，与 `0x4b6418` 同口径）。被砍掉的是**淡出这一段的渲染**：
+
+```gdscript
+# 改前（client/src/screens/play_screen.gd::_on_shot_arrived）
+_clear_curve()     # clear_function_points() + 对每个 FunctionDrawer remove_function()
+```
+
+`_on_shot_arrived()` 在"这一发飞完"时被调用，正好落在"揭示完成"那一刻 ⇒ 淡出段一步都没走。
+
+#### 144.1.3 改法（本轮的 diff，逐行）
+
+联机路径**什么都不做**（平面自己按 tick 轴退场）；回放 / 本地局保留清线，各自理由是**时钟**而不是"原版也这样"：
+
+| 路径 | 清不清 | 理由 |
+|---|---|---|
+| **联机** | **不清** | tick 轴由服务端对齐（`TickReply`）+ `drive_frame` 每帧推 ⇒ 轴会越过揭完那一格 ⇒ 平面自己走完 60 tick 淡出后 `remove_function` = 原版 |
+| 回放 | 清 | 喂给平面的 `fractional_tick` **本身就是"已揭示量"**（`active_tick` 恒 0），轴被夹在 `len/30` 不动 ⇒ 在场谓词**永远为真** ⇒ 不清就永远不退场（§137.6 第 5 条） |
+| 本地局 | 清 | 时钟是墙钟 `_advance_curve`，到"揭完"就 `minf` 夹住，与回放同一个原因；且 `advance_shot_for_test()` 与一批自检依赖它的确定性（§137.6 第 4 条） |
+
+### 146.2 ① 验收读数
+
+#### 144.2.1 停帧判据（预注册口径：`--stop-plan` + 两侧串行 + 私有 netns，同一棵树同一份 `.so`）
+
+| 屏 | 改前 | 改后 | 判（预注册 §1.3） |
+|---|---|---|---|
+| `match_ready` | 2 179 px / **0.0979 %**（L2 0） | **2 112 px / 0.0949 %**（L2 0） | 预注册带 `[0.070, 0.100] %` **内** ✓ |
+| `match_play` | raw **1 645 px**（掩膜后 1 375）/ 0.0618 %（L2 0） | raw **1 550 px** / **0.0696 %**（L2 0） | **≤ 1 740 px 且 L2 0** ✓（raw −95 px） |
+
+> 掩膜后那一列两次不能直接相减：光标本轮**没有**落进排除区（`l3_masked_out_px` 0 vs 270）。
+> 同一口径（`l3_diff_px_raw`）才是 1 645 → 1 550。
+> `match_ready` 那 −67 px 是同一层既有残差（士兵/名字标签，§137.5.3）的相位抖动，不是本轮改动引起的。
+
+#### 144.2.2 密集采样（**scratch 拷贝**驱动，`tools/frame_capture.py` 一字未改）
+
+`<树>/.agent-work/dense3/frame_capture.py`：`FRAMES_BY_SCREEN = {match_ready: 3, match_play: 40}`、
+`MATCH_PLAY_WAIT = 0.0`、LAN 行 Join 的 settle `3.0 → 0.6`。
+判据 = 棋盘区 `(265,556)-(1738,900)` 内"彩色"像素（通道极差 > 60）扣掉士兵 bbox：
+
+| 帧 | #2 | #3 | #4 | #5 | #6 | #7 | #8 |
+|---|---|---|---|---|---|---|---|
+| **原版** | 846 | 1 947 | 3 415 | 5 089 | 6 763 | 8 427 | **10 067** |
+| **我方** | 855 | 1 952 | 3 450 | 5 144 | 6 840 | 8 521 | **10 223** |
+| Δ | +9 | +5 | +35 | +55 | +77 | +94 | **+156（+1.6 %）** |
+
+⇒ **两侧弹道出现在同一帧、揭示曲线逐帧对齐到 ≤1.6 %**（改前该段我方在"落地"帧直接归 0）。
+第 9 帧起两侧都进断线弹窗（服务端收尾），所以本 regime 看不到淡出。
+
+#### 144.2.3 淡出段为什么"拍不到"：采集分辨率的天花板（**这是本轮最该记住的一条**）
+
+同一次采集里量帧间隔：`phase_begin match_play` → `session_done` = **8.18 s**，而这两点之间只有
+**8 个截图**（第 1→9 帧）⇒ **单帧成本 ≈ 1.02 s**（llvmpipe + `import -window` 1920×1160）。
+而淡出段只有 **60 tick @60 Hz = 1.00 s** ⇒ **一个帧间隔就跨完整段淡出**。
+
+这不是判据没生效，而是**测量分辨率低于被判据的分辨率**。两条旁证：
+
+* T88 §137.5.2 的 "#14 帧 = 1 743 px（淡出中）"就是**恰好有一帧落进这 1 s**；我在
+  长 `match_ready` 的 scratch regime（`.agent-work/dense2`，match_ready 60 帧）复现了同一形状：
+  原版 #34..#39 = **11 326 / 10 856 / 1 573 / 74 / 0** —— 同样是"一格淡出、下一格就没了"。
+* 那个 regime 里**我方**仍是"峰值 → 归 0"跨一格（10 834 → 9）。原因是**另一条已登记的差异**：
+  我方 tick 轴 = **服务端绝对 tick**（`_online_poll_tick` → `set_fractional_tick`，每次 `TickReply` 跳 ≤60 tick），
+  而原版的揭示是**平滑**走的（§137.6 第 2/3 条：`TickReply` → tick 轴的机制只到"观测"）。
+  ⇒ 淡出窗口在两侧**同样是 1 s 墙钟**，但**起点相位**不同，被 1 s 的采样步长放大成"一个有一格、一个没有"。
+
+**结论（诚实登记）**：预注册判据 **A2/A3（"淡出段同帧存在 / 持续时间差 ≤2 帧"）在本机不可测** ——
+不是判红，是**测量手段不够**。要测它得把采集成本压到 <0.1 s/帧（例如直接读游戏内
+`FunctionDrawer::update_function_fade` 的 alpha，或按 tick 停帧逐点采），那是另一件事。
+
+### 146.3 ② 原版这条提示的触发点（指令级）
+
+#### 144.3.1 三条串、三条 `lea`、一个函数
+
+`.rodata`（vaddr；`.rodata` 的 vaddr == file offset，从 `0x19c000` 起）：
+
+| 串 | 地址 | 长度（立即数） |
+|---|---|---|
+| `DisconnectedLabel` | `0x1bda47` | `r8d = 0x11` = 17 |
+| `You have been disconnected.` | `0x1bda58` | `edx = 0x1b` = 27 |
+| `DisconnectedPopUp` | `0x1bda73` | —— |
+
+全 `.text` 里指向这三条的 `lea reg,[rip+disp]` **各只有 1 条**，且全部落在同一小段里：
+
+```text
+0x3a7436  lea rcx,[rip-0x1e99f6]        ; @0x1bda47 "DisconnectedLabel"
+0x3a7442  mov r8d,0x11
+0x3a7448  call 0x3ab290                 ; 按名字取节点（名字+长度两个实参）
+0x3a74a5  lea rsi,[rip-0x1e9a54]        ; @0x1bda58 "You have been disconnected."
+0x3a74b4  mov edx,0x1b
+0x3a74b9  call 0x3ec410                 ; set_text(&str, 27)
+0x3a754e  lea rsi,[rip-0x1e9ae2]        ; @0x1bda73 "DisconnectedPopUp"
+```
+
+`tools/addr_probe.py fde 0x3a7436` ⇒ **`0x3a5760..0x3aa696`（size `0x4f36` = 20 288 B）**
+= **`GraphwarRootNode::process`**（`docs/02` §17 表、`docs/06` §63 都有这一条）⇒ **引擎 `_process` 每帧跑的函数**。
+
+#### 144.3.2 进这条支路的判据：`GraphwarGameClient` 句柄
+
+沿控制流往回追（`0x3a7331` ← `0x3a7195`/`0x3a71a9`/`0x3a71b7` ← `0x3a70ce` ← `0x3a7066 jae` / `0x3a70b2 jne`）：
+
+```text
+0x3a702c  mov  r15,[rbx+0x1668]        ; r15 = 模块容器（GraphwarModuleContainer）
+0x3a7046  lea  r12,[r15+0x1f8]
+0x3a704d  cmp  qword [r15+0x1f8],0     ; +0x1f8 == 0 ?（= 没有 GraphwarGameClient）
+0x3a7055  je   0x3a7322                ;   没有 ⇒ 另一条支路
+0x3a705b  movzbl eax,byte [rbx+0x1704]; root 的状态字节（1/2 走特殊处理，其余落到下面）
+0x3a7064  cmp  al,2 / jae 0x3a70ce
+...
+0x3a7190  cmp  qword [r12],0
+0x3a7195  je   0x3a7331                ; 句柄空 ⇒ 直接去弹窗
+0x3a719e  call [slot 0x9ba958] -> 0x516370   ; graphwar_game_client::disconnect
+0x3a71b7  jmp  0x3a7331                ; ⇒ 设状态字段 ⇒ 0x3a7411 起弹窗那段
+```
+
+`0x516370` = `GraphwarGameClient::disconnect`（`docs/06` §102 那批函数级台账里就是这个名字），
+`rdi = &container[+0x1f8]` 与 `0x3a704d` 同一格 ⇒ 自洽。
+
+**⇒ 原版的"触发点"是**：`GraphwarRootNode::process` 每帧那台状态机走到"连接没了"的分支时，
+**先 `GraphwarGameClient::disconnect()`、再取 `DisconnectedLabel` 写死文本、再显示 `DisconnectedPopUp`**。
+**不是**"收到 `ConnectionRemoved` 之类的事件就弹"——这条路上没有任何事件 tag 的生产/投递指令。
+
+#### 144.3.3 我方那条链（**是通的**）
+
+```text
+GwNetLink.poll()  get_status()==STATUS_ERROR/NONE        （对端关 socket）
+  → link_closed → GwNetSession._on_link_closed（phase 不是 idle/closed/failed/ended ⇒ 发 closed）
+  → GwNet._on_session_closed（_was_joined 且 !_ended ⇒ 发 disconnected）
+  → App._on_net_disconnected() → open_popup("DisconnectedPopUp")
+```
+
+⇒ **落到我方是已经落好的**：这一条不需要新代码，需要的是**别把"我方没弹"当成结论**（见 §146.4）。
+
+### 146.4 ② 实测：两侧都弹，22 925 px 的真因是「对局拆场」
+
+#### 144.4.1 两侧同一帧都弹（T84 的登记被证伪）
+
+`--flow match` 密集采样（45 帧；scratch 拷贝，`FRAMES_PER_SCREEN 3→45` / `FRAME_GAP_S 1.2→0.2` /
+`MATCH_PLAY_WAIT 5.0→0.5`），服务端在 phase2+8.18 s 关连接：
+
+* 第 **1–30** 帧：`match_play` 正常对局屏；逐帧跨侧差异 **916–2 186 px**。
+* 第 **31** 帧起：**两侧都**出现 `You have been disconnected.` + `Ok`（面板矩形、文本、按钮位置逐项相同）。
+* 第 **31–45** 帧：逐帧跨侧差异 **22 482 px（1.0098 %，L2 6 块）** —— 与 T84 登记的 22 925 px 同量级。
+  ⇒ **22 925 px 不是"我方没弹"造成的**（我方弹了）；差异在弹窗背后的那一层。
+
+#### 144.4.2 22 375 px 拆成两块（`max|Δ|>8`，同一帧 #35）
+
+| 区块 | 像素 | 是什么 |
+|---|---|---|
+| **顶部按钮带** `x153..292 × y3..92`（140×90） | **12 552** | 一整个按钮 = `ShowExtraButtons`（∨） |
+| **棋盘 3 px 黑框**（上下 `y195..197`/`y960..961` 各 1 279/行；左右 `x300..302`/`x1576..1578` 各 384/列） | **8 797** | `GraphwarPlane::draw` 画的那个空心黑框 |
+| 其余（左下士兵/名字标签、顶左 ±若干） | ~1 026 | 既有非逐位残差 |
+
+**放大 8× 对照（同一帧、同一矩形）**：
+
+* ∨ 按钮：原版 **灰面 `#383838` + 暗图标（禁用态）**；我方 **深绿面 + 白图标（启用态）**。
+  改前（#30）两侧**都是**禁用态 ⇒ 是我方在断线那一刻把它翻回启用：`App._on_net_disconnected()`
+  → `end_match()` → `_set_replay_layout(false)` / `_set_replay_input_enabled(true)` 重算了版式与控件态。
+* 棋盘框：原版断线后**不再画黑框**（白底直接顶到 `#0E251C` 背景，边上留 178 抗锯齿），
+  我方仍画 ⇒ 逐位线索见 §146.4.3。
+
+#### 144.4.3 棋盘框为什么原版"不画了"：`GraphwarPlane::draw` 的绘制闸门（**逐位**）
+
+```text
+0x4b5f2c  mov  rbx,[r12+0x1f8]         ; rbx = 模块容器 +0x1f8 = GraphwarGameClient（与 §146.3.2 同一格）
+   ...（rbx 全程未被重写，objdump 逐行核过）
+0x4b6147  call 0x499050                ; FunctionDrawer::update_transform
+0x4b614c  test rbx,rbx
+0x4b614f  je   0x4b6a6a                ; **句柄空 ⇒ 跳过 0x4b6155..0x4b6a69**
+0x4b617d..0x4b61ab  棋盘框：draw_set_transform + draw_rect(Rect2(-25,-15,50,30), black, filled=false, width=0.2)
+0x4b6339..0x4b6a13  喂点循环（get_active_functions_on_tick → update_function / update_function_fade / remove_function）
+```
+
+⇒ **原版把"棋盘框 + 整段喂点"都挂在"`GraphwarGameClient` 在场"这一条闸门上**。
+断线时那台 client 被 `disconnect()` 掉、容器那格空了 ⇒ 框不画了、点也不喂了；白底由
+`AxisDrawer::draw`（`0x4e069f`–`0x4e06ca`）另一台节点画，所以**白底还在**。
+
+我方 `graphwar_plane.rs` 没有这条闸门（框无条件画）⇒ 断线后多一圈黑框。
+**本轮不改**：加这条闸门要给平面一个"game client 在场"的输入，而那台 client 在我方架构里
+对应的东西（模块容器那格）还没有节点对应物；且它会同时改"喂点"的行为。登记在 §146.6 第 1 条。
+
+### 146.5 门槛（本轮实测，全部自己跑）
+
+| 门槛 | 读数 | 判 |
+|---|---|---|
+| `cargo test --offline` | **1 620 passed / 0 failed / 1 ignored** | ✓ 与任务书同值 |
+| `cargo test --offline --features gdext-bindings` | **1 769 passed / 0 failed / 1 ignored** | ✓ 与任务书同值 |
+| `selftest`（`HOME=.agent-work/fh`） | **694 passed / 0 failed / 3 skipped**，`checks=694 expected=757 missing=63(degraded 63)` | ⚠ **不是任务书的 757/0/1skip**：少的 63 条是 `replay_player`(47) 与 `replay_ode`(16) 两组，它们是**整组跳过**，原因是本机 `HOME/.local/share/godot/app_userdata/Graphwar/replays` 这一份原版存档目录的可见性问题（同一台机器上 `HOME=/home/CG` 时反而 7 条 **红**）。**本轮改动与它无关**：A/B 过（把 `play_screen.gd` 改动 stash 掉重跑，`selftest` 与 `play_flow_check` 的条数一字不差） |
+| headless 14 脚本 | **1 975 passed / 0 failed**（assemble 244 / base 117 / curve 96 / draw 235 / entity 378 / function 132 / gdext 24 / obstacle 116 / plane 97 / play_flow 230 / process 67 / recovered 57 / signal 155 / spike 27） | ⚠ 任务书写 1 979（T88 的读数，其中 play_flow 是 234）；本分支基线本来就是 **1 975**，本轮**未改任何断言/被测实现**（A/B：`play_flow_check` 两种状态都是 230/0） |
+| 三轴 | 见 §146.5.1 | —— |
+| `coverage_matrix.py --check` | **OK**（527 个可归属函数：逐位 89 / 观测 435 / 推断 3 / 未做 0） | ✓ |
+| `check_doc_refs.py` | **rc=0** | ✓ |
+| 判据文件 | `frame_diff_thresholds.txt` sha256 `9cc9fcda…`、`frame_capture_freeze_plan.txt` `aa23b64d…`（`--json` 里 `thresholds_ok=true`） | ✓ 一个数没改 |
+
+#### 144.5.1 三轴与护栏
+
+本轮**一行 `src/**` 都没改**，三条轴按构造不可能变；仍然自己跑了一遍（数字带轴名）：
+
+| 轴 | 命令 | 实测 |
+|---|---|---|
+| `fire` | `replay_attrib --drive fire --policy default` | 结算批 **1 080**、内容命中 **647** ✓ |
+| `batch` | `replay_attrib --drive batch --policy default` | 结算批 **1 080**、内容命中 **647** ✓ |
+| `batch_conv` | `batch_conv --policy strict` | 单发批 **950**：种类 **947 / 950**、内容 **605 / 950**；逐批对照 **变好 128 批 / 变差 0 批** ⚠ **分母是 950 不是 1080**，与 `docs/06` §20/§28 记的「内容 637 / 1080、种类 1075 / 1080」不是同一个口径（本树这个 example 的默认批集合不同）。**没有一条变差（0 批）**，所以按"退化"这一条为 ✓；数字口径本身不齐，登记为遗留（§146.6 第 5 条）。 |
+
+### 146.6 遗留 / 未做 / 证不到（诚实登记）
+
+1. **②的两处"拆场视觉状态"没改**（§146.4.2/§146.4.3）：`end_match()` 在断线路径上把
+   `ShowExtraButtons` 翻回启用（12 552 px）+ 棋盘黑框没有"client 在场"闸门（8 797 px）。
+   要修得先决定两件事：① 断线时**该不该**调 `end_match()`（原版那条路只 `disconnect()` + 弹窗，
+   **不动**屏上控件态）；② 平面的绘制闸门拿什么当"client 在场"的输入（我方没有那格容器）。
+   ⇒ **预注册 B2（22 925 px → ≤2 000 px）本轮未达**，且它的前提（"我方没弹"）已被证伪（§146.4.1）。
+2. **①的淡出段在本机不可测**（§146.2.3）：`import -window` 单帧 ≈1.0 s > 淡出段 1.00 s。
+   预注册 A2/A3 因此**未测到**（不是判红）。要测必须换采集手段（读 `update_function_fade` 的实参、
+   或按 tick 停帧逐点采 20 个 tick）。
+3. **我方 tick 轴仍是服务端绝对 tick**（`_online_poll_tick` → `set_fractional_tick`）：§137.6 第 2/3 条
+   仍未解，本轮在 §146.2.3 又观测到一次它的后果（淡出起点相位与采样步长打架）。
+4. **`GraphwarPlane::draw` 的闸门是"推断的一半"**：`test rbx,rbx` 那条指令、`rbx` 的来源
+   （`[容器+0x1f8]`）与被跳过的指令范围都是**逐位**读出来的；但"`+0x1f8` 那格在断线后**真的变空/变 0**"
+   这一条本轮**没有动态取证**（frida 没挂那个槽）—— 现在是从"原版确实不画框了"（观测）+
+   "指令上只有这条闸门能解释"（推断）两头夹出来的。缺的证据：在断线前后读 `[容器+0x1f8]`。
+5. **`batch_conv` 的分母口径不齐**（§146.5.1）：本树跑出 950 而文档记 1080；本轮只用了"变差 0 批"这一条
+   作为不退化判据，**没有**复现出 637/1075。要把口径对齐得先查清这个 example 在本树的默认参数，
+   不属本任务书范围。
+
+### 146.7 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t100
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target            # ⚠️ 单独一行
+
+# ① 内核三件套（本轮**没改 src/**，但量像素前照样要保证 .so 是本树的）
+cargo build --offline --features gdext-bindings \
+  && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/
+$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --import
+
+# ② 停帧判据（两侧**串行** + **私有 netns**；wrapper 见 .agent-work/cap_freeze.sh）
+bash $WT/.agent-work/cap_freeze.sh $WT original $WT/.agent-work/v/fz_orig_after  181
+bash $WT/.agent-work/cap_freeze.sh $WT ours     $WT/.agent-work/v/fz_mine_after  182
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/fz_orig_after \
+    --mine $WT/.agent-work/v/fz_mine_after --screens match_ready,match_play \
+    --exclude-rect 999,1062,1008,1160 --out /tmp/a.tsv --json /tmp/a.json
+#   期望：match_ready 2112 px / 0.0949 %（L2 0）；match_play 1550 px / 0.0696 %（L2 0）
+
+# ③ 密集采样（**scratch 拷贝**，tools/frame_capture.py 不改）
+bash $WT/.agent-work/cap_dense3.sh $WT original $WT/.agent-work/v/d3_orig 171
+bash $WT/.agent-work/cap_dense3.sh $WT ours     $WT/.agent-work/v/d3_mine 172
+#   期望：两侧弹道自 #2 帧起同时出现，逐帧差 ≤1.6 %；#9 帧起两侧都进断线弹窗
+
+# ④ 断线那 22 482 px 的逐帧拆法
+python3 .agent-work/probe/frame_series.py .agent-work/v/dense_orig_before \
+        .agent-work/v/dense_mine_before match_play 1 45 "999,1062,1008,1160"
+```
