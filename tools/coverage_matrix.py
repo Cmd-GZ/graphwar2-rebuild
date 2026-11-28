@@ -44,10 +44,40 @@
 前四档都可以写 `未做`/`未知` 之外的东西，但 `未做`/`未知` 一定意味着
 `ours_file` 为空 —— `--check` 会验证这条不变式。
 
+## 模块清单从哪来（2026-11-28 T112 修正：分母 78 → 82）
+
+⚠️ **本表的"模块"这一维以前也是 Location 口径建的，它同样有盲区。**
+Location 只能看见"有 panic 点的模块"：Linux `.so` 里 `<模块>.rs` 字面量出现 **0 次**的模块
+（本轮实测 10 个）在旧口径下**连一行都不会有**，于是"分母"本身被系统性漏算
+（T109 在 `docs/06` §153.1-② 报的正是这个：`graphwar_ban_list` / `graphwar_version` 整模块缺行）。
+
+现在模块清单的**主证据是未 strip 的符号表**（与逆向目标同版本）：
+
+    .reference/steam/android-2.0.60/libgraphwarrust.so   # arm64，file 报 "not stripped"
+
+判据（口径与 `docs/02` §18.3 同一套，预注册见 `fixtures/module_denom_plan.txt`）：
+
+* **J1'**（分母用这一档）：demangle 后符号文本**任意位置**出现 `graphwarrust::<m>::`
+  ⇒ 该版源码里模块 `<m>` 存在（Rust 名字解析要求模块存在）。0 个自有函数的模块
+  （`time_probe`）也靠这一档才看得见。
+* **J1**（更严，只证明"编译出过函数/静态量"）：定义路径以 `graphwarrust::<m>::` 开头。
+  两个读数都报，差集点名（目标版差 1 个 = `time_probe`）。
+* 模块名 = 路径**第 2 段**；类型名/方法名/闭包/静态项名都在第 3 段及以后 ⇒ 天然不算模块。
+
+`--check` 会拿这份符号表**重算模块集合**，与下表逐名对账：**少一个模块、多一个模块、
+`sym_funcs` 对不上，都直接失败**（这是 T109 那种"模块静默缺行"的防回归闸）。
+符号表不在本机时该项 **SKIP 并打印警告**（不静默通过）；Linux 二进制 / `.pkl` 缺失仍是硬失败。
+
+`sym_funcs` 列 = 该模块在 Android 符号表里的 **FUNC 条数**（模块规模的可度量下限）。
+⚠️ **它不进 `orig_funcs`、不进 527、不进任何总账分子** —— 两种归属方法混在一列会静默
+改掉招牌数字的含义；要报就分开报并带轴名（`527` = Location 可归属 / `sym_funcs` 合计 = 符号表 FUNC）。
+
 ## 用法
 
-    python3 tools/coverage_matrix.py            # 重新生成两个产物 + 打印总账
+    python3 tools/coverage_matrix.py            # 重新生成三个产物 + 打印总账
     python3 tools/coverage_matrix.py --check    # 只校验，不写文件（不一致则退出码 1）
+    python3 tools/coverage_matrix.py --modules  # 只跑模块分母审计（写 fixtures/module_denom_audit.tsv
+                                                #   + 打印正/负对照），不碰 docs/ 两个生成物
 
 需要 `analysis/funcstarts_ghidra_va.pkl`（**不是** `funcstarts.pkl`，那张 `.eh_frame`
 的表是坏的，见 `docs/02` §12）和仓库根目录的原版 `.so`（都不入库）。
@@ -57,6 +87,11 @@ capstone 只在 `.venv` 里；系统 `python3` 缺它时，本脚本会自动用
 产物：
     docs/coverage-matrix.tsv   机器可读（本脚本唯一真源）
     docs/149-coverage-matrix.md  人读（也是本脚本生成的，避免手抄数字过期）
+    fixtures/module_denom_audit.tsv  模块分母的三方差集表 + 正/负对照（T112）
+
+模块清单**不**从 Location 建（那是 t109 报的那个结构性盲区的根因），而是从**未 strip** 的
+Android 2.0.60 `.symtab` 的符号路径读；`--check` 会重算并与上表逐名对账（见文件头
+「模块清单从哪来」与 `fixtures/module_denom_plan.txt`）。
 """
 
 import hashlib
@@ -64,6 +99,7 @@ import os
 import pickle
 import re
 import struct
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -107,8 +143,89 @@ SO = os.path.join(UPSTREAM, "libgraphwarrust.so")
 FUNCSTARTS = os.path.join(UPSTREAM, "analysis", "funcstarts_ghidra_va.pkl")
 TSV_PATH = os.path.join(ROOT, "docs", "coverage-matrix.tsv")
 MD_PATH = os.path.join(ROOT, "docs", "149-coverage-matrix.md")
+AUDIT_PATH = os.path.join(ROOT, "fixtures", "module_denom_audit.tsv")
 
-TOOL_VERSION = "1"
+# 模块清单的主证据：**未 strip** 的 Android 2.0.60（与逆向目标同版本）。
+# 它不是必需的输入（Linux 那两份才是），缺失时模块自校验 SKIP 并警告。
+ANDROID_SO = (os.environ.get("MODULE_DENOM_ANDROID")
+              or os.path.join(ROOT, ".reference", "steam", "android-2.0.60",
+                              "libgraphwarrust.so"))
+
+TOOL_VERSION = "2"      # 2 = 模块分母改由未 strip 符号表定（78 → 82）+ sym_funcs 列
+
+
+# ---------------------------------------------------------------------------
+# 模块清单：从未 strip 的 Android 2.0.60 `.symtab` 读**符号路径**（不是 Location）
+#   只用 binutils（`readelf` + `c++filt`，与 `docs/02` §18.9 同一套），不引第三方库。
+#   返回 None = 这份二进制不在本机（SKIP），不让它变成硬依赖。
+# ---------------------------------------------------------------------------
+_MOD_ANY = re.compile(r"graphwarrust(?:\[[0-9a-f]+\])?::([A-Za-z0-9_]+)(?:::|\b)")
+_MOD_DEF = re.compile(r"^graphwarrust::([A-Za-z0-9_]+)::")
+_SYM_LINE = re.compile(r"^\s*\d+:\s+([0-9a-f]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$")
+
+
+def android_symtab_modules(so=None, legacy_only=False):
+    """→ {模块: {"func": n, "obj": n, "j1": bool}}；符号表不在本机 → None。
+
+    口径（`fixtures/module_denom_plan.txt` §A/§D）：
+    * 只收**已定义**的 `FUNC`/`OBJECT`（`Ndx != UND`），**LOCAL 也算** ——
+      `graphwar_id_maker` 整模块只剩一个 `LOCAL OBJECT`（`CURRENT_ID`）；
+      把它当"没有 FUNC 就不算模块"正是 T109 数出 65（而不是 66）的原因。
+    * 名字统一过 `c++filt -s rust`：legacy `_ZN…` 与 v0 `_RN…` 一起解
+      （v0 里 crate 写成 `graphwarrust[<hex>]`，正则已覆盖）。
+    * `j1` = 该模块有**定义路径**符号（更严）；`func`/`obj` 是按**定义路径**数的条数。
+    * `legacy_only=True` 只解 `_ZN`，用于 §C 的 NC6 健全性对照。
+    """
+    so = so or ANDROID_SO
+    if not os.path.exists(so):
+        return None
+    try:
+        raw = subprocess.run(["readelf", "-sW", so], capture_output=True,
+                             text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print("coverage_matrix: ⚠ 读不了未 strip 符号表（%s）：%s" % (so, exc),
+              file=sys.stderr)
+        return None
+    defined = []                       # [(type, mangled)]
+    for line in raw.splitlines():
+        m = _SYM_LINE.match(line)
+        if not m:
+            continue
+        _val, _size, typ, _bind, _vis, ndx, name = m.groups()
+        if ndx != "UND" and typ in ("FUNC", "OBJECT"):
+            defined.append((typ, name))
+    if not defined:
+        return None
+    names = sorted({n for _t, n in defined})
+    if legacy_only:
+        names = [n for n in names if n.startswith("_ZN")]
+        if not names:
+            return None
+    try:
+        demangled = subprocess.run(["c++filt", "-s", "rust"], input="\n".join(names),
+                                   capture_output=True, text=True, check=True).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print("coverage_matrix: ⚠ c++filt 不可用：%s" % exc, file=sys.stderr)
+        return None
+    if len(demangled) != len(names):            # c++filt 吃掉了空行之类
+        return None
+    dem = dict(zip(names, demangled))
+    out = {}
+    for typ, name in defined:
+        if legacy_only and not name.startswith("_ZN"):
+            continue
+        d = dem[name]
+        for m in _MOD_ANY.finditer(d):
+            out.setdefault(m.group(1) + ".rs", {"func": 0, "obj": 0, "j1": False})
+        m = _MOD_DEF.match(d)
+        if m:
+            # 键一律带 `.rs`：与 `docs/coverage-matrix.tsv` 的 module 列、
+            # `find_literals()` 的模块名同一套写法（否则对账时会整表"差集全满"）。
+            rec = out.setdefault(m.group(1) + ".rs", {"func": 0, "obj": 0, "j1": False})
+            rec["func" if typ == "FUNC" else "obj"] += 1
+            rec["j1"] = True
+    return out
+
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +328,17 @@ def find_literals(E):
         for m in SRC_LITERAL.finditer(blob):
             lits[s["addr"] + m.start()] = (m.group(1).decode(), m.group(0))
     return lits
+
+
+def count_literals(E):
+    """{模块: alloc 段里 `src/<模块>.rs` 字面量出现次数} —— 0 次 = Location 口径的盲区。"""
+    cnt = {}
+    for s in E._alloc:
+        blob = E.data[s["offset"]:s["offset"] + s["size"]]
+        for m in SRC_LITERAL.finditer(blob):
+            k = m.group(1).decode()
+            cnt[k] = cnt.get(k, 0) + 1
+    return cnt
 
 
 def resolve_locations(E, lits):
@@ -397,15 +525,118 @@ def src_tree_sha256(files):
 #
 # 字段：ours = 参与实现该模块的 src/*.rs（空元组表示没有实现）
 #       status / evidence 见文件头那张表。
+#       sym_funcs = Android 2.0.60 `.symtab` 里该模块的 FUNC 条数（**规模参考列**，
+#                   不进 orig_funcs / 不进 527；默认从下面 ANDROID_SYM_FUNCS 取）。
 # 这张表就是"进度尺"的读数口径；改它必须同时改 evidence，否则 --check 会
 # 拿旧 TSV 对新结果失败。
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 模块规模的**手工列/覆盖表**（2026-11-28 T112）：Android 2.0.60 未 strip `.symtab` 的
+# **FUNC 条数**（定义路径 = `graphwarrust::<模块>::…`）。这就是"Location 缺失的模块"
+# 也能有规模数字的载体 —— 之前这类模块的 `orig_funcs` 只能是 0，与"没测过"分不开。
+#
+# 复算（只依赖 binutils，任何机器可重跑；`--check` 会在符号表存在时逐值核对本表）：
+#   readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+#     | awk '$4=="FUNC"||$4=="OBJECT"' | ... → c++filt -s rust → 取路径第 2 段
+#   ⚠️ 手工数容易漂（T109 就数成 65）：所以 `--check` 拿活的符号表对，不许改本表了事。
+# ⚠️ 口径：这是**编译出来的函数条数**（含闭包/单态化/drop glue），不是原版源码里的
+#    方法个数；同样**不是**进度分子。
+# ---------------------------------------------------------------------------
+ANDROID_SYM_FUNCS = {
+    # scope=graphwar（66 个模块）
+    "graphwar_ad_switch.rs": 8,
+    "graphwar_audio_control.rs": 13,
+    "graphwar_backend.rs": 19,
+    "graphwar_ban_list.rs": 2,                  # T112 补行（T109 落码）
+    "graphwar_button.rs": 13,
+    "graphwar_campaign_control.rs": 4,
+    "graphwar_client_connection_handler.rs": 10,
+    "graphwar_color_manager.rs": 9,
+    "graphwar_computer_player_manager.rs": 9,
+    "graphwar_crash_reporter.rs": 3,
+    "graphwar_draw_util.rs": 1,
+    "graphwar_effect_manager.rs": 5,
+    "graphwar_entity_effect_manager.rs": 3,
+    "graphwar_event.rs": 5,
+    "graphwar_event_handler.rs": 2,
+    "graphwar_event_queue.rs": 2,
+    "graphwar_function_evolutionator.rs": 4,
+    "graphwar_function_input.rs": 24,
+    "graphwar_function_manager.rs": 10,
+    "graphwar_game_client.rs": 14,
+    "graphwar_game_info.rs": 1,
+    "graphwar_game_recorder.rs": 3,
+    "graphwar_game_server.rs": 7,
+    "graphwar_game_state_manager.rs": 44,
+    "graphwar_graphics_manager.rs": 8,
+    "graphwar_id_maker.rs": 0,                  # T112 补行：只剩 1 个 LOCAL OBJECT
+    "graphwar_lan_broadcaster_v6.rs": 5,
+    "graphwar_lan_vbox.rs": 5,
+    "graphwar_level_generator.rs": 6,
+    "graphwar_level_manager.rs": 47,
+    "graphwar_life_manager.rs": 12,
+    "graphwar_lobby_control.rs": 5,
+    "graphwar_local_player_manager.rs": 6,
+    "graphwar_logger.rs": 3,
+    "graphwar_long_press_animation.rs": 4,
+    "graphwar_mode_manager.rs": 10,
+    "graphwar_module_container.rs": 68,
+    "graphwar_name_manager.rs": 6,
+    "graphwar_nodes.rs": 29,
+    "graphwar_obstacle_manager.rs": 10,
+    "graphwar_path_calculator.rs": 1,
+    "graphwar_plane.rs": 10,
+    "graphwar_plane_pos_manager.rs": 8,
+    "graphwar_play_screen_control.rs": 13,
+    "graphwar_player_config.rs": 8,
+    "graphwar_player_manager.rs": 6,
+    "graphwar_player_screen_control.rs": 13,
+    "graphwar_rank_manager.rs": 6,
+    "graphwar_remote_event_handler.rs": 3,
+    "graphwar_replay_control.rs": 4,
+    "graphwar_replay_player.rs": 9,
+    "graphwar_replay_reader.rs": 2,
+    "graphwar_root_node.rs": 24,
+    "graphwar_server_broker_handler.rs": 5,
+    "graphwar_server_connection_handler.rs": 12,
+    "graphwar_setup_control.rs": 27,
+    "graphwar_shot_calculator.rs": 4,
+    "graphwar_soldier_manager.rs": 7,
+    "graphwar_stream_buffer.rs": 2,
+    "graphwar_target_manager.rs": 3,
+    "graphwar_team_manager.rs": 9,
+    "graphwar_texture_loader.rs": 4,
+    "graphwar_tick_handler.rs": 6,
+    "graphwar_turn_manager.rs": 17,
+    "graphwar_version.rs": 1,                   # T112 补行（T109 落码）
+    "graphwar_video_writer.rs": 3,
+    # scope=other（16 个模块）
+    "axis_drawer.rs": 4,
+    "backtracer.rs": 2,
+    "button_manager.rs": 2,
+    "effect_drawer.rs": 6,
+    "entity_drawer.rs": 13,
+    "function_button_manager.rs": 3,
+    "function_drawer.rs": 5,
+    "function_history_recorder.rs": 3,
+    "function_token.rs": 1,
+    "math_function.rs": 10,
+    "obstacle_drawer.rs": 1,
+    "player_showcase.rs": 7,
+    "polish_notation_converter.rs": 1,
+    "server_broker_request_connection.rs": 1,
+    "time_probe.rs": 0,                         # T112 补行：0 FUNC / 0 方法，只有 drop glue
+    "weak_caller.rs": 35,
+}
+
 M = {}
 
 
-def mod(module, scope, ours, status, evidence):
+def mod(module, scope, ours, status, evidence, sym_funcs=None):
+    if sym_funcs is None:
+        sym_funcs = ANDROID_SYM_FUNCS.get(module)
     M[module] = dict(module=module, scope=scope, ours=tuple(ours),
-                     status=status, evidence=evidence)
+                     status=status, evidence=evidence, sym_funcs=sym_funcs)
 
 
 def _src_graphwar_files():
@@ -430,18 +661,23 @@ def graphwar_prefixed():
     2026-11-26 修：本文件原来把 58 写死在 9 处文案里（`docs/149` 因此出现
     "表头 58 / 模块数 62"的自相矛盾）。**数字一律算出来**，别再手写。
 
-    口径（`docs/02` §17 开头）：`scope=graphwar` 共 **62** 个模块 = **58 个有同名
-    `src/graphwar_*.rs` 文件的** + 4 个没有同名文件的（`graphwar_event` /
-    `graphwar_event_handler` / `graphwar_remote_event_handler` /
-    `graphwar_server_connection_handler`，内容在 `src/events.rs` / `src/server.rs`）。
-    另有 `src/graphwar_*.rs` 共 **59** 个：多出来的是 `graphwar_texture_loader.rs`
-    （矩阵里 `scope=other`，见 `docs/02` §17.2）。
+    口径（`docs/02` §17 开头）：`scope=graphwar` 共 **66** 个模块（T112 修正前是 62）。
+    **数字一律算出来** —— 它随 `src/` 与模块清单变化，任何写死的读数都会过期
+    （本函数上面那段注释里的 58/62/59 就是 2026-11-26 之前的读数，已作废）。
+
+    T112（2026-11-28）为什么从 62 变 66：
+      +3 个**整模块缺行**的（`graphwar_ban_list` / `graphwar_version` / `graphwar_id_maker`，
+          前两个 T109 已落码、第三个未做）
+      +1 个**scope 记错**的（`graphwar_texture_loader`：带 `graphwar_` 前缀，旧表记成 `other`）
+    ⇒ 分母 78 = 62+16 修成 **82 = 66+16**；口径与正负对照见 `fixtures/module_denom_plan.txt`。
     """
     return sum(1 for k, v in M.items()
                if v["scope"] == "graphwar" and ("src/" + k) in v["ours"])
 
 
-# ---- graphwar 作用域模块（62 个；其中 58 个带 `graphwar_` 前缀 —— 正则别用 `[a-z_]+`，会漏 `graphwar_lan_broadcaster_v6`）----
+# ---- graphwar 作用域模块（66 个 = 62 个旧行 + 3 个 T112 补的缺行 + 1 个 T112 改回 graphwar 的 texture_loader）----
+# 名字全带 `graphwar_` 前缀 —— 正则别用 `[a-z_]+`，会漏 `graphwar_lan_broadcaster_v6`
+
 mod("graphwar_ad_switch.rs", "graphwar", ("src/graphwar_ad_switch.rs",), "观测",
     "6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死")
 mod("graphwar_audio_control.rs", "graphwar", ("src/graphwar_audio_control.rs",), "观测",
@@ -576,7 +812,7 @@ mod("graphwar_target_manager.rs", "graphwar", ("src/graphwar_target_manager.rs",
     "3 + 内联 add_target。**只是 HashSet<u32>：无 alive 字段、唯一写操作是 remove**。「打不全就全部复原」的判定点**不在这里**（见 game_state_manager 那条）（docs/16 §32）")
 mod("graphwar_team_manager.rs", "graphwar", ("src/graphwar_team_manager.rs",), "观测",
     "7/7 定位：Mutex<HashMap<u32, GraphwarTeam>>（桶步长 8，值 1 字节）。**唯一分队规则 0x3c1b40：进人少的队、平手进 Team1**；无队长/选边/每队容量，上限整房 10 人（docs/10 §13）")
-mod("graphwar_texture_loader.rs", "other", ("src/graphwar_texture_loader.rs",), "观测",
+mod("graphwar_texture_loader.rs", "graphwar", ("src/graphwar_texture_loader.rs",), "观测",
     "**4，不是 1**（旧记 1 是 Location 口径下限：三个 getter 从不 panic）。三张 HashMap<String,_> @ +0x150/+0x180/+0x1b0（步长 0x30、表项 0x28），按名字 memcmp，21KB 饿汉加载；唯一构造点 0x39a328 在 GraphwarRootNode 的 INode impl 里（docs/16 §31/§32）")
 mod("graphwar_tick_handler.rs", "graphwar", ("src/graphwar_tick_handler.rs",), "逐位",
     "docs/35：113 个真实样本，TickReply 逐字节一致")
@@ -585,6 +821,23 @@ mod("graphwar_turn_manager.rs", "graphwar", ("src/graphwar_turn_manager.rs",), "
     "「跳过死者」；docs/41 状态迁移逐个相同")
 mod("graphwar_video_writer.rs", "graphwar", ("src/graphwar_video_writer.rs",), "观测",
     "3：**真的是录视频**——openh264::Encoder + minimp4（60 fps，轨道名 Graphwar Clip），FileAccess 一次写盘；尺寸向上取偶。本仓只做结构，不产 MP4（无 openh264 依赖）（docs/16 §32）")
+
+# ---- T112（2026-11-28）补齐 3 个**整模块缺行**的 graphwar 模块：它们的 Location 串在 Linux .so 里 0 次 ----
+# 判据与正/负对照见 `fixtures/module_denom_plan.txt`；三方差集表见 `fixtures/module_denom_audit.tsv`。
+mod("graphwar_ban_list.rs", "graphwar", ("src/graphwar_ban_list.rs",), "观测",
+    "**Android 2.0.60 `.symtab`: 2 FUNC**（`GraphwarBanList::new` 0x4086a0 / `is_connection_banned` 0x408460）。"
+    "96 字节值 + 120 B `RcInner<RefCell<…>>`；两张表 ctrl+0x00/mask+0x08/items+0x18/hasher+0x20。"
+    "Linux `.so` 里 `src/graphwar_ban_list.rs` 串 **0 次** ⇒ 旧 Location 口径**整模块看不见**（T109 落码，T112 补行）。"
+    "封禁的可见效果 = 入队 `\"You have been kicked.\"`（docs/06 §153.3/§153.5）")
+mod("graphwar_version.rs", "graphwar", ("src/graphwar_version.rs",), "观测",
+    "**Android 2.0.60 `.symtab`: 1 FUNC**（`graphwar_version_get_full_version` 0x3913e4）。返回**编译期常量** "
+    "\"2.0.60\"（4 处立即数拼 6 字节 + sret 3 字）。Linux `.so` 里该模块的 Location 串 **0 次**（T109 落码，T112 补行）")
+mod("graphwar_id_maker.rs", "graphwar", (), "未做",
+    "**T112 新发现：整模块缺行，而且 `FUNC = 0`** —— Android `.symtab` 里只剩 **1 个 LOCAL OBJECT** "
+    "`graphwarrust::graphwar_id_maker::GraphwarIdMaker::get_unique_id::CURRENT_ID`（4 字节 @ arm64 `0x8b4378`）。"
+    "`get_unique_id` 本体**被内联**（无独立 FUNC 边界），所以 T109 的「只看 FUNC」扫法数出 65 个模块时漏了它。"
+    "我方**没有** `src/graphwar_id_maker.rs` ⇒ 未做；缺的证据：`CURRENT_ID` 的初值/步进（读 .data 段）+ 调用点"
+    "（`get_unique_id` 被谁内联进去）。**这是本轮模块级完成度从 100 % 掉下来的 2 个之一，不许含糊**（docs/06 §157）")
 
 # ---- 非 graphwar_ 前缀：同样是原版 src/ 里的文件，但只有 math_function 等少数是真游戏模块 ----
 mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_text.rs"), "逐位",
@@ -630,6 +883,12 @@ mod("graphwar_replay_reader.rs", "graphwar", ("src/graphwar_replay_reader.rs",),
     "2/2：文件归它（FileAccess::open + get_buffer + GzDecoder + StrSearcher 逐行 -> Vec<EventInfo>，被调者里**零时间函数**）；时钟归 replay_player（tick += dt*60*speed）（docs/09 §12）")
 mod("graphwar_stream_buffer.rs", "graphwar", ("src/graphwar_stream_buffer.rs",), "观测",
     "2/2：**不是 TCP 拆包队列**——内部无字节队列，靠 TcpStream::peek 前瞻：写侧 u16 大端(len)+两段 write_all（限 0xffff）；读侧 peek 2 -> 校验 <=0x1000 -> peek(len+2) 不足即 Ok(None) **一个字节都不消费** -> read_exact 整帧取走。顺带结掉 docs/09 §11.7#4：0x…4a 是「整帧未到」，不是 EOF（docs/09 §12）")
+mod("time_probe.rs", "other", (), "未做",
+    "**T112 新发现：整模块缺行，`FUNC = 0` 且 `OBJECT = 0`** —— 该模块在 Android 2.0.60 里只剩一条泛型实例化"
+    "`core::ptr::drop_in_place<graphwarrust::time_probe::TimeProbe>`（即 `TimeProbe` 是会被 drop 的值类型）。"
+    "`docs/02` §18.3 在 2024-07-30 版上记的同样是「0 函数 / 0 方法，只在 impl / 泛型实参里露面」⇒ 两版一致。"
+    "我方没有 `src/time_probe.rs` ⇒ 未做；缺的证据：`TimeProbe` 的字段与用途（既无 Location、也无自有符号，"
+    "静态侧只能拿到类型名）。判为**模块存在、但要还原的内容未知**（docs/06 §157）")
 mod("weak_caller.rs", "other", ("src/weak_caller.rs",), "观测",
     "40 个符号定位：x86 目标 39/39 个单态化（23 个 call + 16 个 call_0，两块各自无空洞）+ 第 40 个 "
     "0x3d4fa0 查明是内联了 call 的 GraphwarGameRecorder 方法。结构 = Weak<RefCell<T>>，一个类型参数、8 字节、"
@@ -697,6 +956,7 @@ def build():
     per_func, contested = attribute(funcstarts, locs, refs)
 
     files = src_files()
+    loc_lit = count_literals(E)          # 模块 -> "src/<模块>.rs" 字面量次数（0 = 盲区）
     fn_counts = {f: count_fns(os.path.join(ROOT, f)) for f in files}
     tree_sha = src_tree_sha256(files)
 
@@ -735,6 +995,7 @@ def build():
             ours_funcs=sum(fn_counts.get(f, 0) for f in rec["ours"]),
             status=rec["status"],
             evidence=rec["evidence"],
+            sym_funcs=(rec["sym_funcs"] if rec["sym_funcs"] is not None else ""),
         ))
 
     # ---- 抽查断言 ----
@@ -755,6 +1016,9 @@ def build():
         return dict(modules=len(sel), attributed=attributed, by_status=t,
                     implemented=implemented,
                     unknown_modules=sum(1 for r in sel if r["status"] == "未知"),
+                    # T112：`by_status["未做"]` 累的是**函数数**（新补的模块 orig_funcs=0 ⇒ 它仍是 0），
+                    # 模块级的"没实现"必须单独数，否则"未做 0"会被读成"模块都做完了"。
+                    pending_modules=sum(1 for r in sel if r["status"] in ("未做", "未知")),
                     done_modules=sum(1 for r in sel if r["status"] in ("逐位", "观测", "推断")))
 
     totals = {s: tally(s) for s in ("graphwar", "other")}
@@ -765,7 +1029,9 @@ def build():
         implemented=sum(t["implemented"] for t in totals.values()),
         by_status={st: sum(t["by_status"][st] for t in totals.values()) for st in STATUS_ORDER},
         unknown_modules=sum(t["unknown_modules"] for t in totals.values()),
+        pending_modules=sum(t["pending_modules"] for t in totals.values()),
         done_modules=sum(t["done_modules"] for t in totals.values()),
+        sym_funcs=sum((r["sym_funcs"] or 0) for r in rows if isinstance(r["sym_funcs"], int)),
     )
 
     meta = dict(
@@ -783,29 +1049,242 @@ def build():
         contested_funcs=len(contested),
         src_files=len(files),
         src_fns=sum(fn_counts.values()),
+        module_denom_n=len(M),
     )
-    return rows, spot_rows, totals, grand, meta, by_module, fn_counts, files
+    return rows, spot_rows, totals, grand, meta, by_module, fn_counts, files, loc_lit, E
 
+
+
+# ---------------------------------------------------------------------------
+# 模块分母：三方差集表 + 正/负对照（T112）
+#
+# 这张表回答的是「**分母**对不对」，不是「实现了多少」：
+#   Android 有没有（未 strip 符号表）/ 矩阵有没有 / src/ 顶层有没有 / 判定
+# 生成物：`fixtures/module_denom_audit.tsv`（`--check` 会比对，口径见
+# `fixtures/module_denom_plan.txt`）。
+# ---------------------------------------------------------------------------
+AUDIT_COLUMNS = ["module", "android", "matrix", "src_top", "verdict",
+                 "android_j1", "loc_lit", "orig_funcs", "sym_funcs", "note"]
+
+# T112 本轮**改了矩阵**的模块（判定列要能说清"这条是这轮新补的"）
+T112_ADDED_IMPLEMENTED = {"graphwar_ban_list.rs", "graphwar_version.rs"}
+T112_ADDED_MISSING = {"graphwar_id_maker.rs", "time_probe.rs"}
+T112_SCOPE_FIXED = {"graphwar_texture_loader.rs"}
+
+# 负对照：这些**不许**出现在模块集合里（crate 名 / 类型名 / 静态项名 / 外部 crate / 闭包）
+NEGATIVE_CONTROLS = ["graphwarrust", "GraphwarTextureLoader", "GraphwarBanList",
+                     "GraphwarIdMaker", "TimeProbe", "CURRENT_ID", "core", "alloc",
+                     "std", "libc", "gdext", "{{closure}}", "graphwar"]
+
+
+def _doc024_modules():
+    """`docs/02` §18.3 A 表的 78 个模块名（来自**另一版、另一架构**的符号表）。
+
+    只用于 PC5（跨版本一致性）。文档结构一变就解析不出来 ⇒ 返回 [] 并让对照 SKIP，
+    绝不因为解析失败而"通过"。
+    """
+    path = os.path.join(ROOT, "docs", "02-module-map.md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return []
+    head = "#### A. 权威模块清单"
+    if head not in text:
+        return []
+    body = text[text.index(head):]
+    tail = body.find("**没有一个自己的函数**")
+    if tail > 0:
+        body = body[:tail]
+    out = []
+    for line in body.splitlines():
+        m = re.match(r"\|\s*`([a-z0-9_]+)`\s*\|", line)
+        if m:
+            out.append(m.group(1) + ".rs")
+    return out
+
+
+def module_denominator_audit(rows, loc_lit, android=None, legacy=None):
+    """→ (tsv 文本, 摘要 dict)。`android is None` ⇒ 符号表不在本机，返回 (None, {...SKIP})。"""
+    if android is None:
+        return None, dict(available=False)
+    matrix = {r["module"]: r for r in rows}
+    src_dir = os.path.join(ROOT, "src")
+    controls = []           # [(编号, 描述, PASS/SKIP, 证据)]
+    notes = {}              # module -> 备注（其它观察，不影响判定）
+    if os.path.exists(os.path.join(src_dir, "graphwar_event.rs")) \
+            and "src/graphwar_event.rs" not in (matrix.get("graphwar_event.rs", {}).get("ours_file") or ""):
+        notes["graphwar_event.rs"] = ("⚠ `src/graphwar_event.rs` 存在，但矩阵的 ours_file 只指 "
+                                      "`src/events.rs` ⇒ 该模块的内容分在两个文件里（本轮**只登记、未改**）")
+
+    # ---- 正对照 ----
+    def pc(tag, ok, ev):
+        controls.append((tag, ok, ev))
+
+    pc("PC1", android.get("graphwar_ban_list.rs", {}).get("func") == 2,
+       "Android `graphwar_ban_list` FUNC=2（期望 2）")
+    pc("PC2", android.get("graphwar_version.rs", {}).get("func") == 1,
+       "Android `graphwar_version` FUNC=1（期望 1）")
+    tl = android.get("graphwar_texture_loader.rs", {})
+    pc("PC3", ("graphwar_texture_loader.rs" in android
+               and matrix.get("graphwar_texture_loader.rs", {}).get("scope") == "graphwar"),
+       "Android 有 texture_loader（FUNC=%s）且矩阵 scope 已修为 graphwar" % tl.get("func"))
+    missing_from_android = sorted(set(matrix) - set(android))
+    pc("PC4", not missing_from_android,
+       "矩阵 − Android = %s（期望空）" % (missing_from_android or "∅"))
+    d24 = _doc024_modules()
+    if d24:
+        d24_missing = sorted(set(d24) - set(android))
+        pc("PC5", not d24_missing,
+           "docs/02 §18.3 的 %d 个名字 ⊂ Android（差集 %s）" % (len(d24), d24_missing or "∅"))
+    else:
+        controls.append(("PC5", None, "docs/02 §18.3 表解析不出来 ⇒ SKIP"))
+    idm = android.get("graphwar_id_maker.rs", {})
+    pc("PC6", (idm.get("func") == 0 and idm.get("obj", 0) >= 1 and idm.get("j1") is True),
+       "`graphwar_id_maker` FUNC=0 / OBJECT=%s / J1=%s ⇒「只按 FUNC 数」会漏它（T109 的 65 而非 66）"
+       % (idm.get("obj"), idm.get("j1")))
+
+    # ---- 负对照 ----
+    bad = sorted({n for n in NEGATIVE_CONTROLS if n in android})
+    pc("NC1-5", not bad, "负对照名单里没有一个进了模块集合（%s）；名单 %d 个"
+       % (bad or "无越界", len(NEGATIVE_CONTROLS)))
+    if legacy is None:
+        controls.append(("NC6", None, "legacy-only 解名结果不可用 ⇒ SKIP"))
+    else:
+        diff = sorted(set(legacy) ^ set(android))
+        pc("NC6", not diff, "只解 legacy 与 legacy+v0 的模块集合一致（对称差 %s）" % (diff or "∅"))
+
+    # ---- 表体 ----
+    lines = []
+    for module in sorted(android, key=lambda m: (SCOPE_ORDER[matrix[m]["scope"]]
+                                                 if m in matrix else 1, m)):
+        rec = matrix.get(module)
+        src_top = os.path.exists(os.path.join(src_dir, module))
+        a = android[module]
+        j1 = ("FUNC=%d,OBJECT=%d" % (a["func"], a["obj"])) if a["j1"] else "-（只在 impl/泛型实参里露面）"
+        if rec is None:
+            verdict = "⚠ 原版有、矩阵缺行"
+        elif module in T112_ADDED_IMPLEMENTED:
+            verdict = "T112 补行：**已实现**（T109 落码，观测）"
+        elif module in T112_ADDED_MISSING:
+            verdict = "T112 补行：**未实现**（我方无文件，未做）"
+        elif module in T112_SCOPE_FIXED:
+            verdict = "T112 改 scope：other→graphwar"
+        elif rec["status"] in ("未做", "未知"):
+            verdict = "一致（模块存在、我方无文件，%s）" % rec["status"]
+        else:
+            verdict = "一致"
+        note = notes.get(module, "")
+        lines.append((module, "yes", (rec["scope"] if rec else "-"), "yes" if src_top else "no",
+                      verdict, j1, loc_lit.get(module, 0),
+                      (rec["orig_funcs"] if rec else ""),
+                      (rec["sym_funcs"] if rec else ""), note))
+    for module in sorted(set(matrix) - set(android)):
+        rec = matrix[module]
+        lines.append((module, "no", rec["scope"], "yes" if os.path.exists(
+            os.path.join(src_dir, module)) else "no", "⚠ 矩阵有、原版该版无",
+            "-", loc_lit.get(module, 0), rec["orig_funcs"], rec["sym_funcs"], ""))
+
+    summary = dict(available=True, controls=controls, n_android=len(android),
+                   n_matrix=len(matrix), n_src_top=sum(1 for m in matrix
+                                                       if os.path.exists(os.path.join(src_dir, m))),
+                   missing=sorted(set(android) - set(matrix)),
+                   extra=sorted(set(matrix) - set(android)),
+                   j1=sum(1 for v in android.values() if v["j1"]),
+                   j1_missing=sorted(m for m, v in android.items() if not v["j1"]),
+                   j1_prime=len(android),
+                   sym_funcs=sum(v["func"] for v in android.values()),
+                   loc_blind=sorted(m for m in matrix if loc_lit.get(m, 0) == 0),
+                   n_union=None)
+    if d24:
+        summary["n_union"] = len(set(android) | set(d24))
+
+    head = [
+        "# module_denom_audit.tsv —— 模块分母三方差集表（T112；模块 78 → %d）" % len(android),
+        "# 口径/判据/正负对照：fixtures/module_denom_plan.txt（§A 判据、§B 正对照、§C 负对照）",
+        "# 主证据：%s（arm64 2.0.60，`.symtab` 未 strip）" % os.path.relpath(ANDROID_SO, ROOT),
+        "# 旁证：docs/02 §18.3 的 78 个名字（2024-07-30 x86-64 未 strip 版；本机**没有**那份二进制，只能用已入库的表）",
+        "# 列：module | android=J1'（任意路径出现）| matrix=矩阵 scope | src_top=src/<模块> 顶层同名文件"
+        " | verdict=判定 | android_j1=J1 定义路径的 FUNC/OBJECT 条数"
+        " | loc_lit=Linux .so alloc 段里 `src/<模块>.rs` 字面量次数（0 = 旧 Location 口径的盲区）"
+        " | orig_funcs=矩阵的 Location 可归属函数数 | sym_funcs=Android FUNC 条数 | note=其它观察",
+        "# 三读：N_2.0.60(J1')=%d；N_2.0.60(J1)=%d（差 = %s）；N_union(J1')=%s"
+        % (len(android), summary["j1"],
+           sorted(m for m, v in android.items() if not v["j1"]) or "∅",
+           summary["n_union"] if summary["n_union"] is not None else "SKIP"),
+        "# 旧 Location 口径的盲区：矩阵里 %d 个模块的 `src/<模块>.rs` 字面量在 Linux .so 里 **0 次**"
+        " ⇒ 它们当初能被列出来全靠人工补行，不是靠扫" % len(summary["loc_blind"]),
+        "# 正/负对照（先跑，全过才算数）：",
+    ]
+    for tag, ok, ev in controls:
+        state = "SKIP" if ok is None else ("PASS" if ok else "FAIL")
+        head.append("#   %-6s %-4s %s" % (tag, state, ev))
+    text = "\n".join(head) + "\n" + "\t".join(AUDIT_COLUMNS) + "\n"
+    text += "".join("\t".join(str(x) for x in row) + "\n" for row in lines)
+    return text, summary
+
+
+def _audit_digest():
+    """从**已入库**的 `fixtures/module_denom_audit.tsv` 头部还原 `docs/149` 要用的摘要。
+
+    为什么不在渲染时直接用活的符号表：`docs/149` 必须**机器无关**（换台没有 Android `.so` 的
+    机器跑 `--check` 也得逐字节一致）。所以渲染来源是**入库的表**，而"表是否新鲜"由 `--check`
+    单独去比（符号表在时比对整份文件，不在时 SKIP 并警告）。
+    """
+    try:
+        with open(AUDIT_PATH, encoding="utf-8") as fh:
+            head = [line for line in fh if line.startswith("#")]
+    except OSError:
+        return None
+    blob = "".join(head)
+    m = re.search(r"N_2\.0\.60\(J1'\)=(\d+)；N_2\.0\.60\(J1\)=(\d+)（差 = (\[[^\]]*\])）；"
+                  r"N_union\(J1'\)=(\S+)", blob)
+    if not m:
+        return None
+    j1_missing = re.findall(r"'([^']*)'", m.group(3))     # 只含字符串的列表字面量，不用 eval
+    blind = re.search(r"矩阵里 (\d+) 个模块", blob)
+    controls = []
+    for line in head:
+        c = re.match(r"#\s{1,3}(PC\d(?:-\d)?|NC\d(?:-\d)?)\s+(PASS|FAIL|SKIP)\s+(.*)$", line)
+        if c:
+            controls.append((c.group(1), {"PASS": True, "FAIL": False, "SKIP": None}[c.group(2)],
+                             c.group(3).strip()))
+    if not controls:
+        return None
+    n_android = int(m.group(1))
+    return dict(available=True, from_fixture=True,
+                n_android=n_android, n_matrix=n_android, j1=int(m.group(2)),
+                j1_missing=list(j1_missing),
+                n_union=(int(m.group(4)) if m.group(4).isdigit() else None),
+                loc_blind=[""] * (int(blind.group(1)) if blind else 0),
+                controls=controls)
 
 # ---------------------------------------------------------------------------
 # 渲染
 # ---------------------------------------------------------------------------
 TSV_HEADER = ("# coverage-matrix.tsv — 由 tools/coverage_matrix.py 生成，**不要手改**\n"
               "# 重算：python3 tools/coverage_matrix.py    只校验：--check\n"
+              "# 模块清单来源：Android 2.0.60 未 strip `.symtab` 的符号路径（**不是** Location）\n"
+              "#   T112 修正：旧口径按 Location 建清单，.so 里没有 `src/<模块>.rs` 字面量的模块"
+              "连行都不会有（实测 10 个）\n"
               "# orig_funcs：能按 panic::Location 硬归属的函数数（可度量下限，不是模块规模）\n"
               "# contested：该函数同时引用了别的模块 Location（已按锚点数压平，不重复计数）\n"
               "# anchors：该模块名下的 panic::Location 结构体个数（引用点密度）\n"
-              "# ours_funcs：ours_file 里 fn 的条数（注释与字符串已剔除）\n")
+              "# ours_funcs：ours_file 里 fn 的条数（注释与字符串已剔除）\n"
+              "# sym_funcs：Android 符号表里该模块的 FUNC 条数（**规模参考列**，不进 orig_funcs、"
+              "不进 527）\n")
 
+# `sym_funcs` **只许追加到末尾**：tools/audit_src.py / bitexact_classify.py / boundary_audit.py /
+# global_triage.py / file_structure.py / function_coverage.py / bitexact_plan.py 都按列下标读 0–8。
 TSV_COLUMNS = ["module", "scope", "orig_funcs", "contested", "anchors",
-               "ours_file", "ours_funcs", "status", "evidence"]
+               "ours_file", "ours_funcs", "status", "evidence", "sym_funcs"]
 
 
 def render_tsv(rows, meta):
     out = [TSV_HEADER]
     for k in ("tool_version", "binary_sha256", "funcstarts_sha256", "src_tree_sha256",
               "funcstarts_n", "src_modules", "loc_structs", "attributed_funcs", "contested_funcs",
-              "src_files", "src_fns"):
+              "src_files", "src_fns", "module_denom_n"):
         out.append("# %s: %s\n" % (k, meta[k]))
     out.append("\t".join(TSV_COLUMNS) + "\n")
     for r in rows:
@@ -817,7 +1296,7 @@ def fmt_pct(a, b):
     return "%.1f%%" % (100.0 * a / b) if b else "—"
 
 
-def render_md(rows, spot_rows, totals, grand, meta):
+def render_md(rows, spot_rows, totals, grand, meta, md_summary=None):
     g, o = totals["graphwar"], totals["other"]
     L = []
 
@@ -836,8 +1315,12 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：\n")
     A("| 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |")
     A("|---|---|---|---|---|---|---|---|---|")
+    other_prefixed = sum(1 for r in rows if r["scope"] == "other" and r["module"].startswith("graphwar_"))
     for name, t in (("%d 个有同名 `graphwar_*.rs` 文件的模块（`scope=graphwar` 共 %d 个）" % (graphwar_prefixed(), g["modules"]), g),
-                    ("%d 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`）" % o["modules"], o)):
+                    ("%d 个 `scope=other` 的模块（%d 个不带 `graphwar_` 前缀%s）"
+                     % (o["modules"], o["modules"] - other_prefixed,
+                        ("、%d 个带前缀" % other_prefixed) if other_prefixed
+                        else "；带 `graphwar_` 前缀的已于 T112 全部归回 graphwar"), o)):
         A("| %s | %d | %d | %d | %d | %d | %d | %d | %d |"
           % (name, t["modules"], t["attributed"], t["implemented"],
              t["by_status"]["逐位"], t["by_status"]["观测"], t["by_status"]["推断"],
@@ -868,6 +1351,61 @@ def render_md(rows, spot_rows, totals, grand, meta):
       "而采样器就装在那个模块里。\n")
     A("⇒ **`orig_funcs` 只能当「有多少函数能被硬证据钉到某个源文件」的下限，不能当模块规模。**"
       "写「这个模块有 N 个函数」是错的。\n")
+    # ---- 0.2 模块分母（T112）----
+    su = md_summary or {}
+    A("### 0.2 模块分母：%d 个（2026-11-28 T112 从 78 修正）\n" % grand["modules"])
+    if su.get("available"):
+        A("**旧的 78 = 62 + 16 是错的**，错在**分母的建法**，不在实现：模块清单以前也是按 "
+          "`panic::Location` 建的，而 Linux `.so` 里 `src/<模块>.rs` 字面量出现 **0 次**的模块"
+          "（本表里就有 **%d 个**）**连一行都不会有** ⇒ 分母被系统性漏算。\n"
+          % len(su.get("loc_blind") or []))
+        A("现口径（预注册 `fixtures/module_denom_plan.txt`）：模块清单取**未 strip 的 Android 2.0.60 "
+          "`.symtab` 的符号路径**（与逆向目标同版本），模块名 = 路径第 2 段。\n")
+        A("| 读数 | 值 | 说明 |")
+        A("|---|---|---|")
+        A("| **N（总账用这个）** = N_2.0.60(J1') | **%d** | 符号路径**任意位置**出现 "
+          "`graphwarrust::<m>::`（含 impl / 泛型实参） |" % su["n_matrix"])
+        A("| N_2.0.60(J1) | %d | 更严：只在**定义路径**里出现的（差 %d 个：%s） |"
+          % (su["j1"], su["n_android"] - su["j1"],
+             "、".join("`%s`" % m for m in sorted(su.get("j1_missing") or [])) or "—"))
+        A("| N_union(J1') | %s | 并上 `docs/02` §18.3 的 78 个名字（2024-07-30 x86-64 版）；"
+          "两者并集仍是 %d ⇒ **没有「只有 2024 版才有」的模块被漏掉** |"
+          % (su.get("n_union") if su.get("n_union") is not None else "SKIP", su["n_matrix"]))
+        A("")
+        A("拆开：**%d 个 `scope=graphwar` + %d 个 `scope=other`**。这轮改的 4 处：\n"
+          % (g["modules"], o["modules"]))
+        A("| 模块 | 本轮处理 | 原版证据 |")
+        A("|---|---|---|")
+        A("| `graphwar_ban_list.rs` | **补行**：已实现（T109 落码，观测） | Android `.symtab` FUNC=2 |")
+        A("| `graphwar_version.rs` | **补行**：已实现（T109 落码，观测） | Android `.symtab` FUNC=1 |")
+        A("| `graphwar_id_maker.rs` | **补行**：**未实现**（我方无文件） | Android 只剩 1 个 "
+          "`LOCAL OBJECT`（`get_unique_id::CURRENT_ID`），`get_unique_id` 已被内联 ⇒ "
+          "只数 FUNC 会漏（T109 数出 65 而非 66 就是这里） |")
+        A("| `time_probe.rs` | **补行**：**未实现**（0 函数 / 0 方法） | Android 只剩 "
+          "`core::ptr::drop_in_place<…TimeProbe>`；2024 版记录相同 |")
+        A("| `graphwar_texture_loader.rs` | **改 scope**：`other` → `graphwar`（分类错，不是新模块） "
+          "| 名字带 `graphwar_` 前缀 |")
+        A("")
+        A("⚠️ **诚实读法**：分母变大让**模块级完成度从 100 %% 掉到 %d/%d = %s** ——"
+          " 但新增的 4 个里 **2 个是早就做完的**（`ban_list` / `version`，只是不在分母里，"
+          "等于旧读数里白送了两个模块），**真正没做的是 %d 个**（`graphwar_id_maker` / `time_probe`）。"
+          "别读成「突然多出 4 个模块的活」——真正要动手的只有这 2 个。\n"
+          % (grand["done_modules"], grand["modules"],
+             fmt_pct(grand["done_modules"], grand["modules"]), su["n_matrix"] and
+             (su["n_matrix"] - grand["done_modules"])))
+        A("`sym_funcs` 列合计 **%d**（Android 符号表 FUNC）—— 这是**另一条轴**，"
+          "**不并入** 527（Location 可归属），两者不可混报。\n"
+          % (grand.get("sym_funcs") or 0))
+        bad = [c for c in su.get("controls", []) if c[1] is False]
+        skip = [c for c in su.get("controls", []) if c[1] is None]
+        A("正/负对照 %d 条：PASS %d / FAIL %d / SKIP %d（明细见 "
+          "`fixtures/module_denom_audit.tsv` 头部；三方差集表也在那里）。\n"
+          % (len(su.get("controls", [])),
+             len(su.get("controls", [])) - len(bad) - len(skip), len(bad), len(skip)))
+    else:
+        A("⚠️ 未 strip 的 Android 2.0.60 符号表**不在本机** ⇒ 模块分母的自动对账本轮 **SKIP**"
+          "（`fixtures/module_denom_audit.tsv` 也是按上次的符号表生成的，"
+          "`--check` 会因此不核对模块集合）。设 `MODULE_DENOM_ANDROID=<path>` 再跑即可。\n")
     A("## 1. 方法（可复现）\n")
     A("### 1.1 原版这一半\n")
     A("1. 扫所有 alloc 段里 `src/<name>.rs` 字面量的虚拟地址；")
@@ -941,11 +1479,11 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("另外还有 **%d 个模块一个 panic 锚都没有**（连「它有没有函数」都答不出来）：%s。"
       % (len(zero_anchor), "、".join("`%s`" % r["module"] for r in zero_anchor)))
     A("它们的 `orig_funcs` 是 0，**不代表模块为空**，只代表这个方法对它们完全失效。\n")
-    A("非 graphwar 前缀里还有 %d 个未知模块（`obstacle_drawer` / `function_drawer` / "
-      "`button_manager` / `function_button_manager` / `function_history_recorder` / "
-      "`player_showcase` / `server_broker_request_connection`），它们的共同点是"
+    other_unknown = [r["module"] for r in rows if r["status"] == "未知" and r["scope"] == "other"]
+    A("非 graphwar 前缀里还有 %d 个未知模块（%s），它们的共同点是"
       "**连「是不是游戏代码」都只有名字可依**。\n"
-      % sum(1 for r in rows if r["status"] == "未知" and r["scope"] == "other"))
+      % (len(other_unknown), " / ".join("`%s`" % m for m in other_unknown)) if other_unknown
+      else "非 graphwar 前缀里没有「未知」模块（未实现的模块见 §0.2 与 TSV 的 `status` 列）。\n")
     A("## 4. 我们自造的、原版没有的东西（问题 2）\n")
     A("这一栏**不算复原**，列出来是为了别把「能跑」当「还原了」。")
     A("判据：`src/` 里没有任何原版 `src/<file>.rs` 与它对应，或它实现的是原版明确没有的东西。\n")
@@ -970,10 +1508,13 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("## 6. 怎么读这把尺（以及它现在量不了什么）\n")
     A("1. **不要**把 `orig_funcs` 相加当「原版函数总数」。它是可归属下限，"
       "而且系统性漏掉所有纯计算模块（求值器、采样器就是现成的反例）。")
-    A("2. **模块级分母（%d 个有同名文件的；`scope=graphwar` 共 %d）比函数级分母更可信，但它也是下限**：这些名字是从二进制里的 "
-      "`src/graphwar_*.rs` 字面量直接读出来的，只要模块里有一个 panic 点就会被列出来；"
-      "**完全没有 panic 的模块不会出现**，所以真实的模块数只能 ≥ 这个数。函数级归属则只有 %s。"
-      % (graphwar_prefixed(), g["modules"], fmt_pct(meta["attributed_funcs"], meta["funcstarts_n"])))
+    A("2. **模块级分母（`scope=graphwar` 共 %d 个，其中 %d 个有同名 `src/graphwar_*.rs`；"
+      "总数 %d）现在**不再**是「Location 下限」，而是**未 strip 符号表**的读数（§0.2）："
+      "符号路径证明模块存在，与「这个模块有没有 panic 点」无关。它仍然只是**那一个构建**的下限"
+      "（整模块被内联到只剩 `drop glue` 时只能看见类型名），所以要跨版本并集（N_union）一起来读。"
+      "**函数级**归属仍只有 %s（Location 口径，见 §0.1）。"
+      % (g["modules"], graphwar_prefixed(), grand["modules"],
+         fmt_pct(meta["attributed_funcs"], meta["funcstarts_n"])))
     A("3. 想提高函数级覆盖，只有两条路：(a) 把 `0x3c2bc0` / `0x3c2530` 这类无锚函数"
       "**逐个反编译并人工归属**；(b) 沿调用图从锚点扩散 —— 但那是**推断**，"
       "`docs/02` §10 做过（885/13263，6.7%，hub 节点被高估），不能进总账。")
@@ -1077,13 +1618,69 @@ def _sha256_file(path):
 
 # ---------------------------------------------------------------------------
 def main(argv):
-    check = "--check" in argv
-    rows, spot_rows, totals, grand, meta, _bm, _fn, _files = build()
+    check = "--check" in argv or "--modules" in argv
+    modules_only = "--modules" in argv
+    rows, spot_rows, totals, grand, meta, _bm, _fn, _files, loc_lit, _E = build()
+
+    # ---- 模块分母（T112）：三方差集表 + 正/负对照 ----
+    android = android_symtab_modules()
+    legacy = android_symtab_modules(legacy_only=True)
+    audit_tsv, audit = module_denominator_audit(rows, loc_lit, android, legacy)
+    module_problems = []
+    if audit.get("available"):
+        # 硬断言 1：矩阵的模块集合必须与未 strip 符号表的集合**逐个相同**
+        # （t109 那种"整模块静默缺行"以后必须在这里炸，不许只写进报告）
+        if audit["missing"]:
+            module_problems.append("符号表里有、矩阵缺行：%s" % audit["missing"])
+        if audit["extra"]:
+            module_problems.append("矩阵有、该版符号表里没有：%s" % audit["extra"])
+        # 硬断言 2：手工列 sym_funcs 必须与活的符号表相符
+        drift = sorted(m for m in android
+                       if m in M and M[m]["sym_funcs"] is not None
+                       and M[m]["sym_funcs"] != android[m]["func"])
+        if drift:
+            module_problems.append("sym_funcs 与符号表不符：%s"
+                                   % ["%s 表=%s 实测=%d" % (m, M[m]["sym_funcs"], android[m]["func"])
+                                      for m in drift])
+        bad = [c for c in audit["controls"] if c[1] is False]
+        for tag, _ok, ev in bad:
+            module_problems.append("对照 %s FAIL：%s" % (tag, ev))
+    else:
+        print("coverage_matrix: ⚠ 未 strip 符号表不在本机（%s）⇒ 模块分母自校验 SKIP"
+              % os.path.relpath(ANDROID_SO, ROOT), file=sys.stderr)
+
+    digest = _audit_digest()
+    if digest is None:
+        digest = audit          # 入库表缺/解析不出：退回落账的活结果（或 SKIP 文案）
     tsv = render_tsv(rows, meta)
-    md = render_md(rows, spot_rows, totals, grand, meta)
+    md = render_md(rows, spot_rows, totals, grand, meta, digest)
+
+    if modules_only:
+        # 只关心模块分母：写 fixture + 打印对照，不碰 docs/ 两个生成物
+        for tag, ok, ev in audit.get("controls", []):
+            print("  %-6s %-4s %s" % (tag, "SKIP" if ok is None else ("PASS" if ok else "FAIL"), ev))
+        if audit_tsv is None:
+            print("模块分母审计：SKIP（缺符号表）")
+            return 0 if not module_problems else 1
+        with open(AUDIT_PATH, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(audit_tsv)
+        print("wrote %s" % os.path.relpath(AUDIT_PATH, ROOT))
+        print("模块分母：N_2.0.60(J1')=%d（J1=%d）、矩阵 %d 个、sym_funcs 合计 %d"
+              % (audit["n_android"], audit["j1"], audit["n_matrix"], audit["sym_funcs"]))
+        for p in module_problems:
+            print("  ✗", p)
+        return 0 if not module_problems else 1
 
     if check:
-        problems = []
+        problems = list(module_problems)
+        if audit_tsv is not None:
+            if not os.path.exists(AUDIT_PATH):
+                problems.append("缺文件：%s" % os.path.relpath(AUDIT_PATH, ROOT))
+            else:
+                with open(AUDIT_PATH, encoding="utf-8") as fh:
+                    if fh.read() != audit_tsv:
+                        problems.append("%s 与重算结果不一致（模块三方差集表过期）"
+                                        % os.path.relpath(AUDIT_PATH, ROOT))
         for path, want in ((TSV_PATH, tsv), (MD_PATH, md)):
             if not os.path.exists(path):
                 problems.append("缺文件：%s" % os.path.relpath(path, ROOT))
@@ -1112,8 +1709,13 @@ def main(argv):
     for path, text in ((TSV_PATH, tsv), (MD_PATH, md)):
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
-    print("wrote %s" % os.path.relpath(TSV_PATH, ROOT))
-    print("wrote %s" % os.path.relpath(MD_PATH, ROOT))
+        print("wrote %s" % os.path.relpath(path, ROOT))
+    if audit_tsv is not None:
+        with open(AUDIT_PATH, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(audit_tsv)
+        print("wrote %s" % os.path.relpath(AUDIT_PATH, ROOT))
+    for p in module_problems:
+        print("  ⚠", p)
     print()
     print(grand_line(grand))
     print()
@@ -1131,15 +1733,18 @@ def main(argv):
 
 
 def grand_line(grand):
-    return ("原版可归属函数 %d 个，分布在 %d 个模块（%d 个有同名 `graphwar_*.rs` 文件的占 %d、"
-            "%d 个 scope=other 的模块占 %d）；我们已实现 %d 个函数，其中 逐位 %d / 观测 %d / "
-            "推断 %d；未做 %d；完全未知的模块 %d 个（graphwar 里 %d 个）。"
-            % (grand["attributed"], grand["modules"], graphwar_prefixed(),
-               grand["graphwar"]["attributed"], grand["other"]["modules"],
-               grand["other"]["attributed"], grand["implemented"],
+    return ("原版可归属函数 %d 个（Location 口径），分布在 %d 个模块（scope=graphwar %d + other %d；"
+            "其中 %d 个有同名 `graphwar_*.rs` 文件）；我们已实现 %d 个函数，其中 逐位 %d / 观测 %d / "
+            "推断 %d；未做 %d；完全未知的模块 %d 个（graphwar 里 %d 个）；"
+            "**没实现的模块 %d 个**（`未做`/`未知`；这里的「未做 %d」是**函数**条数，别混）"
+            "；`sym_funcs` 合计 %d（Android 符号表 FUNC，**另一条轴，不进上面的分母**）。"
+            % (grand["attributed"], grand["modules"],
+               grand["graphwar"]["modules"], grand["other"]["modules"], graphwar_prefixed(),
+               grand["implemented"],
                grand["by_status"]["逐位"], grand["by_status"]["观测"], grand["by_status"]["推断"],
                grand["by_status"]["未做"], grand["unknown_modules"],
-               grand["graphwar"]["unknown_modules"]))
+               grand["graphwar"]["unknown_modules"], grand["pending_modules"],
+               grand["by_status"]["未做"], grand.get("sym_funcs") or 0))
 
 
 if __name__ == "__main__":
