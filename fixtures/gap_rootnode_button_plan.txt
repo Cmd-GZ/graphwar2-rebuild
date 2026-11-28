@@ -1,0 +1,236 @@
+# gap_rootnode_button_plan.txt —— T97 **预注册**：`graphwar_root_node.rs`（45/23）与 `graphwar_button.rs`（35/6）
+# 两个"代理缺口大块"的逐条裁决 + real-missing 落码口径（先提交，后跑）
+#
+# 为什么先写死再跑：`docs/06` §143（T96）的 `gap_proxy` 表把这两个模块排在最前面
+#   （root_node 30、button 34）—— 而 `gap_proxy = android_fns − lin_F1F2` 是**两个不同分母相减**：
+#     · 左边 = Android 2.0.60 `.symtab` 里名字带该模块 token 的 **FUNC 符号数**（答案里有名字）；
+#     · 右边 = Linux 2.0.60 里 **`panic::Location` 指向该模块 .rs 行** 的函数数（527 台账）。
+#   一个函数没有 `unwrap/expect/越界` 就没有 Location ⇒ **它永远进不了 527 分母**，
+#   于是"没进分母"会伪装成"没实现"。这两个模块正好是这种伪装最重的地方（宏产物 + 不 panic 的虚函数）。
+#   ⇒ 本轮要做的是**把这个差集逐条判成它到底是什么**，而不是直接把 26/29 当缺口去写代码。
+#
+# 判据**全部继承**，不新立阈值：
+#   * 五类定义 = T82 `fixtures/f3_triage_plan.txt` §1（逐字，见 §2.1）；
+#   * 机判特征与优先级 = T82 §2/§3 + §9 勘误 E1–E4；
+#   * 体积上限 `VOL_CAP = 0x800` = T85 M4 / T86 §134.3（§2.4，硬闸：>0x800 一律不许判 `na:*`）；
+#   * **调用形态闸（S 轴）= T89 `docs/06` §137.5**（§2.5，本轮对每一条都记录，不许省）；
+#   * 落码口径 = T95 `fixtures/gap_f3misc_plan.txt` §4（§4）。
+# 跑完若发现判据有洞，**只许在文件末尾追加 §9「勘误」（追加式）**，不改 §1–§8；
+# 结论写进 `docs/06` 新节（本轮 §144），**不回改本文件**。
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#     **两份构建的地址互不可换算** —— Android 地址与 Linux 地址是两列，不许相减、不许平移。
+#   * Android = `.reference/steam/android-2.0.60/libgraphwarrust.so`
+#     （ELF64 aarch64，`.symtab` 未剥离；sha256 `8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df`）。
+#   * Linux   = `.reference/steam/2026-08-28/libgraphwarrust.so`
+#     （ELF64 x86-64，stripped；sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`，
+#      与 `fixtures/boundary_audit.tsv` 文件头同）。
+#   * Linux 函数边界 = `.eh_frame` FDE 自解（`tools/addr_probe.py fde`），**不读** Ghidra pkl。
+#   * 反汇编 = capstone（`.reference/venv`）；arm64 侧为 aarch64。
+#   * 分母（本轮的新对象）= **Android `.symtab` 真名函数**，不是 527 台账：
+#     `.text` 内 `STT_FUNC`、`st_size>0`、非 `UND`，demangle 后名字里出现 crate 路径段
+#     `graphwarrust::graphwar_root_node::` / `graphwarrust::graphwar_button::`，按 `st_value` 去重。
+#     自校验 S0：必须逐值等于 T96 普查表 `fixtures/global_triage_android_census.tsv` 的
+#     `game_module graphwar_root_node 45` / `game_module graphwar_button 35`（差一条就是口径不同，先对齐再跑）。
+
+## 0. 本轮要回答什么
+
+`fixtures/global_triage_modules.tsv`（T96 刷新后）里这两行的 `gap_proxy` 分别是 30 / 34：
+
+| 模块 | android_fns | lin527 | lin_F1F2 | lin_F3 | lin_F3_real | gap_proxy |
+|---|---|---|---|---|---|---|
+| `graphwar_root_node.rs` | 45 | 23 | 15 | 8 | **1** | 30 |
+| `graphwar_button.rs` | 35 | 6 | 1 | 5 | **0** | 34 |
+
+两个模块的"缺口"性质**可能完全不同**，本轮逐条判：
+
+* **root_node**：Linux 侧 23 条里 15 条 F1、8 条 F3，而 8 条 F3 里**只有 1 条**是 real-missing
+  ⇒ 该模块的差集应该主要是「**宏产物 + 无 Location 的业务函数**」，真缺口只有 1 条
+  （`0x3b00d0 get_media_storage_path`，T71 §123.8 第 2 条明写"未落码"）。
+* **button**：Linux 侧只有 6 条，而 Android 有 35 条 —— 差 29。T57/T80 已证 `graphwar_button`
+  大量是 `__register_methods` / `__init::__inner_init` 壳 ⇒ **先验证"29 是不是 gdext 宏产物"**，
+  验不成才允许当缺口。**不许先落码再找理由。**
+
+## 1. 目标集合（跑前固定）
+
+| 集合 | 条数 | 定义 |
+|---|---|---|
+| **A1** | 45 | Android `.symtab` 真名含 `graphwar_root_node::` 的函数（按地址去重，S0 对齐普查表） |
+| **A2** | 35 | Android `.symtab` 真名含 `graphwar_button::` 的函数（同上） |
+| **L1** | 23 | Linux 527 台账里 `原版模块 == graphwar_root_node.rs` 的行（`fixtures/function_coverage.tsv`） |
+| **L2** | 6 | Linux 527 台账里 `原版模块 == graphwar_button.rs` 的行 |
+
+本轮**不新增/不删减** A1/A2 的行；A 与 L 的对应关系是新产出的东西（§3 的 `linux_addr` 列）。
+
+## 2. 判据（继承，不改阈值）
+
+### 2.1 五类定义（T82 `fixtures/f3_triage_plan.txt` §1 逐字）
+
+| 类别 | 定义 | 进不进"诚实缺口" |
+|---|---|---|
+| `real-missing` | **原版有我方没有的业务函数**：函数体承载原版模块自己的语义，能按源码写出来 | **进** |
+| `na:std-mono` | **std/core/alloc 的单态化**：函数体是标准库的，本模块只贡献被内联进去的比较器/步长 | 不进 |
+| `na:gdext-glue` | **gdext 宏产物**：类注册胶水 / 属性访问器 / `#[func]` 分发壳 / 信号 connect 闭包。源码层无独立 `fn` | 不进 |
+| `na:other` | 其它不该手写的编译器生成物：drop glue / panic 展开 / `#[derive]` / trait 对象 shim | 不进 |
+| `unknown` | **判不了**：证据不足以判成上面任一类（**必须写明缺什么证据**） | **进**（保守） |
+
+### 2.2 本轮必须用到的两个**新子类**（写在 `subclass` 列，不改上面五类的语义）
+
+* `implemented / denom:no-loc` —— **我方源码里已有同名实现**，但原版该函数（Linux 侧）**没有
+  `panic::Location`** ⇒ 它**永远进不了 527 分母**。所以它既不是 `real-missing`（我方有），
+  也不是 `na:*`（它是业务代码，该由我们写）。**必须**同时记 `ours_src = 文件:行`。
+  这条子类的存在本身就是本轮的一个结论：**"没进分母" ≠ "没实现"**。
+* `na:other / clap-derive` —— `#[derive(clap::Args)]` / `#[derive(clap::FromArgMatches)]` 的
+  宏展开体（`augment_args` / `from_arg_matches_mut`）。它是宏产物（T82 `na:other` 定义里
+  明列 `#[derive]` 产物），但**不是 gdext**，所以不进 `na:gdext-glue`。
+
+### 2.3 机判特征（T82 §2，原样继承）
+
+`SZ`（FDE/st_size 尺寸）· `LOC`（`panic::Location` 引用）· `SELF`（自递归次数）· `STRIDE`（元素步长乘法）·
+`CMP`（`ucomisd`+`jp`）· `BULK`（`movups/movaps/movdqu` ≥2）· `CMOV` · `ATOMIC`（`lock cmpxchg` 写可写段）·
+`BORROW`（`[reg+0x10]` 0→-1 借用标记）· `CALLERS`（`call rel32` 数）· `SLOTS`（值 == 本函数地址的重定位槽）·
+`CALLER_LOC` · `CALLEE`。
+
+### 2.4 体积上限（T85 M4 / T86 `VOL_CAP`，**硬闸**）
+
+`na:*` 要求 **FDE 尺寸（Linux）/ `st_size`（Android）≤ 0x800**（T85 实测：全部 na ≤ 0x721；
+反例 `0x3c2bc0`=0x308d 是业务函数）。**> 0x800 一律不许判 `na:*`**（可判 `real-missing` 或 `unknown`）。
+⚠️ 本轮的 A1/A2 里**有远超 0x800 的真业务函数**（Android `process` 16984 / `process_button_pressed` 16692 /
+`ready` 7932 / `augment_args` 5752 / `get_media_storage_path` 1596）⇒ 体积闸对它们自动生效，
+它们不可能被判 `na:*`。**这也是体积闸的正对照**：若某条 >0x800 的行被判成 `na:*`，判法坏了。
+
+### 2.5 **调用形态闸（T89 `docs/06` §137.5，本轮强制且逐条记录）**
+
+对**每一条** A1/A2 行按 **Android 侧**（有名字、未被优化掉的那份）记录 `rel32`（`bl` 直呼 `.text` 内
+目标的条数）与 `slot`（`R_*_RELATIVE` 重定位表项里 addend == 本函数地址的条数）：
+
+| 形态 | 含义 | 结论约束 |
+|---|---|---|
+| `rel32 ≥ 1` **且** `slot = 0` | 被**直接调用** | 泛型单态化的**必要形态**；业务函数也常见 —— **单靠它不能定案** |
+| `rel32 = 0` **且** `slot ≥ 1` | 地址只出现在**数据槽**里（交给 API 的闭包 / 注册表项） | **禁止**据此判 `na:std-mono`（T89 驳回 `0x438880` 的教训） |
+| `rel32 = 0` **且** `slot = 0` | 只经 vtable/间接调用 | 必须另找间接调用链，否则判 `unknown` 并写明缺哪条链 |
+
+⚠️ 本轮 `__register_methods` / `ptrcall_fn` / `varcall_fn` 这类**预期**是 `rel32=0, slot≥1`
+（只被注册表持有）—— 但**"符合预期"不等于"这就是判据"**：`na:gdext-glue` 的定案依据必须是
+§2.6 的两条独立证据，S 轴只用来**排除** `na:std-mono` 与"只在数据槽里 ⇒ 不可能是业务函数"的错误推论。
+
+### 2.6 两条独立证据（T82 §3 纪律；`na:*` 每条至少 2 个）
+
+1. **机器特征**（§2.3/§2.4/§2.5 任一）+ **人工复核过的那条指令/表项**（要写进 TSV 的「依据」列）；
+2. **源码级证据**：该函数在源码层**没有独立 `fn`** —— 即 Android demangle 名里的可识别宏形态
+   （`__register_methods` / `__register_constants` / `__register_exports` / `ptrcall_fn` / `varcall_fn` /
+   `virtual_fn` / `__default_virtual_call` / `class_id` / `_::__init::__inner_init` / `drop_in_place<…>`），
+   **或** `fixtures/naming_android.tsv` 里该 Linux 地址的 L 轴候选集全是这些形态。
+   ⚠️ 名字是**观测**（`.symtab` 逐条读），不是"推断"；但它只说明**原版这一条是什么**，
+   **不**说明"我们该不该手写" —— 后者要第 1 条机器特征佐证。
+
+### 2.7 判决顺序（T82 E4 优先级，**不许跳过前面**）
+
+`na:gdext-glue` → `na:std-mono` → `na:other` → `implemented / denom:no-loc` → `unknown`(G4) → `real-missing`
+
+⚠️ 与 T82 原表的差别只有一处、且必须写清：`implemented / denom:no-loc` 插在 `unknown` 之前，
+因为它是**可机判**的（`grep` 到我方同名 `fn` + Linux 侧 `LOC` 为空）、不需要人工裁。
+`real-missing` 仍必须能写出**一句可复核的语义**（被调者 + 常量 + `.rodata` 串 + 调用者），写不出 ⇒ `unknown`。
+
+## 3. 逐条必须产出的字段（写进 `fixtures/gap_rootnode.tsv` / `fixtures/gap_button.tsv`）
+
+`android_addr | android_size | android_真名(去 h<hash>) | 名字形态 | linux_addr | linux_FDE | in_527+F档 | rel32 | slot | LOC(android) | 类别 | subclass | ours_src | 依据(≥40 字符) | 落码(vaddr/真名/我方文件:行/档位)`
+
+* `linux_addr = —` 必须写明为什么没有（`L 空` = Android 侧无 Location ⇒ 无跨构建键；`L 多义` = 键不唯一）。
+* `in_527` 三态：`F1/F2/F3`（在 527 台账里）或 `—`（不在，就不是缺口也不该算实现）。
+* 「类别」列是**人工裁决结果**；与 §2.7 机判候选不同时必须写明理由。
+* **两条 TSV 都要有「映射自校验」小节**：A1 的 45 行与 L1 的 23 行**每一行都要被覆盖到**
+  （A 行可 `—` 但必须出现；L 行必须至少被一条 A 行指到，或写明"L 行无 A 对应（跨模块宏别名）"）。
+
+## 4. 落码口径（什么算"这条真落下来了"）—— 逐字沿用 T95 §4
+
+1. **落点必须是我方同名原版模块文件**（`src/graphwar_root_node.rs` / `src/graphwar_button.rs`），
+   **不许**落 `src/_scaffold/**`（`AGENTS.md` §4 + `function_coverage.py` 的 R1）。
+2. **函数名 = 真名的方法段**（Android demangle 名 `GraphwarRootNode::get_media_storage_path`）。
+3. **注释必须带**：`vaddr`（ELF 口径）+ FDE 尺寸 + 证据档 + **关键指令**（立即数 / 字段偏移 /
+   `.rodata` 串 / 表项地址）。**只写"对应 0xNNNN"不算**。
+4. **单测**：期望值只能来自反汇编读出的立即数/分支/表项，不许来自我方实现的输出（`AGENTS.md` §0.5）。
+   隔离不了（要 Godot 节点/分配器）的写明"能做什么、缺什么"，档位降到 `观测`，**不许编语义**。
+5. **接线**：被谁调/调谁要接上；既有测试断言若与本轮证据冲突 ⇒ 改断言并写明地址与理由（**不许删测试**）。
+6. **每处 real-missing 单独一个 commit**。
+
+## 5. 正/负对照（**先做，全对才进全量**）
+
+| 组 | 条数 | 对象 | 期望 |
+|---|---|---|---|
+| **C1** gdext 正对照 | 2 | Linux `0x4e0e60` / `0x4e0fe0`（`graphwar_button.rs`，T82 已判 `na:gdext-glue`） | 本轮复算仍得 `na:gdext-glue`（证判法没退化）；L 轴候选必须是宏形态 |
+| **C2** real-missing 正对照 | 1 | Linux `0x3b00d0`（`get_media_storage_path`） | `real-missing`（F3 + `named-miss` + 我方无同名 `fn` + 体积 1876 > 0x800 自动排除 `na:*`） |
+| **C3** F1 正对照 | 1 | Linux `0x3afcf0`（`check_save_level`） | `implemented`（我方有同名 `fn`，档位 观测） |
+| **C4** 负对照（T89 驳回项同形态） | 1 | Linux `0x3a54e0`（`ready::{{closure}}`） | **不许**判 `na:*`：闭包是业务代码，`LOC` 非空、`rel32≥1`；判 `implemented` |
+| **C5** 口径自校验 | — | A1=45 / A2=35 | 必须逐值等于 `global_triage_android_census.tsv`（S0）；不等 ⇒ 先对齐口径，不许改分母 |
+
+## 6. 跑前的**预期**（写在这里，跑完对不上要解释，不许悄悄改）
+
+* **P1（button）**：35 = **25 gdext 机件**（`__register_*` 4 · `ptrcall_fn` 4 · `varcall_fn` 4+3 ·
+  `virtual_fn` 3 · `class_id` 1 · `drop_in_place` 4 · `__register_exports` 1 …按 §2.6②逐条数）
+  **+ 4 `__init::__inner_init` 壳** = **29 条 `na:gdext-glue`（或 `na:other / drop-glue`）**，
+  另 **6 条真业务**（`init` / `ready` / `process` / `button_down` / `pressed` / `button_up`）
+  ⇒ **`real-missing = 0`**。若成立，`gap_proxy 34` **整块是分母假象**，不是 34 个待写的函数。
+  ⚠️ **并列陷阱必须写进结论**：Linux 侧那 6 行**恰好也是 6**，但它们**不是**那 6 条业务函数 ——
+  它们是宏壳（`__register_methods`/`__register_constants`/`__inner_init` 的 Location 落在
+  `src/graphwar_button.rs:83`）。**"两边都等于 6"是巧合，集合不相交**。
+* **P2（root_node）**：45 = **26 gdext 机件** + **2 `clap` derive 产物**（`augment_args` /
+  `from_arg_matches_mut`，`na:other / clap-derive`）+ **17 真业务**。17 条业务里：
+  ~11 在 527（F1）、1 条 `real-missing`（`0x3b00d0`）、其余 ~5 条
+  （`init` / `show_pop_up` / `show_screen` / `print_help_and_exit_if_requested` / `user_args`）
+  **无 Location ⇒ 进不了 527**；它们判 `implemented / denom:no-loc` 还是 `real-missing`，
+  **取决于我方源码里有没有同名 `fn`** —— 这一条我**先不写死**，跑完以 `grep` 结果为准。
+* **P3**：若 `0x3b00d0` 真落码 ⇒ 527 台账 `graphwar_root_node` 的 `lin_F3 8→7`、`lin_F3_real 1→0`、
+  函数级复原率 +1（分母 527 不变）；**招牌 A/B 口径的分母也不变**（本轮不新增可归属函数）。
+* **P4（悬案）**：`+0xb0` 的**写入点**全 `.text` 扫描预期落在模块区间内（`0x3a2e10..0x3b4ec0`）且条数很少；
+  `+0x1f8` 的写入点同理。⚠️ T71 §123.3.1 只登记了**读**点（`0x3afd43 cmp qword [r14+0x1f8],0`），
+  写点若是"谁把对局控制器载荷填进 `+0x1e0/+0x1f8`"则可能是**间接**（`mov [reg+0x1e0], rdx` 形态），
+  扫不到就如实写"扫不到 + 用什么手段才能扫到（要 frida 或要 vtable 派发链）"，**不许**把"扫不到"写成"没有写入者"
+  （`AGENTS.md` 合并纪律 A.4：负结论必须先做正对照）。
+
+## 7. 交付物 / 门槛 / 复跑命令
+
+**交付物**
+* `fixtures/gap_rootnode_button_plan.txt`（本文件，**先单独 commit**）；
+* `fixtures/gap_rootnode.tsv`（45 行）/ `fixtures/gap_button.tsv`（35 行）+ 两文件的映射自校验小节；
+* `src/graphwar_root_node.rs` 的 real-missing 落码（每处单独 commit）+ 单测；
+  `src/graphwar_button.rs` 若判出 real-missing 同样处理（预期 0 条 ⇒ 也要在 docs 里写出"为什么 0 条"）；
+* `docs/06` 新节（本轮取 **§144**；先 `tools/docsec.py check docs/06-verification.md` 确认空号）。
+
+**门槛（一条都不许跳）**
+```bash
+export CARGO_HOME=$WT/.reference/cargo-home CARGO_TARGET_DIR=$WT/.reference/cargo-home/target
+cargo test --offline                             # 1620 / 0 / 1ignored
+cargo test --offline --features gdext-bindings    # 1769 / 0 / 1ignored
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream \
+  .reference/venv/bin/python tools/coverage_matrix.py --check    # OK
+python3 tools/check_doc_refs.py                  # rc=0
+python3 tools/docsec.py check docs/06-verification.md            # 通过
+.reference/venv/bin/python tools/boundary_audit.py --check       # mismatch 0
+# 三轴：fire 647 / batch 647 / batch_conv 637（命令见 docs/06 §123.7 ⑥）
+```
+
+**复跑命令（逐条取证）**
+```bash
+PY=$WT/.reference/venv/bin/python
+$PY tools/arm64_sym.py mod graphwar_button          # Android 侧真名清单（答案）
+$PY tools/addr_probe.py fde 0x3b00d0 && $PY tools/addr_probe.py dis 0x3b00d0
+$PY tools/addr_probe.py locs 0x3b00d0 && $PY tools/addr_probe.py callers 0x3b00d0
+$PY tools/addr_probe.py str <每个 .rodata 串地址>
+python3 tools/function_coverage.py --stats          # 527 台账 F 档计数（会重写 function_coverage.tsv）
+```
+
+## 8. 自校验闸（跑完逐条报）
+
+| 闸 | 判据 |
+|---|---|
+| **S0** | A1=45 / A2=35 与 `global_triage_android_census.tsv` 逐值相同（§1） |
+| **S1** | 两条 TSV 行数 = 45 / 35，`android_addr` 无重复 |
+| **S2** | 每条 `na:*` 有 §2.6 的两条独立证据（机器特征 + 源码级形态），缺一条 ⇒ 降 `unknown` |
+| **S3** | 每条 `na:*` 的体积 ≤ 0x800（Android `st_size`） |
+| **S4** | 每条 `real-missing` 能写出一句可复核语义，且 `grep` 证明我方无同名 `fn` |
+| **S5** | C1–C5 五组对照全对 |
+| **S6** | `in_527` 列合计：L1 = 23 行、L2 = 6 行，且每行都被至少一条 A 行指到，或写明"无 A 对应" |
+
+## 9. 勘误（追加式；跑之前为空）
