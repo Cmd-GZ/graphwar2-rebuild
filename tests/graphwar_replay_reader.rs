@@ -150,3 +150,78 @@ fn event_info_is_the_recorder_type() {
     let evs: Vec<EventInfo> = load_game_at("p", format!("{LINE_A}\n").as_bytes()).unwrap();
     assert_eq!(evs[0].to_json_line().contains("\"tick\":1234"), true);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// T109（2026-11-28）：`load_game` 这个**原版入口本身**落码后的验收。
+// 判据全部来自 arm64 `0x3da370`（1612 B）的指令 —— 不是来自我方输出。
+// ══════════════════════════════════════════════════════════════════════════════════════════
+
+/// 造一条最小 gzip（deflate stored block）—— 与上面 `load_game_unzips` 同一份构造，抽出来复用。
+fn gzip_stored(text: &str) -> Vec<u8> {
+    let mut gz = vec![0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
+    let body = text.as_bytes();
+    gz.push(0x01); // BFINAL=1, BTYPE=00 (stored)
+    gz.extend_from_slice(&(body.len() as u16).to_le_bytes());
+    gz.extend_from_slice(&(!(body.len() as u16)).to_le_bytes());
+    gz.extend_from_slice(body);
+    gz.extend_from_slice(&[0, 0, 0, 0]); // CRC32（本 inflate 不校验）
+    gz.extend_from_slice(&(body.len() as u32).to_le_bytes()); // ISIZE
+    gz
+}
+
+#[test]
+fn load_game_is_the_real_entry() {
+    // `0x3da370` 的语义：入参是**名字**（自己拼 `user://replays/`），返回 `Vec<EventInfo>`（**没有 Result**）。
+    let text = format!("{LINE_A}\n{LINE_B}\n");
+    let evs: Vec<EventInfo> = load_game("1782642754", &gzip_stored(&text));
+    assert_eq!(evs.len(), 2);
+    assert_eq!(evs[0].event.name, "FunctionInfo");
+    assert_eq!(evs[0].tick, 1234);
+    assert_eq!(evs[1].tick, 1235);
+    // 同一个名字走两条入口（超集 `load_game_at` vs 原版 `load_game`）结果一致
+    assert_eq!(
+        event_names(&evs),
+        event_names(&load_game_bytes("1782642754", &gzip_stored(&text)).unwrap())
+    );
+}
+
+#[test]
+fn load_game_is_unconditionally_gzip() {
+    // `0x3da48c bl GzDecoder::new` **没有** `is_gzip` 分支；`0x3da4f0 drop_in_place<std::io::Error>`
+    // 之后直接返回初始空 Vec（`0x3da39c stp xzr, x8`）⇒ 明文输入**不是**"照读"，是**空表**。
+    // 这正是原版 `load_game` 与对拍超集 `load_game_at` 的**唯一行为差异**（超集接受明文）。
+    assert!(load_game("p", format!("{LINE_A}\n").as_bytes()).is_empty());
+    assert!(load_game("p", b"").is_empty());
+    assert!(load_game("p", b"not gzip at all").is_empty());
+    // 非 UTF-8 解压结果亦同（`append_to_string` 只接受 UTF-8）
+    let mut bad = vec![0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01];
+    bad.extend_from_slice(&3u16.to_le_bytes());
+    bad.extend_from_slice(&(!3u16).to_le_bytes());
+    bad.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+    bad.extend_from_slice(&[0, 0, 0, 0]);
+    bad.extend_from_slice(&3u32.to_le_bytes());
+    assert!(load_game("p", &bad).is_empty());
+}
+
+#[test]
+fn load_game_skips_bad_lines_and_keeps_order() {
+    // `0x3da684 drop_in_place<Result<EventInfo, serde_json::Error>>` → `0x3da690` 回循环头：
+    // 坏行丢、其余保留、顺序不动（`0x3da734 grow_one` 逐条 push）。
+    let text = format!("not json\n{LINE_B}\n\n{LINE_A}\n");
+    let evs = load_game("p", &gzip_stored(&text));
+    let ticks: Vec<u32> = evs.iter().map(|e| e.tick).collect();
+    assert_eq!(ticks, vec![1235, 1234]);
+}
+
+#[test]
+fn original_io_constants_are_observed() {
+    // 五个常数全部来自 arm64 立即数/`.rodata`（见各 const 的文档注释）
+    assert_eq!(FILE_ACCESS_CLASS, "FileAccess");
+    assert_eq!(FILE_ACCESS_CLASS.len(), 10, "0x3da428 mov w2,#0xa");
+    assert_eq!(FILE_READ_CAP, 10_000_000, "0x989680 = mov w1,#0x9680 + movk #0x98,lsl16");
+    assert_eq!(GZ_READ_BUFFER, 0x8000, "0x3da464 mov w0,#0x8000 + alloc_zeroed");
+    assert_eq!(LINE_SEP, "\n", ".rodata 0x19bdfe = 0x0a，needle 长度 1（0x3da620 w3=#1）");
+    assert_eq!(EVENT_INFO_SIZE, 80, "0x3da668 mov w24,#0x50 + 0x3da73c madd 步长");
+    // 目录字面量 15 字节 = `0x3da3a8 mov w0,#0xf`
+    assert_eq!(REPLAY_DIR_LEN, REPLAY_DIR.len());
+}

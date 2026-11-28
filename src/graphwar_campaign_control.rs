@@ -741,3 +741,58 @@ impl CampaignProgress {
         level >= 1 && level <= CAMPAIGN_LEVEL_COUNT && level <= self.unlocked_through + 1
     }
 }
+
+// ---------------------------------------------------------------------------
+// 5. 两个**文件层**方法（2026-11-28 T109 落码；此前只有"纯函数"半边）
+//
+// 原版这两个方法是 `GraphwarCampaignControl` 上真正碰文件的两个函数，**体内没有
+// `panic::Location`** ⇒ 一直不在 527 分母里（`fixtures/denom_outside.tsv` 判 real-missing）。
+// 它们把上面第 2 节那些纯函数串成 I/O 流程，所以这里落的是**流程 + 实参**，
+// `FileAccess` 本身按本模块既有口径**注入**（同 `load_games` 注入 `DirAccess`）。
+// ---------------------------------------------------------------------------
+
+/// `get_current_level`（arm64 **`0x392f18`** / **528** B）：读存档 → 解析出当前关卡。
+///
+/// 逐条指令（`llvm-objdump --triple=aarch64 --start-address=0x392f18`）：
+///
+/// ```text
+/// 0x392f2c  adrp 0x19a000 + 0x392f30 add #0x738 ⇒ x0 = .rodata 0x19a738 = "user://campaign.save"
+/// 0x392f38  mov w1,#0x14 (=20 = 路径长度)   0x392f3c mov w2,#0x1 (=1 = READ)
+/// 0x392f40  bl FileAccess::open
+/// 0x392f48  cmp x8,#1 / b.ne 0x393060        ⇒ 打开失败：0x393060 mov w19,wzr（= None）
+/// 0x392f68  bl RawGd::check_rtti("upcast_ref") ; 0x392f70 bl FileAccess::get_as_text
+/// 0x392fb8  bl get_level_as_int              ⇒ 返回两个机器字（Option<u32>）
+/// 0x392fc4..0x392fd4 dealloc 文本 ; 0x393014 bl FileAccess::close
+/// 0x393034 bl RefCounted::unreference        ⇒ 关句柄（与 replay_reader 同形状）
+/// ```
+///
+/// 返回 `Option<u32>`（`w0` = 判别字、`w1` = 载荷；打开失败时 `w0 = 0` = `None`）。
+///
+/// `existing` = `campaign.save` 的当前内容（`None` = 打不开 / 不存在）。
+pub fn get_current_level(existing: Option<&str>) -> Option<u32> {
+    // 0x392f48 的打开失败臂 ⇒ None（**不是** 0：原版返回的是 Option 的判别字 0）
+    let text = existing?;
+    get_level_as_int(text) // 0x392fb8
+}
+
+/// `save_current_level`（arm64 **`0x393128`** / **1072** B）：把关卡进度写回存档。
+///
+/// 三个可读的结构（全部指得到指令）：
+///
+/// * **两次 `open` 的模式实参不同**：`0x393160 mov w1,#0x14 (=20 路径长) / 0x393164 mov w2,#0x1`
+///   = 先 `open(READ=1)` 读旧内容；`0x393318/0x39331c` 再 `mov w2,#0x2` = `open(WRITE=2)` 写。
+///   ⇒ 与 x86 侧 `0x41860f` 的 `open mode=2` **跨架构同值**（`docs/10-campaign.md` §12.4）。
+/// * **判定用两次 `get_level_as_int`**：`0x3932a0`（旧内容）与 `0x3932b4`（要写的新串），
+///   规则与 [`save_action`] 同一条（新 ≤ 旧不写、旧值无效必写、新串无效而旧值有效不写）。
+/// * **写的那条臂**：`0x393354 bl FileAccess::store_string` + `0x393370 bl close`
+///   + `0x393390 bl unreference`；**只写字符串本身**（无换行），与 [`encode_save`] 一致。
+///
+/// `new_text` = 要落盘的内容（原版从第 2 个实参里取 `(ptr,len)` 直接交给 `store_string`，
+/// 见 `0x39334c ldp x1,x2,[x20,#0x8]`）⇒ 本函数**只判定"要不要写"**，
+/// 返回 `true` 时调用方执行 `open(WRITE=2)` + 写 `new_text`。
+///
+/// ⚠️ 返回值的**极性**是**推断**：`0x393308 eor w21, w26, #0x1` 把某个比较结果取反后
+/// 作为返回值（`w0`），而 `w26` 的来源在 0x39324c 之前的那段借用检查里，本轮没有逐位追完。
+pub fn save_current_level(existing: Option<&str>, new_text: &str) -> bool {
+    save_action(existing, new_text) == SaveAction::Write
+}

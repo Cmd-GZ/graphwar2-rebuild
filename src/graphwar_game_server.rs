@@ -823,3 +823,119 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
     eprintln!("DONE");
     Ok((addr, log))
 }
+
+// ---------------------------------------------------------------------------
+// 7. 端口交接（2026-11-28 T109 落码；`fixtures/denom_outside.tsv` 判 real-missing 0x482a5c）
+//
+// 「服务器线程算完端口之后，怎么把端口交给主线程」—— 原版用一条
+// **std::sync::mpmc 通道** + 两个 u16 缓存字段，并把"已经取过"写成哨兵值 3。
+// 这个函数体内没有 `panic::Location`，所以 527 分母一直看不见它。
+// ---------------------------------------------------------------------------
+
+/// 端口缓存标志的偏移：`+0x74`（`u16`）。非 0 = 已经拿到端口。
+///
+/// 档位：**观测**（`0x482a70 ldrh w8,[x0,#0x74]` + `0x482a78 cbz w8`；
+/// 命中后 `0x482b74 mov w9,#1 / 0x482b80 strh w9,[x19,#0x74]`）。
+pub const PORT_FLAG_OFFSET: usize = 0x74;
+
+/// 端口本体的偏移：`+0x76`（`u16`）。
+///
+/// 档位：**观测**（`0x482a80 ldrh w1,[x19,#0x76]`、`0x482b84 strh w8,[x19,#0x76]`）。
+pub const PORT_VALUE_OFFSET: usize = 0x76;
+
+/// 通道字段的偏移：`+0x20`（两个机器字）。
+///
+/// 档位：**观测**（`0x482a98 ldp x8,x9,[x19,#0x20]` 取出后交给
+/// `0x482ad4 bl std::sync::mpmc::Receiver::recv`；`0x482aa0 mov w10,#3 / str x10,[x19,#0x20]`
+/// 把第一个字改写成哨兵 **3**，下一轮 `0x482aa4 cmp x8,#3` 就认出"已经取过了"）。
+pub const PORT_CHANNEL_OFFSET: usize = 0x20;
+
+/// 已经取过端口后写进通道第一个字的哨兵值：**3**。
+///
+/// 档位：**观测**（`0x482aa0 mov w10,#0x3` + `0x482aa4 cmp x8,#3`）。
+pub const PORT_CHANNEL_SENTINEL: usize = 3;
+
+/// 通道断开（服务器线程先死了）时打印的原话：**41 字节**。
+///
+/// 档位：**观测**（`0x482af4..0x482b08`：`alloc(0x29=41)` + `adrp 0x1a000 + #0xf9` =
+/// `.rodata 0x1a00f9`，那条串正是 `"Server thread died before reporting port."`，
+/// 长度 41 与 `mov w0,#0x29` 逐字相符）。
+pub const SERVER_THREAD_DIED: &str = "Server thread died before reporting port.";
+
+/// 绑定失败时 `format!` 的前缀（`arg` 部分由调用方的 `Display` 填）。
+///
+/// 档位：**观测**（`0x482bb4 adrp 0x17a000 + #0xe86` = `.rodata 0x17ae86`，
+/// 经 `0x482bc8 bl alloc::fmt::format::format_inner` 展开；原文 `"Server failed to bind: "`）。
+pub const SERVER_BIND_FAILED_PREFIX: &str = "Server failed to bind: ";
+
+/// 两条日志的共同格式串 —— 里面**写着源码文件名与行号**：
+/// `src/graphwar_game_server.rs:175`。
+///
+/// 档位：**观测**（`0x482bf0 adrp 0x186000 + #0xa40` = `.rodata 0x186a40`，
+/// 原文 `"[{level}] src/graphwar_game_server.rs:175 - {msg}\n"`；两段 padding 字节 0xc0/0x01
+/// 是 Rust 格式化运行时的"参数序号"编码）。
+///
+/// ⚠️ 这是本模块**第一条非 `panic::Location` 的源码行号证据** —— 它证明原版这一行
+/// 就在 `graphwar_game_server.rs:175` 附近，但因为不是 Location 结构体，
+/// 不进 527 分母（`AGENTS.md` §0.2 的盲区）。
+pub const LOG_FMT_FILE_LINE: &str = "src/graphwar_game_server.rs:175";
+
+/// 端口交接的**内存模型**：原版 `GraphwarGameServer` 的 `+0x20 / +0x74 / +0x76` 三个字段。
+///
+/// 通道类型：原版是 **`std::sync::mpmc::Receiver<u16>`**（符号名直读，**观测**）；
+/// 这里用 `std::sync::mpsc::Receiver<u16>` —— 单生产者单消费者的用法与 mpmc 完全一致，
+/// 换类型只是为了不依赖 `mpmc` 的稳定版本，**语义等价**（替代本身是**推断**）。
+#[derive(Debug, Default)]
+pub struct ServerPortSlot {
+    /// `+0x20`：服务器线程 → 主线程的端口通道；`None` = 已经取过（原版写哨兵 `3`）。
+    pub channel: Option<std::sync::mpsc::Receiver<u16>>,
+    /// `+0x74`：已经拿到端口的标志（`u16`，非 0 = 有）。
+    pub got_port: u16,
+    /// `+0x76`：端口号本体（`u16`）。
+    pub port: u16,
+}
+
+impl ServerPortSlot {
+    /// `GraphwarGameServer::get_server_port`（arm64 **`0x482a5c`** / **616** B）：
+    /// 取服务器端口 —— **返回 `(是否拿到, 端口)` 两个值**。
+    ///
+    /// 逐条语义（全部指到指令）：
+    ///
+    /// 1. `0x482a70 ldrh w8,[x0,#0x74]; cbz w8 → 0x482a7c`：已有标志 ⇒ 直接
+    ///    `return (true, [x0+0x76])`（`0x482a7c mov w0,#1` / `0x482a80 ldrh w1,[x19,#0x76]`）。
+    /// 2. 否则 `0x482a98 ldp x8,x9,[x19,#0x20]` 取通道；`0x482aa0 str x10(==3),[x19,#0x20]`
+    ///    **先把通道打成哨兵**；`0x482aa4 cmp x8,#3; b.ne 0x482ac8` —— 已经是 3 ⇒
+    ///    `return (false, [x0+0x76])`（`0x482aac mov w0,wzr`）。⇒ **只取一次**。
+    /// 3. `0x482ad4 bl mpmc::Receiver::recv`；`0x482ad8 ldr x8,[sp,#0x18]` 取判别字：
+    ///    * `== i64::MIN` ⇒ `0x482b74`：`ldrh w8,[sp,#0x20]` 拿到端口 ⇒ 写
+    ///      `[x19+0x74] = 1`、`[x19+0x76] = 端口` ⇒ `return (true, 端口)`；
+    ///    * `== -0x7fff_ffff_ffff_ffff` ⇒ `0x482af4`：`Utc::now()` +
+    ///      41 字节 `"Server thread died before reporting port."` + `_print`
+    ///      ⇒ 落到 `0x482c28 mov w20,wzr` ⇒ `return (false, [x0+0x76])`；
+    ///    * 其他 ⇒ `0x482b8c`：`format!("Server failed to bind: {…}")` + 带
+    ///      `src/graphwar_game_server.rs:175` 的日志行 ⇒ 同样返回 `(false, 端口)`。
+    /// 4. 收尾 `0x482c30 bl mpmc::Receiver::drop` ⇒ 通道被丢掉。
+    ///
+    /// 返回值：`(bool, u16)`（`w0` = 是否拿到、`w1` = 端口），**观测**
+    /// （两条返回臂各自 `mov w0,#1` / `mov w0,wzr` 后都 `ldrh w1,[x19,#0x76]`）。
+    pub fn get_server_port(&mut self) -> (bool, u16) {
+        // 1) 已有标志
+        if self.got_port != 0 {
+            return (true, self.port);
+        }
+        // 2) 通道已被打过哨兵（= 取过）⇒ 不再等
+        let Some(rx) = self.channel.take() else {
+            return (false, self.port);
+        };
+        // 3) 等服务器线程报告端口
+        match rx.recv() {
+            Ok(port) => {
+                self.got_port = 1;
+                self.port = port;
+                (true, port)
+            }
+            // 断开/失败两条臂都只打日志，返回 (false, 端口)
+            Err(_) => (false, self.port),
+        }
+    }
+}

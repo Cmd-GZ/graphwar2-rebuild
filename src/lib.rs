@@ -216,6 +216,13 @@ pub mod graphwar_replay_player;
 /// 对局界面控制器 `graphwar_play_screen_control.rs`（10 个可归属函数）。
 /// 逐函数规格见 `docs/14-turn.md` §9；本模块只放**已被反汇编证据支持**的部分。
 pub mod graphwar_play_screen_control;
+/// 封禁表 `graphwar_ban_list.rs`（96 B = 两个 48 B 的 `HashMap`；原版模块，**此前不在
+/// `docs/coverage-matrix.tsv` / 78 模块表里** —— 它体内一条 `panic::Location` 都没有）。
+/// T109 落码：`new`(arm64 `0x4086a0`) / `is_connection_banned`(`0x408460`)，见 `docs/06` §153。
+pub mod graphwar_ban_list;
+/// 版本串 `graphwar_version.rs`（原版模块，同样**此前不在任何模块清单里**）。
+/// T109 落码：`graphwar_version_get_full_version`(arm64 `0x3913e4`) = `"2.0.60"`。
+pub mod graphwar_version;
 
 // ---- 我方自造：桥接层 / 工具层 / 装配层（原版没有对应物）----
 /// ⚠ **不是原版的东西**：GDExtension / C ABI 外壳、报文装配、对拍工具、ChaCha12 重写。

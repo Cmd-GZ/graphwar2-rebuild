@@ -2296,3 +2296,37 @@ mod tests {
 
 #[cfg(feature = "gdext-bindings")]
 pub use node_class::*;
+
+// ---------------------------------------------------------------------------
+// `clear`（2026-11-28 T109 落码；`fixtures/denom_outside.tsv` 判 real-missing 0x44daec）
+// ---------------------------------------------------------------------------
+
+/// `clear` 推迟调用的**方法名**：`"clear"`（5 字节）。
+///
+/// 档位：**观测** —— `0x44db0c adrp 0x19d000 + 0x44db10 add #0xe23` = `.rodata 0x19de23`，
+/// 那条串正是 `"clear"`（紧跟其后的字节是 `"FacesVbox"`）；长度实参
+/// `0x44db18 mov w2,#0xa` 是 `RawGd::check_rtti` 的类名长度 10，**不是**方法名长度 ——
+/// 方法名的 `(ptr,len)` 由 `0x44db20/0x44db24` 那一对重新取址后传给 `call_deferred`。
+pub const CLEAR_METHOD: &str = "clear";
+
+/// `GraphwarFunctionInput::clear`（arm64 **`0x44daec`** / **140** B）：
+/// **不是**"清空自己的缓冲区"，而是 `Object::call_deferred("clear")`。
+///
+/// 逐条指令：
+///
+/// ```text
+/// 0x44db08  bl WithBaseField::base_mut            ; 取基类对象（Node）
+/// 0x44db1c  bl RawGd::check_rtti("upcast_ref")    ; 0x44db18 mov w2,#0xa
+/// 0x44db20  adrp 0x19d000 + #0xe23 = 0x19de23     ; = "clear"
+/// 0x44db3c  bl Object::call_deferred              ; 0x44db30 mov w2,#0x5（方法名长度 5）
+/// 0x44db4c  bl InaccessibleGuard::drop            ; 借用守卫收尾
+/// ```
+///
+/// ⇒ 语义 = **把"清空"推迟到主循环**（Godot 的 `call_deferred`），而不是同步清。
+/// 这解释了为什么本类里同步的 `Buffer` 清空路径另有出处（见模块头 §3）。
+///
+/// 本层只有 `.gd` 侧可以真正 `call_deferred`，所以这里落的是**要推迟的方法名**
+/// （返回值 = 应调用的方法名）；真正的 `call_deferred` 由节点层发起。
+pub fn clear() -> &'static str {
+    CLEAR_METHOD
+}

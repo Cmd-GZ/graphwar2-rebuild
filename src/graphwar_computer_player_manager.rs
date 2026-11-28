@@ -797,3 +797,75 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// `computer_function_thread`（2026-11-28 T109 落码；arm64 0x4afef0 / 424 B）
+//
+// 体内没有 `panic::Location` ⇒ 527 分母看不见（`fixtures/denom_outside.tsv` 的 real-missing 行）。
+// 它是**电脑玩家算函数的那条线程体**：建 evolutionator → 算一批函数 → 从通道送回。
+// ---------------------------------------------------------------------------
+
+/// 线程体里选"老算法"的那个布尔实参的寄存器：`w25`（`0x4aff20 ldrb w25,[x29,#0x80]`
+/// —— 是**第 7 个整型实参**，从栈上传进来的 `bool`）。
+///
+/// 档位：**观测**（`0x4aff58 tbz w25, #0x0` 决定走哪条分支）。
+pub const THREAD_ARG_USE_OLD: &str = "bool@x29+0x80";
+
+/// 老算法入口：`GraphwarFunctionEvolutionator::calculate_functions_old`（arm64 **`0x413da0`**）。
+///
+/// 档位：**观测**（`0x4aff88 bl 0x413da0`；符号名直读）。
+pub const CALCULATE_FUNCTIONS_OLD: u32 = 0x41_3da0;
+
+/// 新算法入口：`GraphwarFunctionEvolutionator::calculate_functions`（arm64 **`0x412900`**）。
+///
+/// 档位：**观测**（`0x4affc0 bl 0x412900`）。
+pub const CALCULATE_FUNCTIONS_NEW: u32 = 0x41_2900;
+
+/// evolutionator 的构造入口（arm64 **`0x415158`**）。
+///
+/// 档位：**观测**（`0x4aff50 bl 0x415158 GraphwarFunctionEvolutionator::new`）。
+pub const EVOLUTIONATOR_NEW: u32 = 0x41_5158;
+
+/// 结果回送通道：`std::sync::mpmc::Sender::send`（arm64 **`0x42a868`**）。
+///
+/// 档位：**观测**（`0x4affd0 bl 0x42a868`；符号名直读 —— 元素类型是
+/// `Vec<FunctionEvolutionator::FunctionResult>`，见收尾的
+/// `drop_in_place<Vec<FunctionResult>>` @ `0x4b0070`）。
+pub const RESULT_SENDER_SEND: u32 = 0x42_a868;
+
+/// `GraphwarComputerPlayerManager::computer_function_thread`（arm64 **`0x4afef0`** / **424** B）：
+/// **电脑玩家那条线程的主体**。
+///
+/// 语义三步（全部指到指令）：
+///
+/// 1. `0x4aff50 bl GraphwarFunctionEvolutionator::new(...)`
+///    —— 7 个实参：`x0/x1` 来自调用方传进来的两个机器字、`x2..x5` 来自 `[x29+0x60..0x70]`、
+///    `w6` 来自 `[x29+0x88]`（`0x4aff30 ldrb w11,[x29,#0x88]`）。
+/// 2. `0x4aff58 tbz w25, #0x0` 二分：
+///    * `w25 & 1 == 0` ⇒ `0x4affc0 bl calculate_functions`（新算法；额外多传一个 `w5 = w23`）；
+///    * `w25 & 1 != 0` ⇒ `0x4aff88 bl calculate_functions_old`（老算法）。
+///    两次调用都传 `w1..w4` 四个整数（`0x4aff78..0x4aff84` / `0x4affac..0x4affb8`）与一个
+///    24 字节结构（`0x4aff5c ldr q0,[x24]` + `0x4aff60 ldr x9,[x24,#0x10]` ⇒ 字符串/切片）。
+/// 3. `0x4affd0 bl std::sync::mpmc::Sender::send(...)` ⇒ 把结果**送回去**；
+///    收尾 `0x4b0038/0x4b0070/0x4b0040` 依次 drop evolutionator / `Vec<FunctionResult>` / sender。
+///
+/// 本层把"算"和"送"作为闭包注入（线程边界与通道在桥接层），
+/// 只把**真实的分支条件与调用顺序**钉住：
+/// **`use_old == true` ⇒ 老算法**（`tbz` 判的是第 0 位，为 0 才走新算法）。
+///
+/// 档位：**观测**（顺序/分支/被调者都是符号名直读）；返回 `bool` = "send 是否成功"
+/// 是**推断**（`Sender::send` 返回 `Result`，但本轮没追它的判别字去向）。
+pub fn computer_function_thread<P, R>(
+    use_old: bool,
+    make: impl FnOnce() -> P,
+    calc_old: impl FnOnce(P) -> R,
+    calc_new: impl FnOnce(P) -> R,
+    send: impl FnOnce(R) -> bool,
+) -> bool {
+    // ① 0x4aff50
+    let evo = make();
+    // ② 0x4aff58 的分支：位 0 == 0 ⇒ 新算法，否则老算法
+    let result = if use_old { calc_old(evo) } else { calc_new(evo) };
+    // ③ 0x4affd0
+    send(result)
+}

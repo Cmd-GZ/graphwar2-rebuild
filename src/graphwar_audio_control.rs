@@ -397,18 +397,38 @@ impl GraphwarAudioControl {
         self.effect_info_event(kind, value)
     }
 
-    /// `soldier_info_event`：`pop`，值恒 0，音量 `0.0 dB`。
-    pub fn on_soldier_info(&mut self) -> EffectAudioData {
+    /// `GraphwarAudioControl::soldier_info_event`（arm64 **`0x4c46f4`** / **216** B；
+    /// x86 `0x4bf340` / 188 B）：入队 `pop`，值恒 0，音量 `0.0 dB`。
+    ///
+    /// 档位：**逐位**（音频槽表由 T58 定标：`pop` = 槽 `+0xb0` / 0 dB；见模块头 §1 与本文件
+    /// `SoundSlot` 表）。**原版真名**就是 `soldier_info_event` —— 2026-11-28 T109 把它补成
+    /// 真名入口：此前只有别名 [`Self::on_soldier_info`]，于是
+    /// `fixtures/denom_outside.tsv` 按"我方模块里有 `fn soldier_info_event`"的名字判据
+    /// 把这条判成 `real-missing`（**命名缺口**，不是行为缺口）。
+    pub fn soldier_info_event(&mut self) -> EffectAudioData {
         let data = EffectAudioData::new(SoundSlot::Pop, 0);
         self.queue.push(data);
         data
     }
 
-    /// `entity_removed_event`：`unpop`，值恒 0，音量 `-5.0 dB`。
-    pub fn on_entity_removed(&mut self) -> EffectAudioData {
+    /// 旧名（本仓库早期命名）→ 真名 [`Self::soldier_info_event`] 的零成本别名。
+    pub fn on_soldier_info(&mut self) -> EffectAudioData {
+        self.soldier_info_event()
+    }
+
+    /// `GraphwarAudioControl::entity_removed_event`（arm64 **`0x4c488c`** / **216** B；
+    /// x86 `0x4bf480` / 193 B）：入队 `unpop`，值恒 0，音量 `-5.0 dB`。
+    ///
+    /// 档位：**逐位**（`unpop` = 槽 `+0xc0` / −5 dB，T58 定标）。真名入口，理由同上。
+    pub fn entity_removed_event(&mut self) -> EffectAudioData {
         let data = EffectAudioData::new(SoundSlot::Unpop, 0);
         self.queue.push(data);
         data
+    }
+
+    /// 旧名 → 真名 [`Self::entity_removed_event`] 的零成本别名。
+    pub fn on_entity_removed(&mut self) -> EffectAudioData {
+        self.entity_removed_event()
     }
 
     /// `game_state_event`（x86 **`0x4bef20`** / FDE `0xd4`；arm64 `0x4c42c8` / `0xd4`）。

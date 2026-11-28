@@ -25,6 +25,10 @@
 //! | `load_games` | `0x3da190` / 480 | `0x3d76f0` / 608 | 1.267 | `DirAccess::get_files_at` → `Vec<String>` | **观测** |
 //! | `load_game`  | `0x3da370` / 1612 | `0x3d5740` / 2368 | 1.469 | 打开 → 读字节 → gunzip → 逐行 JSON → `Vec<EventInfo>` | **观测** |
 //!
+//! 落码位置（2026-11-28 T109）：`load_games` → [`load_games`]（目录列表注入）；
+//! `load_game` → [`load_game`]（原版语义：入参是**名字**、无条件 gunzip、失败返回空 `Vec`），
+//! 另有对拍友好的超集 [`load_game_at`] / [`load_game_bytes`]（接受明文、返回 `Result`）。
+//!
 //! 两个尺寸比**都超出** 0.61–1.19 的闸，所以对位**不看尺寸**，靠一条判等：
 //!
 //! > `"user://replays/"`（15 字节）在**整份** x86 `.so` 里只被 **2 个**函数引用
@@ -160,6 +164,94 @@ where
         .map(Into::into)
         .filter(|n: &String| !n.is_empty())
         .collect()
+}
+
+/// `FileAccess` 类名字面量：原版对 `FileAccess::open` 的返回值做 `check_rtti` 时用的就是它。
+///
+/// 档位：**观测**（arm64 `.rodata 0x19bdff` = `"FileAccess"`；`0x3da41c adrp/add` 取址 +
+/// `0x3da428 mov w2,#0xa` = 长度 10）。
+pub const FILE_ACCESS_CLASS: &str = "FileAccess";
+
+/// `FileAccess::get_buffer` 的实参：**一次性最多读 10 000 000 字节**（`0x989680`）。
+///
+/// 档位：**观测**（arm64 `0x3da430 mov w1,#0x9680` + `0x3da43c movk w1,#0x98,lsl #16`
+/// ⇒ `w1 = 0x0098_9680 = 10_000_000`；紧接 `0x3da440 bl FileAccess::get_buffer`）。
+///
+/// ⇒ 原版**不是流式读文件**：整份文件一次塞进 `PackedByteArray`（上限 10 MB）。
+/// 一个 401 份回放的快照里最大的那份也远小于这个数（`docs/06` §153）。
+pub const FILE_READ_CAP: u32 = 10_000_000;
+
+/// 包住**已读字节**的读侧缓冲容量：`0x8000` = 32768 字节。
+///
+/// 档位：**观测**（arm64 `0x3da464 mov w0,#0x8000` + `0x3da46c bl __rust_alloc_zeroed`；
+/// 这块缓冲随后作为 `GzDecoder::new` 的 `R`（`0x3da488 add x8, sp,#0x1b0` 传进去）
+/// ⇒ 那是 `BufReader<&[u8]>` 的容量，**不是**解压输出缓冲）。
+pub const GZ_READ_BUFFER: usize = 0x8000;
+
+/// 逐行切分的分隔符：**单个 `\n`**（1 字节）。
+///
+/// 档位：**观测**（arm64 `.rodata 0x19bdfe` 处正是 `0x0a`；`0x3da610 adrp/add` 取址 +
+/// `0x3da620 mov w3,#1` 传 `StrSearcher::new` 的 needle 长度 ⇒ `split('\n')`，
+/// 不是 `lines()` 的 `\r\n` 兼容版）。
+pub const LINE_SEP: &str = "\n";
+
+/// 原版 `EventInfo` 的**机器字大小**：80 字节。
+///
+/// 档位：**观测**（arm64 `0x3da668 mov w24,#0x50` + `0x3da73c madd x8, x27, x24, x23`
+/// = `base + len * 0x50` —— 逐条 push 时针步用的就是它；`0x3da734 bl grow_one` 的
+/// 元素类型即 `graphwar_game_recorder::EventInfo`）。
+///
+/// ⚠️ 我方 `EventInfo` 是 `{GraphwarEvent{name:&str, body:String}, tick:u32}`，尺寸**不同**；
+/// 这个常数只用于说明原版的内存形状，不参与我方实现。
+pub const EVENT_INFO_SIZE: usize = 0x50;
+
+/// **原版**入口 `GraphwarReplayReader::load_game`（arm64 `0x3da370`，**1612 字节**）。
+///
+/// 语义链（每一步都有地址，见模块文档 §3 的 10 条事实 + 本轮补的 5 条常数）：
+///
+/// 1. `0x3da3a8 mov w0,#0xf` / `0x3da3b8 adrp 0x19b000 + add #0xdef` ⇒ 分配 15 字节并拷
+///    `"user://replays/"`；`0x3da3e8 add x8, x23, x22` = `15 + name.len()` ⇒ **目录由本函数自己拼**，
+///    不插分隔符（字面量自带斜杠）。⇒ 入参是**名字**，不是完整路径。
+/// 2. `0x3da400 mov w1,#1` + `0x3da404 bl FileAccess::open` ⇒ 模式 1（= READ）。
+/// 3. `0x3da410 cmp x8,#1` / `b.ne 0x3da578` ⇒ `open` 失败就跳到**返回初始空 `Vec`** 的那条臂
+///    （`0x3da39c stp xzr, x8` 就是那个 `{cap=0,len=0,ptr=8}` 的空 Vec）。
+/// 4. `0x3da430/0x3da43c` ⇒ `get_buffer(FILE_READ_CAP)`；`0x3da448 op_is_empty` 空文件同样走空 Vec。
+/// 5. `0x3da48c bl GzDecoder::new`（**无条件**，没有 `is_gzip` 分支）+ `0x3da4e4 bl append_to_string`
+///    ⇒ 解压失败 ⇒ `0x3da4f0 drop_in_place<std::io::Error>` 后直接返回**空 Vec**（不是 `Result`）。
+/// 6. `0x3da548 bl RefCounted::unreference` ⇒ 解压**之后**才关句柄。
+/// 7. `0x3da628 StrSearcher::new`(needle=`"\n"`) + `0x3da69c next_match` ⇒ 按 `\n` 切。
+/// 8. `0x3da714 serde_json::de::from_trait` ⇒ 每行一个 `EventInfo`；失败 ⇒ `0x3da684`
+///    `drop_in_place<Result<EventInfo, serde_json::Error>>` 后回到循环头（`0x3da690`）⇒ **坏行丢、不中断**。
+/// 9. `0x3da734 grow_one` ⇒ 逐条 push，**不预分配**。
+/// 10. 返回 `Vec<EventInfo>`（`0x3da578` 起的 sret 写 24 字节）—— **没有 `Result`**。
+///
+/// 本实现把 Godot 的 `FileAccess::open` + `get_buffer` 两步**注入为 `bytes` 参数**
+/// （测试环境没有 Godot；`load_games` 对 `DirAccess` 也是同样的注入口径）。
+/// ⇒ `name` → `bytes` 之间的读文件动作是**推断**（缺：真机 `FileAccess` 调用序列的运行时读数），
+/// 其余 9 步全部**观测**。
+///
+/// 与 [`load_game_at`] 的区别（两者都在，别混用）：
+/// * 本函数 = **原版语义**：无条件 gunzip、失败返回空 Vec、入参是**名字**；
+/// * [`load_game_at`] = 对拍/测试友好的**超集**：接受明文、返回 `Result`、入参是**完整路径**。
+pub fn load_game(name: &str, bytes: &[u8]) -> Vec<EventInfo> {
+    // ① 目录自己拼（0x3da3a8/0x3da3b8/0x3da3e8）；路径本身只用于错误语境，不参与解码
+    let _path = replay_file(name);
+    // ② 无条件 gzip：解压失败 ⇒ 空 Vec（0x3da4e4 append_to_string 的 Err 臂）
+    let Ok(raw) = gunzip(bytes) else {
+        return Vec::new();
+    };
+    // ③ `append_to_string` 只接受 UTF-8；非 UTF-8 ⇒ 同一 Err 臂 ⇒ 空 Vec
+    let Ok(text) = String::from_utf8(raw) else {
+        return Vec::new();
+    };
+    // ④ split('\n') + 每行 serde_json；坏行只丢那一行（0x3da684 → 0x3da690）
+    let mut out: Vec<EventInfo> = Vec::new();
+    for line in text.split(LINE_SEP) {
+        if let Some(ev) = parse_event_line(line) {
+            out.push(ev);
+        }
+    }
+    out
 }
 
 /// `load_game`（arm64 `0x3da370`）：**一个文件的字节** → 一局的事件表。

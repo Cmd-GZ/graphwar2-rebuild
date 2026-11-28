@@ -1977,3 +1977,72 @@ mod f3_landing_tests {
         GraphwarPlayScreenControl::enable_replay_buttons(&mut Empty);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 12. `clear_state`（2026-11-28 T109 落码；52 B —— 全模块最小的一个真缺口）
+// ---------------------------------------------------------------------------
+//
+// 体内没有 `panic::Location` ⇒ 527 分母看不见它（`fixtures/denom_outside.tsv` 的 0x3deb08 行）。
+// 它是**整个 52 字节**的一个函数：一次 `check_rtti` + 一次**尾调用**。
+
+/// 调试/历史文本标签在控制器里的字段偏移：`+0x38`。
+///
+/// 档位：**观测**（`0x3deb20 add x0,x0,#0x38` / `0x3deb2c add x0,x19,#0x38`
+/// 两处都把这个偏移交给 `RichTextLabel` 的方法）。
+pub const DEBUG_TEXT_OFFSET: usize = 0x38;
+
+/// `clear_state` 作用对象的引擎类名字面量：`"upcast_ref"`（10 字节）。
+///
+/// 档位：**观测**（`0x3deb18 adrp 0x19b000 + 0x3deb1c add #0xdff` = `.rodata 0x19bdff`，
+/// `0x3deb24 mov w2,#0xa`）。⚠️ 这是 godot-rust `check_rtti` 固定传的诊断用名字，
+/// **不是**控件类名；真正的类由 `RichTextLabel::clear` 这条尾调用确定。
+pub const CLEAR_STATE_RTTI_TAG: &str = "upcast_ref";
+
+/// `clear_state` 里那次尾调用的目标：`RichTextLabel::clear`（arm64 **`0x7b5858`**）。
+///
+/// 档位：**观测**（`0x3deb38 b 0x7b5858` —— 是 `b` 不是 `bl`，**尾调用**，
+/// 所以本函数 52 字节里没有任何收尾逻辑）。
+pub const RICH_TEXT_LABEL_CLEAR: u32 = 0x7b_5858;
+
+/// `clear_state` 需要的宿主能力：拿到 `+0x38` 那个 `RichTextLabel` 并清空它。
+///
+/// 与 [`WidgetSink`] 同口径：引擎侧一律走 trait，本层只描述**调了谁、什么顺序**。
+pub trait DebugLabelSink {
+    /// 标签句柄（原版是 `Gd<RichTextLabel>`）。
+    type Label: Copy;
+
+    /// `self+0x38` 的 `RichTextLabel`。
+    fn debug_text_label(&mut self) -> Self::Label;
+
+    /// `RichTextLabel::clear`（`0x7b5858`）。
+    fn rich_text_clear(&mut self, label: Self::Label);
+}
+
+impl GraphwarPlayScreenControl {
+    /// `GraphwarPlayScreenControl::clear_state`（arm64 **`0x3deb08`** / **52** B）：
+    /// 把调试文本标签清空。
+    ///
+    /// 逐条指令（全函数只有 13 条）：
+    ///
+    /// ```text
+    /// 0x3deb14  mov x19, x0                     ; self
+    /// 0x3deb18  adrp x1, 0x19b000 ; +0x3deb1c add #0xdff = 0x19bdff  ; "upcast_ref"
+    /// 0x3deb20  add x0, x0, #0x38               ; self+0x38 = RichTextLabel
+    /// 0x3deb24  mov w2, #0xa                    ; 名字长度 10
+    /// 0x3deb28  bl RawGd::check_rtti            ; 类型检查（失败 ⇒ panic 臂）
+    /// 0x3deb2c  add x0, x19, #0x38
+    /// 0x3deb38  b RichTextLabel::clear (0x7b5858) ; **尾调用**
+    /// ```
+    ///
+    /// 档位：**观测**（每条都指到指令）。返回值：原版无返回值，本层返回"清了几次"以便断言。
+    pub fn clear_state<S>(sink: &mut S) -> usize
+    where
+        S: DebugLabelSink + ?Sized,
+    {
+        // 0x3deb20 / 0x3deb2c：字段 +0x38
+        let label = sink.debug_text_label();
+        // 0x3deb38：尾调用 RichTextLabel::clear
+        sink.rich_text_clear(label);
+        1
+    }
+}
