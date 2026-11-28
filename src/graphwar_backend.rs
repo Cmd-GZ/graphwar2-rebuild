@@ -641,6 +641,21 @@ pub enum StartBrokerStep {
     Install,
 }
 
+/// `stop_server_broker_handler`（arm64 `0x4074f8` / 136 B）的步骤，顺序 = 指令地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopBrokerStep {
+    /// `GraphwarServerBrokerHandler::stop`（`0x40751c bl 0x489e50`，实参 `&mut self+0x228`）。
+    HandlerStop,
+    /// 槽首字那个 `Arc` 的**强计数 −1**（`0x407520 ldxr` / `0x407524 subs x8,x8,#1` / `0x407528 stlxr`，
+    /// store 失败 `cbnz` 自旋重试）。
+    ArcRelease,
+    /// 计数减到 0 ⇒ `Arc::drop_slow`（`0x407534 dmb ishld` / `0x40753c bl 0x45f2e4`）。
+    /// **只在"减完 == 0"时才走**（`0x407530 b.ne 0x407540` 跳过）。
+    ArcDropSlow,
+    /// 丢 handler 里的 `HashMap`（`0x407540 add x0,x19,#0x230` + `0x407544 bl RawTable::drop`）—— **无条件**。
+    MapDrop,
+}
+
 /// `stop_lan_broadcaster`（arm64 `0x407068` / 172 B）的步骤，顺序 = 指令地址顺序。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopLanBroadcasterStep {
@@ -1127,6 +1142,56 @@ impl GraphwarBackend {
             map_entries: 0,
         });
         steps.push(StartBrokerStep::Install);
+        steps
+    }
+
+    /// `stop_server_broker_handler` —— **原版 arm64 `0x4074f8` / 136 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x4074f8..0x407580`，主路径）：
+    ///
+    /// ```text
+    /// 0x4074f8  stp x29,x30,[sp,#-0x30]! / 存 x21,x20,x19
+    /// 0x407508  ldr  x20,[x0,#0x228]      ; 槽首字 = handler 里那个 Arc 的指针
+    /// 0x40750c  add  x21,x0,#0x228
+    /// 0x407510  cbz  x20,0x407548        ; **空槽 ⇒ 跳过全部收尾**（只去写 0）
+    /// 0x407518  add  x0,x0,#0x228
+    /// 0x40751c  bl   0x489e50             ; GraphwarServerBrokerHandler::stop(&mut self+0x228)
+    /// 0x407520  ldxr x8,[x20] / 0x407524 subs x8,x8,#1 / 0x407528 stlxr w9,x8,[x20]
+    /// 0x40752c  cbnz w9,0x407520         ; store 失败 ⇒ 重试（`fetch_sub` 的 LL/SC 循环）
+    /// 0x407530  b.ne 0x407540            ; **减完非 0** ⇒ 还有人持有，跳过 drop_slow
+    /// 0x407534  dmb  ishld
+    /// 0x40753c  bl   0x45f2e4             ; Arc::drop_slow（最后一个引用）
+    /// 0x407540  add  x0,x19,#0x230
+    /// 0x407544  bl   0x3c5f2c             ; RawTable::drop（handler 里的 HashMap，**无条件**）
+    /// 0x407548  str  xzr,[x21]            ; 槽 = 0 = 空（两条路都汇合到这里 ⇒ 空槽调用也幂等）
+    /// ```
+    ///
+    /// ⇒ 语义：**空槽什么都不做；非空则 stop() → Arc 强计数减一 → （减到 0 才）drop_slow
+    /// → 丢 HashMap → 槽置空**。
+    ///
+    /// 三个不显然的点：
+    /// 1. **顺序是 stop 先于解引用**（`0x40751c` < `0x407520`）：先让 handler 自己收尾，
+    ///    再放掉它持有的共享句柄 —— 反过来会让 `stop` 在计数已减的 `Arc` 上跑；
+    /// 2. **`Arc::drop_slow` 只对最后一个引用**（`0x407530 b.ne` 跳过）—— 与 `stop_lan_broadcaster`
+    ///    里"无条件 dealloc"的形态不同（那边没有引用计数）；
+    /// 3. `HashMap` 的释放**在 Arc 之后、且无条件**（`0x407540`）：它是 handler 的**内联字段**
+    ///    （`+0x230`），所以不管 Arc 有没有别人持有，这段必须在本函数的槽被清空前丢掉。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。`GraphwarServerBrokerHandler::stop`（0x489e50）的体内没读
+    /// ⇒ "stop 会不会自己清空槽"未知（我方模型：不会，槽由本函数写 0）。
+    pub fn stop_server_broker_handler(&mut self) -> Vec<StopBrokerStep> {
+        let mut steps = Vec::new();
+        // 0x407510 cbz x20：空槽 ⇒ 一步不推（0x407548 的写 0 仍执行，我方 None 等价）
+        if let Some(slot) = self.broker {
+            steps.push(StopBrokerStep::HandlerStop); // 0x40751c
+            steps.push(StopBrokerStep::ArcRelease); // 0x407520..0x40752c
+            // 0x407524 subs x8,x8,#1 + 0x407530 b.ne：**减完恰好 0** 才 drop_slow
+            if slot.arc_strong.wrapping_sub(1) == 0 {
+                steps.push(StopBrokerStep::ArcDropSlow); // 0x40753c
+            }
+            steps.push(StopBrokerStep::MapDrop); // 0x407540/0x407544
+        }
+        self.broker = None; // 0x407548 str xzr,[x21]
         steps
     }
 
@@ -1653,6 +1718,52 @@ mod denom_t106_tests {
         // 第二次：槽非空 ⇒ 0x4077d0 cbz 走 0x4077d4 的 epilogue，连 new 都不调
         assert!(b.start_server_broker_handler(1).is_empty(), "0x4077d0 cbz 0x4077e4 的反面");
         assert_eq!(b.broker.unwrap().arg, 35245, "旧槽不被覆盖");
+    }
+
+    /// `stop_server_broker_handler` 的四条分支：①空槽 ②强计数 1（最后一个引用 ⇒ 四步全走）
+    /// ③强计数 2（跳过 `Arc::drop_slow`，0x407530 b.ne）④强计数 0（wrapping：subs 得 MAX ≠ 0 ⇒ 也跳过）。
+    #[test]
+    fn stop_server_broker_handler_walks_arc_and_map_guards() {
+        use StopBrokerStep::*;
+
+        // ① 空槽：一步不推（0x407510 cbz）
+        let mut b = GraphwarBackend::new();
+        assert!(b.stop_server_broker_handler().is_empty(), "0x407510 cbz x20,0x407548");
+        assert!(b.broker.is_none());
+
+        // ② 最后一个引用：stop → 减一 → drop_slow → 丢表
+        let mut b = GraphwarBackend::new();
+        b.broker = Some(BrokerSlot { arg: 35245, arc_strong: 1, map_entries: 3 });
+        assert_eq!(
+            b.stop_server_broker_handler(),
+            vec![HandlerStop, ArcRelease, ArcDropSlow, MapDrop],
+            "地址顺序 0x40751c → 0x407520 → 0x40753c → 0x407544"
+        );
+        assert!(b.broker.is_none(), "0x407548 str xzr");
+
+        // ③ 还有别的引用：drop_slow 被 0x407530 b.ne 跳过
+        let mut b = GraphwarBackend::new();
+        b.broker = Some(BrokerSlot { arg: 1, arc_strong: 2, map_entries: 0 });
+        assert_eq!(b.stop_server_broker_handler(), vec![HandlerStop, ArcRelease, MapDrop]);
+
+        // ④ 强计数 0（模型里的异常态）：`subs` 借位得 usize::MAX ≠ 0 ⇒ 同样跳过 drop_slow
+        let mut b = GraphwarBackend::new();
+        b.broker = Some(BrokerSlot { arg: 2, arc_strong: 0, map_entries: 0 });
+        assert_eq!(b.stop_server_broker_handler(), vec![HandlerStop, ArcRelease, MapDrop]);
+    }
+
+    /// 与 `start_server_broker_handler` 配对的正对照：装（arc_strong=1）再停 ⇒ 必须走到 `ArcDropSlow`
+    /// （证明两个函数的槽语义自洽：装进来的就是"唯一持有者"）。
+    #[test]
+    fn start_then_stop_broker_handler_drops_the_only_arc() {
+        use StopBrokerStep::*;
+        let mut b = GraphwarBackend::new();
+        b.start_server_broker_handler(35245);
+        assert_eq!(
+            b.stop_server_broker_handler(),
+            vec![HandlerStop, ArcRelease, ArcDropSlow, MapDrop]
+        );
+        assert!(b.broker.is_none());
     }
 
     /// 差分对拍：我方这段循环与 `partition_point(|&c| c <= current)`（upper_bound 的另一种写法）
