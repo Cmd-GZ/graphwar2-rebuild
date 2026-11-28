@@ -63,11 +63,16 @@ const HANDSHAKE_TIMEOUT := 5.0
 ## 收件箱（消息名）上限 —— 只为自检/文档取证，不参与逻辑。
 const MAX_RECEIVED := 512
 
-## `docs/33` §1 的 7 条状态同步（顺序即抓包顺序）。
-const STATE_SYNC_KINDS := [
-	"NewConnection", "TurnModeInfo", "GameStateInfo", "GameNameInfo",
-	"AxisModeInfo", "FunctionModeInfo", "TimeModeInfo",
-]
+## `docs/33` §1 的 7 条状态同步（顺序即抓包顺序）。**名单与顺序从 Rust 取**（T99 / `docs/06` §144）。
+##
+## 改前这里是手抄的一份常量表 —— 那是**第三份拷贝**（`wire_samples.gd::STATE_SYNC` 是抓包原文、
+## `fixtures/protocol_match.jsonl` 是原始报文）。真值在
+## `graphwar_server_connection_handler::on_new_connection()`：那个函数的**输出**就是这 7 条，
+## 并被 `state_sync_matches_captured_bytes` 与真实抓包**逐字节**钉住（`docs/archive/33`）。
+##
+## GDScript 的 `const` 不能调扩展类的方法 ⇒ 用 `_init()` 填一次的只读 `var`（同 `link.gd:54`
+## 用 `GwNetConsts.connect_timeout_secs()` 的形态）。
+var STATE_SYNC_KINDS: Array = []
 ## 抓到过的 `game_state` 取值（`docs/96`）。别的一律当"未知"字符串原样留着。
 const GAME_STATES := ["Setup", "WaitingForFunctions", "ExecutingResults", "EndingGame"]
 
@@ -103,6 +108,7 @@ var _started_once := false
 
 
 func _init() -> void:
+	STATE_SYNC_KINDS = GwFlowClock.state_sync_kinds()
 	_reset_room()
 
 
@@ -813,9 +819,12 @@ func _send(kind: String, body_json: String) -> bool:
 
 
 func send_new_connection_request() -> bool:
-	# 逐字节 = 抓包原文（`fixtures/protocol.jsonl:2`）。版本号由客户端报给服务端，
-	# 原版报 `2.0`/`60`；我们照抄（服务端并不校验，`docs/33` §1）。
-	return _send("NewConnectionRequest", '{"major_version":"2.0","minor_version":"60"}')
+	# 逐字节 = 抓包原文（`fixtures/protocol.jsonl:2`）。两个版本串**从 Rust 取**（T99）：
+	# `graphwar_client_connection_handler::{NEW_CONNECTION_REQUEST_MAJOR, _MINOR}` ——
+	# arm64 `0x4693c0`（`GraphwarEvent::make_new_connection_request_event`）的立即数
+	# `mov w9,#0x2e32` = `"2."`、`mov w8,#0x30` = `'0'`、`mov w9,#0x3036` = `"60"`。
+	# 改前这里是 `.gd` 手写的字面量（第二份拷贝）。
+	return _send("NewConnectionRequest", String(GwFlowClock.new_connection_request_body()))
 
 
 func send_new_player_request() -> bool:
