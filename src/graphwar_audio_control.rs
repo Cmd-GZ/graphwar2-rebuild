@@ -342,11 +342,59 @@ impl GraphwarAudioControl {
         self.queue.len()
     }
 
-    /// `effect_info_event`：按 `kind` 选槽，值原样带入。
-    pub fn on_effect_info(&mut self, kind: u8, value: u32) -> EffectAudioData {
-        let data = EffectAudioData::new(slot_for_effect_kind(kind), value);
+    /// `effect_info_event`（x86 **`0x4bf090`** / FDE `0x2a9`；arm64 `0x4c442c` / `0x2c8`）。
+    ///
+    /// 原版是一个**四臂跳表**（不是比较链）：
+    ///
+    /// ```text
+    /// 0x4bf09b  movabs rax, 0x800000000000002c   ; 事件判别值 44（tag 30→… 见 SUBSCRIPTIONS[0]）
+    /// 0x4bf0a5  cmp    qword [rsi], rax           ; payload.tag != 44 ⇒ panic（0x4bf2ce explicit panic）
+    /// 0x4bf0b4  movzx  eax, byte [rsi+0x20]       ; kind = payload +0x20
+    /// 0x4bf0bc  lea    rcx, [rip-…]               ; 跳表 0x1c27bc（.rodata，int32 相对）
+    /// 0x4bf0c3  movsxd rax, dword [rcx+rax*4]
+    /// 0x4bf0c7  add    rax, rcx
+    /// 0x4bf0ca  jmp    rax
+    /// ```
+    ///
+    /// 跳表 4 项（**逐项实读 `0x1c27bc`**，不是按名字猜的）：
+    /// `idx0 → 0x4bf0cc`（后面 `lea rdi,[rbx+0x80]` = [`SoundSlot::Explosion`]）、
+    /// `idx1 → 0x4bf14e`（`+0x90` = [`SoundSlot::Squash`]）、
+    /// `idx2 → 0x4bf0fb`（`+0xa0` = [`SoundSlot::Spark`]）、
+    /// `idx3 → 0x4bf11f`（也是 `+0xa0`）。
+    /// ⚠️ `idx >= 4` 的槽位落在**别的 `.rodata`**（实测 idx4 起指向 `0x4c764b` 这类非指令边界），
+    /// 说明编译器**假定 `kind ∈ 0..=3`**（源码层大概率是 4 变体 `#[repr(u8)]` 枚举 + 未检查的 transmute）。
+    /// 我方对 `kind >= 4` 一律并到 `Spark`（**我方防御，不是原版行为**）。
+    ///
+    /// 每条臂的公共段（逐指令）：先把 `self+0x60` 那个 `Option<Gd<Node>>` 的句柄取出来
+    /// （arm64 `0x4c446c ldur x22,[x19,#0x60]` + `0x4c4474 ldr x21,[x19,#0x68]` + 两次 `cbz`，
+    /// 再调 `RawGd<Node>::check_rtti`，x86 侧是 `0x4068f0`），
+    /// 再克隆资源槽（arm64 `0x4c453c bl <RawGd<T> as Clone>::clone`，x86 是 `0x41d060`），
+    /// 然后 `EffectAudioData::new(self, 玩家句柄, 资源句柄, -15.0, payload+0x1c)`
+    /// （x86 `0x4bf1a7 call 0x4bed70` + `0x4bf199 movss xmm0,[0x1bb818]`=-15.0f），
+    /// 最后 push 进 `Vec<EffectAudioData>`（元素 0x18，`0x4bf2a5 lea rcx,[r14+r14*2]` = len*3、
+    /// `0x4bf2ae mov [rax+rcx*8+0x10],rdx` + `0x4bf2b7 movups [rax+rcx*8],xmm0` = 写 24 字节）。
+    ///
+    /// 档位：**观测**（四臂映射与全部立即数逐条有地址；`Option<Gd>` 的具体类型只到 `Node` ——
+    /// arm64 的 `RawGd<T>::check_rtti` 里 `T` 被实例化成 `godot_core::…::Node`）。
+    pub fn effect_info_event(&mut self, kind: u8, value: u32) -> EffectAudioData {
+        // 0x4bf0b4 起的四臂：0/1/2/3 → Explosion/Squash/Spark/Spark。
+        let slot = match kind {
+            0 => SoundSlot::Explosion,
+            1 => SoundSlot::Squash,
+            // idx2 与 idx3 是**两条独立臂**，只是都落 `+0xa0`（`0x4bf0fb` / `0x4bf11f`）。
+            2 | 3 => SoundSlot::Spark,
+            // 跳表里没有这一格（idx>=4 的槽位是别的数据）⇒ 我方防御性归 Spark。
+            _ => SoundSlot::Spark,
+        };
+        // 0x4bf192 mov r9d,[r14+0x1c]：值字段原样带入。
+        let data = EffectAudioData::new(slot, value);
         self.queue.push(data);
         data
+    }
+
+    /// `on_effect_info` 是我方旧名，语义完全等于 [`Self::effect_info_event`]（保留以稳住既有测试）。
+    pub fn on_effect_info(&mut self, kind: u8, value: u32) -> EffectAudioData {
+        self.effect_info_event(kind, value)
     }
 
     /// `soldier_info_event`：`pop`，值恒 0，音量 `0.0 dB`。
@@ -363,16 +411,42 @@ impl GraphwarAudioControl {
         data
     }
 
-    /// `game_state_event`：`state == 1` 时清空队列，返回丢弃条数。
+    /// `game_state_event`（x86 **`0x4bef20`** / FDE `0xd4`；arm64 `0x4c42c8` / `0xd4`）。
     ///
-    /// 其它状态什么都不做（`+0x8` 的 u8 只与 1 比较一次）。
-    pub fn on_game_state_info(&mut self, state: u8) -> usize {
+    /// 逐指令（x86，全部地址可复核）：
+    ///
+    /// ```text
+    /// 0x4bef29  movabs rax, 0x800000000000001e   ; 事件判别值 30 = game_state_info_event
+    /// 0x4bef33  cmp    qword [rsi], rax          ; tag 不等 ⇒ 走 0x4befab 的 explicit panic
+    /// 0x4bef38  cmp    byte [rsi+8], 1           ; payload +0x8 的 u8 == 1 ?
+    /// 0x4bef3c  jne    0x4befa1                  ; 不是 1 ⇒ 什么都不做，直接 ret
+    /// 0x4bef3e  mov    rbx, [rdi+8]              ; queue.ptr
+    /// 0x4bef42  mov    r15, [rdi+0x10]           ; queue.len（旧长度）
+    /// 0x4bef46  mov    qword [rdi+0x10], 0       ; len = 0（**先清计数再逐个析构**）
+    /// 0x4bef53  slot 0x9bad68 -> 0x89b090        ; Option<Gd> 的释放（`release`）
+    /// 0x4bef91  lea    rsi,"upcast_ref"(0xa)     ; 元素里的 `Option<Gd<Node>>` 析构路径
+    /// 0x4bef70  add    rbx,0x18 / dec r15        ; 每次移动一个 **0x18** 字节元素
+    /// ```
+    ///
+    /// ⇒ 语义 = **`state == 1` 时把队列清空**（元素 0x18 字节），其它状态一次比较就返回。
+    /// 返回值（丢弃条数）是**我方**为了可测加出来的，原版 `game_state_event` 返回 `()`。
+    ///
+    /// 档位：**观测**（判别值、载荷偏移、清空顺序、元素步长全部有地址）。
+    pub fn game_state_event(&mut self, state: u8) -> usize {
+        // 0x4bef38：只看 `payload +0x8` 的一个字节，且只与 1 比较一次。
         if state != GAME_STATE_CLEAR {
+            // 0x4bef3c jne 0x4befa1 ⇒ 直接 ret
             return 0;
         }
         let dropped = self.queue.len();
+        // 0x4bef46：先写 len = 0，再按旧长度逐个 drop_in_place（顺序在反汇编里是"先清零后遍历"）。
         self.queue.clear();
         dropped
+    }
+
+    /// `on_game_state_info` 是我方旧名，语义完全等于 [`Self::game_state_event`]（保留以稳住既有测试）。
+    pub fn on_game_state_info(&mut self, state: u8) -> usize {
+        self.game_state_event(state)
     }
 
     /// 有效静音 = 两个标志相或（`orr w8, w19, w22; and w2, w8, #1`）。
@@ -428,5 +502,40 @@ mod inline_tests {
         assert_eq!(slot_for_effect_kind(2), SoundSlot::Spark);
         assert_eq!(slot_for_effect_kind(3), SoundSlot::Spark);
         assert_eq!(slot_for_effect_kind(255), SoundSlot::Spark);
+    }
+
+    /// `effect_info_event`（x86 `0x4bf090`）的跳表 4 臂：`0→+0x80 / 1→+0x90 / 2→+0xa0 / 3→+0xa0`。
+    ///
+    /// 期望值来自 `0x1c27bc` 的 int32 表项（`idx0→0x4bf0cc`、`idx1→0x4bf14e`、
+    /// `idx2→0x4bf0fb`、`idx3→0x4bf11f`）与每条臂的 `lea rdi,[rbx+slot]` 立即数。
+    #[test]
+    fn effect_info_event_uses_the_four_arm_jump_table() {
+        let mut a = GraphwarAudioControl::default();
+        assert_eq!(a.effect_info_event(0, 7).slot.offset(), 0x80);
+        assert_eq!(a.effect_info_event(1, 8).slot.offset(), 0x90);
+        assert_eq!(a.effect_info_event(2, 9).slot.offset(), 0xa0);
+        assert_eq!(a.effect_info_event(3, 10).slot.offset(), 0xa0);
+        assert_eq!(a.pending(), 4);
+        // 值字段原样带入（`0x4bf192 mov r9d,[r14+0x1c]`）。
+        assert_eq!(a.queue[0].value, 7);
+        assert_eq!(a.queue[3].value, 10);
+        // 三个特效槽的音量都是 -15.0 dB（`0x4bf199 movss xmm0,[0x1bb818]`）。
+        assert_eq!(a.queue[0].volume_db(), -15.0);
+        assert_eq!(a.queue[1].volume_db(), -15.0);
+        assert_eq!(a.queue[2].volume_db(), -15.0);
+    }
+
+    /// `game_state_event`（x86 `0x4bef20`）：**只有** `state == 1` 才清空队列（`0x4bef38 cmp byte[rsi+8],1`）。
+    #[test]
+    fn game_state_event_clears_only_on_state_one() {
+        let mut a = GraphwarAudioControl::default();
+        a.effect_info_event(0, 1);
+        a.effect_info_event(2, 2);
+        assert_eq!(a.game_state_event(0), 0, "state 0 不动队列");
+        assert_eq!(a.pending(), 2);
+        assert_eq!(a.game_state_event(2), 0, "state 2 也不动");
+        assert_eq!(a.pending(), 2);
+        assert_eq!(a.game_state_event(GAME_STATE_CLEAR), 2, "state 1 清空并返回条数");
+        assert_eq!(a.pending(), 0);
     }
 }
