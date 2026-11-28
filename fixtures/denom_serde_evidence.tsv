@@ -1,0 +1,37 @@
+# denom_serde_evidence.tsv —— T107：分母外 serde 类 **16 条机器码 / 14 个源码组**的逐条证据与裁决
+# 判据：[fixtures/denom_serde_plan.txt] §1（P1–P6 + §1.6 判决规则，**预注册、跑完不改**）
+# 生成：$WT/.reference/venv/bin/python fixtures/denom_serde_collect.py \
+#         --so .reference/steam/android-2.0.60/libgraphwarrust.so --ledger fixtures/denom_outside.tsv
+# 地址口径：**Android 2.0.60 arm64 ELF vaddr**（未 strip，sha256 8a612e95…54df）；与 Linux x86-64 侧不可换算
+# 列：android_addr | st_size | module | owner_type | method | kind | trait
+#     | P2_family | P2_family_detail | P2_family_in_T105_ledger | n_bl | n_bl_crate_own | n_bl_own_game
+#     | own_game_bl_list | own_crate_bl_list
+#     | rodata_immediates | verdict | criterion
+#  kind = inherent（`module::Type::method`，derive 永不生成） / trait-impl（`module::_::_<impl serde::…for Type>::…`）
+# --- 对照（plan §3；全过才允许出裁决） ---
+# C1  正对照（手写侧）G1/G2/G3 = 固有方法 ⇒ 判 手写：✓ 3/3
+# C1b P3 调用配位：0x46947c 体内 bl 到 0x4695ac（同 Type 的 trait impl）：✓
+# C2  同族一致性：13 条 trait impl 的 __Visitor/__FieldVisitor 兄弟符号在 T105 台账里已是 na:other/macro-derive（或 form=macro-derive 的 volume-gate）：13/13
+# C3  自我证伪点：规则若写成『P2 or P4 ⇒ derive』会误判的条数 = **3**（固有方法里 P2 或 own=0 的）⇒ P1 不可省
+# C4  全量无遗漏：.text 里 **game crate** 的 `<impl serde::{ser::Serialize|de::Deserialize} for …>` 去重 = **13** 条（全二进制含 serde 自己的 Option<T> 实现共 15 条），与本轮 13 条 trait impl 逐条相同 ✓
+# C5a 去掉 P1 重跑 ⇒ 误判成 derive = **16** 条（>0 才证明 P1 必要）
+# C5b 去掉 P2 重跑 ⇒ 13 条里判 unknown = **0** 条 ⇒ **vacuous（13/13 全命中家族，样本里没有负例）**，见 plan §8-E2 的替代对照 C5b′
+# C5b′ 有效替代对照（P2 的**特异性**）：⑴ 手写 trait impl（`<impl core::fmt::Debug for bytes::…>` 2 条）家族命中 = 0/2（期望 0）；⑵ 20 个非 serde 的 crate 类型家族命中 = 0/20（期望 0，即 20/20 miss）
+# --- 计数 ---
+# verdict: real-missing(手写) 3 条 / na:other/serde-derive 13 条 / unknown 0 条（共 16 条 = 14 组）
+0x4691a4	540	graphwar_event	GraphwarEvent	deserialize	inherent	-	hit	0x46b9e4:FV;0x46b9f8:FV	0x46b9e4=na:other/macro-derive/macro-derive;0x46b9f8=unknown/volume-gate/macro-derive	17	0	0	-	-	.....{....|.Failed to deserialize ...|.....{...O....|..@.............)[.......{...o...g..._..	real-missing(手写)	P1(固有方法)
+0x4693c0	188	graphwar_event	GraphwarEvent	make_new_connection_request_event	inherent	-	hit	0x46b9e4:FV;0x46b9f8:FV	0x46b9e4=na:other/macro-derive/macro-derive;0x46b9f8=unknown/volume-gate/macro-derive	8	0	0	-	-	-	real-missing(手写)	P1(固有方法)
+0x46947c	304	graphwar_event	GraphwarEvent	serialize	inherent	-	hit	0x46b9e4:FV;0x46b9f8:FV	0x46b9e4=na:other/macro-derive/macro-derive;0x46b9f8=unknown/volume-gate/macro-derive	10	1	0	-	0x4695ac	-	real-missing(手写)	P1(固有方法)+P3:bl->0x4695ac
+0x4695ac	1704	graphwar_event	GraphwarEvent	serialize	trait-impl	serde::ser::Serialize	hit	0x46b9e4:FV;0x46b9f8:FV	0x46b9e4=na:other/macro-derive/macro-derive;0x46b9f8=unknown/volume-gate/macro-derive	63	0	0	-	-	. 	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x469c54	5564	graphwar_event	GraphwarEvent	deserialize	trait-impl	serde::de::Deserialize	hit	0x46b9e4:FV;0x46b9f8:FV	0x46b9e4=na:other/macro-derive/macro-derive;0x46b9f8=unknown/volume-gate/macro-derive	84	0	0	-	-	....!.;.c.|...R..|RankRequestEvent...:.L.B6..b.....k...W.!|ChatMessageEventF	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x40b834	748	graphwar_effect_manager	EffectType	deserialize	trait-impl	serde::de::Deserialize	hit	0x415eec:FV;0x415f00:FV	0x415eec=na:other/macro-derive/macro-derive;0x415f00=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x46b210	1264	graphwar_game_info	GameInfo	serialize	trait-impl	serde::ser::Serialize	hit	0x46b908:V;0x46cd9c:FV	0x46b908=na:other/macro-derive/macro-derive;0x46cd9c=na:other/macro-derive/macro-derive	27	1	0	-	0x4a52f4	OnlyMain2.	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x4981c8	724	graphwar_mode_manager	FunctionMode	deserialize	trait-impl	serde::de::Deserialize	hit	0x4b07a0:FV	0x4b07a0=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x49849c	216	graphwar_mode_manager	TimeMode	serialize	trait-impl	serde::ser::Serialize	hit	0x4b07a0:FV;0x4b08cc:FV	0x4b07a0=na:other/macro-derive/macro-derive;0x4b08cc=na:other/macro-derive/macro-derive	5	0	0	-	-	Timer30sContinue|TimerInfMultivacHTTP/1.0Extenderbopomofo	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x498574	748	graphwar_mode_manager	AxisMode	deserialize	trait-impl	serde::de::Deserialize	hit	0x4b07a0:FV;0x4b07b4:FV	0x4b07a0=na:other/macro-derive/macro-derive;0x4b07b4=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x498860	764	graphwar_mode_manager	TimeMode	deserialize	trait-impl	serde::de::Deserialize	hit	0x4b07a0:FV;0x4b08cc:FV	0x4b07a0=na:other/macro-derive/macro-derive;0x4b08cc=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x4999a0	724	graphwar_team_manager	GraphwarTeam	deserialize	trait-impl	serde::de::Deserialize	hit	0x4b07a0:FV	0x4b07a0=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x49be14	724	graphwar_turn_manager	TurnMode	deserialize	trait-impl	serde::de::Deserialize	hit	0x4b07a0:FV	0x4b07a0=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x49c0e8	348	graphwar_color_manager	GraphwarColor	serialize	trait-impl	serde::ser::Serialize	hit	0x4b0a14:V	0x4b0a14=na:other/macro-derive/macro-derive	5	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x4a52f4	244	graphwar_game_state_manager	GraphwarGameState	serialize	trait-impl	serde::ser::Serialize	hit	0x4b07a0:FV;0x4b0a28:FV	0x4b07a0=na:other/macro-derive/macro-derive;0x4b0a28=na:other/macro-derive/macro-derive	1	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)
+0x4a53e8	796	graphwar_game_state_manager	GraphwarGameState	deserialize	trait-impl	serde::de::Deserialize	hit	0x4b07a0:FV;0x4b0a28:FV	0x4b07a0=na:other/macro-derive/macro-derive;0x4b0a28=na:other/macro-derive/macro-derive	6	0	0	-	-	-	na:other/serde-derive	P1(trait-impl)+P2(家族命中)+P4(own_game=0)

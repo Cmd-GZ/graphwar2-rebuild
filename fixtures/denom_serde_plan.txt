@@ -199,3 +199,52 @@
 # ============================================================================
 # §8 勘误（跑完再追加；§1–§7 不动）
 # ============================================================================
+# 跑完之后追加（§1–§7 一字未改）。每条都是"我写错了 / 我没想到"，不是给判据打补丁。
+#
+# ---- E1（判据**实现**层细化，P4 的语义没变）-----------------------------------
+# P4 写的是"体内没有一条**游戏逻辑**调用"。实现上第一版把 `graphwarrust::…` 开头的一律算 own，
+# 于是把 crate 内**另一个 serde impl**（`GraphwarGameState::serialize` 被 `GameInfo::serialize` 调用，
+# 0x4a52f4）和运行时函数 `_Unwind_Resume`（0x840bf4）也算了进去 ⇒ 10 条误判 unknown。
+# 细化：own_game = crate 自有 **且不是 `_<impl serde::…>`**（serde impl 是 derive 族内部调用）；
+# `_Unwind*` / `__rust_alloc|dealloc` 归 external（运行时，不是游戏逻辑）。
+# **这次细化在跑出结果之前就写进生成器**（`fixtures/denom_serde_collect.py` 的 own_game），
+# 并保留原口径列 `n_bl_crate_own` 供复核 —— 两列都在 TSV 里，谁都能看出来改了哪一档。
+# 结果：16 条 own_game 全 = 0 ⇒ **P4 在这批样本上没有区分力**（如实写在 §8-E2 / docs §153）。
+#
+# ---- E2（预注册的对照设计错了：C5b 是 vacuous）------------------------------
+# §3 的 C5b 要求"去掉 P2 重跑 ⇒ 13 条里判 unknown 的 > 0"，我当时的假设是会有"家族缺失"的行。
+# 实测 **13/13 全部命中家族** ⇒ C5b 恒 = 0，**它证明不了 P2 有效**。按 §2 的纪律这条只能
+# 如实记为"对照失败"，不许拿结果去改判据。补两组**同样目的**的替代对照（结果进 TSV 头）：
+#   C5b′-①  已知**手写**的 trait impl：`<impl core::fmt::Debug for bytes::…>` 2 条
+#           ⇒ `__Visitor`/`__FieldVisitor` 家族**命中 0/2**（期望 0）
+#   C5b′-②  `.symtab` 里 20 个**没有 serde 实现**的 crate 类型
+#           ⇒ 家族**命中 0/20**（期望 0，即 20/20 miss）
+# ⇒ P2 的**特异性**（不乱开火）成立；**区分力**在本题样本里不存在，如实写。
+# 承重的判据是 **P1**：C5a（去掉 P1 重跑）把 **16/16** 全判成 derive，而正确答案是 3 手写。
+# 也就是说：本轮的裁决**只靠 P1 一条就能站住**，P2/P3/P4 是**加强/互不矛盾**，不是必要条件。
+# 这是本判据的真实强度，不拔高。
+#
+# ---- E3（任务书的条数：15 vs 16）-------------------------------------------
+# 任务表把 `game_state_manager::_::serialize` 与 `::deserialize` 写在同一行（记 1 条），
+# 实际是 **2 条机器码**。逐台账数 = **16 条机器码 / 14 个源码组**。本轮按 16 条做。
+#
+# ---- E4（T105 §152.2 判据 1 的边界用错了对象 —— 这是本轮最要紧的发现）------
+# T105 写着「⚠️ `<X as serde::Serialize>::serialize` **不算** macro-derive（impl 头不是
+# Visitor/Expected）——T98 已证 graphwar_event 的手写 serialize/deserialize 是真源码函数」。
+# 这句话把 T98 的结论**套错了对象**：T98 证的是**固有方法** `GraphwarEvent::serialize`
+# (`0x46947c`) / `::deserialize` (`0x4691a4`)；而 `<X as serde::Serialize>::serialize`
+# 是**另一个地址**（`0x4695ac`）——那是 derive 本体，T98 §147.3.2② 的原话就是
+# "`serialize` 体内 `bl 0x4695ac`（= 直接调 derive 的 `<impl Serialize>::serialize`）"。
+# T105 的 C4c 把 5 条机器码全判 business，其中 3 条（固有）**判对了**，
+# 另 2 条（derive 本体）被同一个"名字规则"顺手放行 ⇒ 后续 11 条同病。
+# ⇒ 不是 T105 数错，是**按名字分类的天花板**：那条规则结构上不可能判出 Serialize/Deserialize
+#   的 derive。本轮把天花板往下压：13 条改判 `na:other/serde-derive`。
+#
+# ---- E5（本轮新增的事实，T98/T105 都没有的）--------------------------------
+# ① `deserialize` 两个失败臂的**行号归属**：`:1149` = serde_json 失败、`:1154` = UTF-8 失败
+#    （`0x4692f0`→`.rodata 0x18cc2c`；`0x469220`→`0x17c634`）；输出走 **stdout**
+#    (`std::io::stdio::_print`)，不是 stderr。
+# ② `GraphwarEvent` 的 **INVALID 哨兵 = 0x8000_0000_0000_004a**（`0x4a` = 74 = 变体数，越界一格）。
+# ③ `GraphwarEvent` 的**机器宽度 = 72 字节**（`0x469334..0x469350` 逐字拷 `0x48`）。
+# ④ `serialize` 体内 `Vec::with_capacity(128)`（`0x469498 mov w0,#0x80`）= `serde_json::to_vec`
+#    的字面量 ⇒ "固有 `serialize` 就是 `serde_json::to_vec(self)`" 的判据之一（**观测**）。
