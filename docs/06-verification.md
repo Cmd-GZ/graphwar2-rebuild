@@ -26833,7 +26833,7 @@ Linux x86-64（function_coverage.tsv，今天）
 
 | 门槛 | 读数 | 与预注册/任务书 |
 |---|---|---|
-| `cargo test --offline` | **1599 passed / 0 failed / 1 ignored**（74 个 test 二进制求和） | 任务书 1599/0/1 ✔ |
+| `cargo test --offline` | **1599 passed / 0 failed / 1 ignored**（74 个测试目标求和 = 72 个 `tests/*.rs` + lib unittest + doc-test） | 任务书 1599/0/1 ✔ |
 | `cargo test --offline --features gdext-bindings` | **1748 passed / 0 failed / 1 ignored** | 任务书 1748/0/1 ✔ |
 | `tools/coverage_matrix.py --check` | **OK** | ✔ |
 | `tools/check_doc_refs.py` | **rc=0** | ✔ |
