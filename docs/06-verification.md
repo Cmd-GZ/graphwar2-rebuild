@@ -29786,3 +29786,269 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    这正是 T102 §148 报的「P2 判据被注释欺骗」的同款形态：**注释里贴地址 ≠ 实现**。
 6. **本轮不落任何 `src/` 代码**（写码不在任务范围）：55 个真缺的落码是下一轮的活，**每处都能从 TSV 的 android vaddr 起手**。
 7. 口径 D 的**分子混档**（D_A+）不要单独当招牌引用；引用时必须同时给 `D_A`（严）与 `X` 的分档。
+
+## 153. T109 **分母外真缺 55 里分给本任务的 19 条**：**14 条落码 / 5 条如实登记缺什么**；顺带发现**两个整模块**根本不在模块清单里（78 → 至少 80）（2026-11-28，任务 `task-100` / 分支 `agent/denom-rest`）
+
+> 预注册：[`fixtures/denom_rest_plan.txt`](../fixtures/denom_rest_plan.txt)（commit `0f9efcc`，**先单独提交、后执行**；执行中 §1–§8 一字未改）。
+> 上游依据：§152（T105）+ [`fixtures/denom_outside.tsv`](../fixtures/denom_outside.tsv)（1244 行逐条台账）。
+> 地址口径：**arm64 vaddr**（Android 2.0.60 未 strip `.symtab` 的 `st_value`）。**不与 x86 vaddr 互算** —— 本批 19 行的
+> `linux_pair` 列全是 `—(L空)`（跨构建键结构上不存在），所以 x86 侧只在"能独立对上的语义"上做旁证。
+
+### 153.0 一页结论
+
+| # | 问题 | 答案 |
+|---|---|---|
+| ① | 19 条落了几条？ | **14 条落码 / 5 条未落**（未落的逐条写清缺什么，见 §153.4）。另有 **1 条 bonus**：`graphwar_ban_list::new`（0x4086a0）不在 real-missing 清单里但同模块顺手补了。 |
+| ② | 分母外真缺 55 变成多少？ | **41**（名字口径：55 − 14）。⚠️ 其中 2 条（audio 的 `soldier_info_event` / `entity_removed_event`）是**命名缺口**，行为语义早就在 —— 按"真正新增行为语义"算是 **12 条**，两个口径不许混报（见 §153.6）。 |
+| ③ | 三个数动了吗？ | **A 336/527 = 63.8 %**、**B 336/438 = 76.7 %**、**D_A 336/670 = 50.1 %** —— **一位未动**。原因写在 §152.1：这 19 条体内都**没有 `panic::Location`** ⇒ 527 的分子分母都收不进它们。它们的价值是**补真实缺口**，不是抬指标。 |
+| ④ | 最大发现是什么？ | **模块分母漏了两个整模块**：`graphwar_ban_list` 与 `graphwar_version` **既不在 `docs/coverage-matrix.tsv`（79 行）也不在 `docs/02` 的 78 模块表里**，而 Linux `.so` 里它们的 Location 文件名串出现 **0 次** ⇒ Location 口径的结构性盲区不只漏函数，还 **漏模块**。本轮把两个模块从零建起来（§153.5）。 |
+| ⑤ | 最值钱的那条（`replay_reader::load_game`）攻下来了吗？ | **攻下来了**，但形态与任务书设想不同：它**不是"零原版证据"**，而是**函数体早就写对了、只是没有 `load_game` 这个名字**（模块头已把 10 条逐位事实写全）。本轮独立复核 12 处指令后**补真名入口**，并新读到 5 个常数（§153.3 第 7 行）。 |
+
+### 153.1 三处**前提更正**（任务书/T105 读数的错，就地改正）
+
+**① 任务书写"14 条"，逐行复算是 19 条。**
+`awk -F'\t' '$14 ~ /^real-missing/' fixtures/denom_outside.tsv` 与 12 个模块名求交 = **19 行**；
+任务书自己列的 5 个"单条"单元格里其实有 **7** 个名字（version / replay_reader / level_manager / ban_list /
+function_input / game_server / computer_player_manager），3+3+2+2+2+7 = **19**。
+⇒ 分母外真缺 55 的**剩余未分派**是 55 − 19 = **36**（不是 41）。
+
+**② `graphwar_ban_list` / `graphwar_version` 是"整模块缺行"，不是"某几个函数缺"。**
+Android `.symtab` 里出现 `graphwarrust::graphwar_*::` 形式的模块路径有 **65 个**
+（`readelf -sW … | c++filt -s rust` 后按 `graphwarrust::(graphwar_[a-z0-9_]+)::` 归并）；
+`docs/coverage-matrix.tsv` 的 `scope=graphwar` 只有 **62** 行。差的 3 个：
+
+| 模块 | Android FUNC | 在 62 行里？ | 在 16 个 `scope=other` 里？ | Linux `.so` 的 `"<模块>.rs"` 串 |
+|---|---|---|---|---|
+| `graphwar_version` | 1 | **否** | **否** | **0 次** |
+| `graphwar_ban_list` | 2 | **否** | **否** | **0 次** |
+| `graphwar_texture_loader` | 1 | 否 | 是（记成 `other`） | — |
+
+⇒ **模块分母「78 = 62 + 16」至少少 2**（`78 → ≥80`）。机制与 §152.1 同一个：模块清单也是
+Location 口径建的，**一条 Location 都没有的模块连行都不会有**。本轮按 `AGENTS.md` §4
+（文件名就是证据）新建了 `src/graphwar_ban_list.rs` / `src/graphwar_version.rs`，
+并在 `src/lib.rs` 加 **2 行 `pub mod`**（这是本任务唯一一处出 12 文件范围的改动）。
+`docs/02` §17 的模块表与 `docs/coverage-matrix.tsv`（生成物）本轮**没有**手改
+⇒ 留给 lead 决定要不要把这两个模块补进 78 模块表（口径一改，`docsec`/`coverage_matrix` 都要重跑）。
+
+**③ audio 那两条是"命名缺口"，不是"行为缺口"。**
+`GraphwarAudioControl::soldier_info_event`（0x4c46f4）/ `entity_removed_event`（0x4c488c）
+在 T105 的台账里被判 `real-missing`，判据是"我方模块文件里有没有 `fn <原版方法名>`"。
+实测模块里**早有** `on_soldier_info` / `on_entity_removed`（模块头还写着这两个 arm64 地址）。
+⇒ 本轮把**原版真名**补齐（旧名留零成本别名）。这类"同语义不同名"的缺口在 55 条里有多少**未统计**，
+是下一轮该做的一件事（口径：`fn` 名字集合差 ∩ 语义已实现）。
+
+### 153.2 方法（可复跑；不新增 `tools/` 脚本）
+
+| 步 | 命令 | 用在哪 |
+|---|---|---|
+| 真名 + 尺寸 | `readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \| … \| c++filt -s rust`（或 `tools/arm64_sym.py find <正则>`） | 19 行的身份（`st_value` = vaddr、`st_size` = 字节） |
+| 反汇编 | `llvm-objdump -d --triple=aarch64-unknown-linux-gnu --start-address=VA --stop-address=VA+size …` | 全部语义取证。**本机没有 aarch64 objdump**，`tools/arm64_sym.py dis` 因依赖 `objdump` 不可用 |
+| 调用关系 | `tools/arm64_sym.py bl <VA> --n <size>` / `callers <VA>`（纯 stdlib） | 被调者穷举、调用者定位（例：`is_connection_banned` 全 `.text` 只有 1 个 `bl`） |
+| 串/常数 | `adrp+add` 目标 → `.rodata` 直接读字节（llvm-objdump 已给符号名，串靠地址+长度确认） | 路径字面量 / 日志格式串 / clap 判定 |
+| x86 旁证 | `tools/addr_probe.py fde\|dis\|callers\|locs`（只在有 Linux 锚时） | `campaign.save` 的 `open mode=2` 与 x86 `0x41860f` 同值 |
+
+**正/负对照（先做，全过才允许落码）**：
+
+| 组 | 对象 | 结果 |
+|---|---|---|
+| **正对照 A** | 已判**逐位**的 `graphwar_audio_control::effect_info_event`（arm64 `0x4c442c` / 712 B） | ✓ 能读出 4 次 `check_rtti` + `EffectAudioData::new`（`0x4c4144`）+ `RawVec::grow_one` + `RawGd::clone`，与模块头 §1 的表一致 ⇒ **扫法有效** |
+| **正对照 B** | `graphwar_ban_list` 的 `new`（`0x4086a0` / 348 B） | ✓ 读出 2 次 `thread_local::Storage::get`（两个默认 hasher）+ `alloc(0x78,8)` + `drop_in_place<RcInner<RefCell<GraphwarBanList>>>` ⇒ 与"96 B 值 + 120 B RcInner"的推断链自洽 |
+| **负对照** | 把同一个扫法用在"体内串与本模块无关"的地址（如 `0x3deb08` 的 `"upcast_ref"`、`0x450084` 的 `"clone"`） | ✓ **判不出业务语义**（只得到诊断串），说明不是"见到就编" |
+
+### 153.3 逐条结果（19 行 = 19 个源码函数；1 行 = 1 个函数，本批无"同组多机器码"）
+
+| # | 模块 | 原版真名 | arm64 vaddr / size | 落点 | 档位 | 结果 |
+|---|---|---|---|---|---|---|
+| 1 | `graphwar_replay_reader` | `GraphwarReplayReader::load_game` | `0x3da370` / 1612 | `src/graphwar_replay_reader.rs:236` | **观测** | **落** |
+| 2 | `graphwar_ban_list` | `GraphwarBanList::is_connection_banned` | `0x408460` / 576 | `src/graphwar_ban_list.rs:168` | **观测** | **落** |
+| 2b | `graphwar_ban_list` | `GraphwarBanList::new`（bonus，不在 real-missing 表里） | `0x4086a0` / 348 | `src/graphwar_ban_list.rs:159` | **观测** | **落** |
+| 3 | `graphwar_version` | `graphwar_version_get_full_version` | `0x3913e4` / 272 | `src/graphwar_version.rs:68` | **观测** | **落** |
+| 4 | `graphwar_campaign_control` | `GraphwarCampaignControl::get_current_level` | `0x392f18` / 528 | `src/graphwar_campaign_control.rs:772` | **观测** | **落** |
+| 5 | `graphwar_campaign_control` | `GraphwarCampaignControl::save_current_level` | `0x393128` / 1072 | `src/graphwar_campaign_control.rs:796` | **观测**（返回极性**推断**） | **落** |
+| 6 | `graphwar_level_manager` | `GraphwarLevelManager::get_level_data` | `0x3fc6d4` / 452 | `src/graphwar_level_manager.rs:1715` | **观测** | **落** |
+| 7 | `graphwar_game_server` | `GraphwarGameServer::get_server_port` | `0x482a5c` / 616 | `src/graphwar_game_server.rs:921` | **观测** | **落** |
+| 8 | `graphwar_function_input` | `GraphwarFunctionInput::clear` | `0x44daec` / 140 | `src/graphwar_function_input.rs:2330` | **观测** | **落** |
+| 9 | `graphwar_audio_control` | `GraphwarAudioControl::soldier_info_event` | `0x4c46f4` / 216 | `src/graphwar_audio_control.rs:408` | **逐位**（槽表 T58 定标） | **落**（命名缺口） |
+| 10 | `graphwar_audio_control` | `GraphwarAudioControl::entity_removed_event` | `0x4c488c` / 216 | `src/graphwar_audio_control.rs:423` | **逐位** | **落**（命名缺口） |
+| 11 | `graphwar_play_screen_control` | `GraphwarPlayScreenControl::clear_state` | `0x3deb08` / **52** | `src/graphwar_play_screen_control.rs:2038` | **观测** | **落** |
+| 12 | `graphwar_root_node` | `GraphwarRootNode::show_pop_up` | `0x3a5d60` / 328 | `src/graphwar_root_node.rs:3406` | **观测** | **落** |
+| 13 | `graphwar_root_node` | `GraphwarRootNode::print_help_and_exit_if_requested` | `0x3ab19c` / 288 | `src/graphwar_root_node.rs:3473` | **观测** | **落** |
+| 14 | `graphwar_computer_player_manager` | `GraphwarComputerPlayerManager::computer_function_thread` | `0x4afef0` / 424 | `src/graphwar_computer_player_manager.rs:858` | **观测**（返回 bool **推断**） | **落** |
+| 15 | `graphwar_root_node` | `GraphwarRootNode::user_args` | `0x3ab2bc` / 672 | — | — | **未落**（§153.4-①） |
+| 16 | `graphwar_play_screen_control` | `GraphwarPlayScreenControl::append_debug_text` | `0x3deec8` / 436 | — | — | **未落**（§153.4-②） |
+| 17 | `graphwar_play_screen_control` | `GraphwarPlayScreenControl::append_function_entry` | `0x3df07c` / 1424 | — | — | **未落**（§153.4-②） |
+| 18 | `graphwar_player_screen_control` | `GraphwarPlayerScreenControl::insert_button_in_vbox` | `0x44fa48` / 1012 | — | — | **未落**（§153.4-③） |
+| 19 | `graphwar_player_screen_control` | `GraphwarPlayerScreenControl::update_buttons_background_in_vbox` | `0x450020` / 1180 | — | — | **未落**（§153.4-③） |
+
+**逐条新读到的、旧文档没有的事实**（都指到指令，写进代码注释）：
+
+1. **`load_game` 的 5 个新常数**：`get_buffer` 上限 **10 000 000**（`0x3da430 mov w1,#0x9680` + `0x3da43c movk w1,#0x98,lsl16`
+   ⇒ `0x989680`）；`BufReader` 容量 **0x8000**（`0x3da464` + `__rust_alloc_zeroed`）；行分隔符是
+   **单字节 `0x0a`**（`.rodata 0x19bdfe` + `0x3da620 mov w3,#1`）而不是 `lines()` 的 `\r\n` 兼容版；
+   原版 `EventInfo` **80 字节**（`0x3da668 mov w24,#0x50` + `0x3da73c madd`）；返回类型是 **`Vec<EventInfo>` 不是 `Result`**
+   （`0x3da39c stp xzr,x8` 那个 `{cap=0,len=0,ptr=8}` 空 Vec 在两条失败臂上被原样返回）。
+2. **`graphwar_ban_list` 的两张表**：字段偏移直读（表 A ctrl+0x00/mask+0x08/**items+0x18**/hasher+0x20、
+   表 B ctrl+0x30/mask+0x38/**items+0x48**/hasher+0x50）⇒ 2 × 48 = **96**，与
+   `graphwar_module_container::MODULES` 里 `GraphwarBanList { size: 96 }` **交叉相符**（两条独立证据）。
+   `is_connection_banned` = `表B[conn] 存在 ∧ 表A[表B[conn]] 存在`；value 槽 **20 字节**、槽位步长 **24（0x18）**、
+   判别位在 value+0 的最低位（LSB=0 ⇒ 4 字节载荷；LSB=1 ⇒ 两个 `u64`）。
+   **调用者行为（比函数本身有用）**：全 `.text` 唯一调用点 `0x3e5948`（在
+   `GraphwarRemoteEventHandler::handle_client_remote_event` 里）；返回 true 时拷 `.rodata 0x19bff0` 的
+   **21 字节 `"You have been kicked."`** 并 `bl GraphwarEventQueue::add_event` ⇒ **封禁的可见效果 = 入队一条踢人事件**。
+3. **`graphwar_version` 返回编译期常量 `"2.0.60"`**：'2'/'.'/'0'（`0x391410 strh` + `0x39140c strb`）
+   + '.'（`0x391448`）+ "60"（`0x391474 mov w9,#0x3036`）+ sret 3 字；两次 `RawVec` 扩容 (len=3,add=1)/(len=4,add=2)。
+   **没有**任何运行时来源（不是从资源/网络读的）。
+4. **`campaign.save` 的两次 open 模式不同**：读 `w2 = #1`（`0x393164`）、写 `w2 = #2`（`0x39331c`），
+   路径字面量 `.rodata 0x19a738` = `"user://campaign.save"`、长度 `0x14`（`0x393160 mov w1,#0x14`）；
+   ⇒ 与 x86 侧 `0x41860f open mode=2` **跨架构同值**（`docs/10` §12.4 的旧读数得到 arm64 旁证）。
+   `get_current_level` 的打开失败臂是 `0x393060 mov w19,wzr` ⇒ **`Option::None`，不是 0**。
+5. **`get_level_data` 是一张哈希表的查表**（不是"生成关卡"）：键 = `Box<[u8]>`（16 B 胖指针、
+   按**内容**相等：`0x3fc7a8` 比长度 + `0x3fc7c0 memcmp`），槽位步长 **0x58**、值 = **72 字节**（`0x58 − 0x10`），
+   命中返回裸指针 / 未命中 0（`Option<&T>` 的 niche）。
+6. **`get_server_port` 的三个字段 + 哨兵**：标志 `u16@+0x74`、端口 `u16@+0x76`、通道（**`std::sync::mpmc::Receiver`**，
+   符号名直读）`@+0x20`；取之前先把通道首字打成**哨兵 3**（`0x482aa0`）⇒ **只取一次**。
+   断开臂打印 **41 字节 `"Server thread died before reporting port."`**（`.rodata 0x1a00f9` = `mov w0,#0x29`）。
+   ⚠️ **附带一条非 Location 的源码级证据**：两条日志共用的格式串在 `.rodata 0x186a40`，里面写着
+   **`src/graphwar_game_server.rs:175`** —— 这是本模块第一条"源码行号"证据（`AGENTS.md` §0.2 的盲区：
+   它不是 `panic::Location` 结构体，所以不进 527 分母）。
+7. **`clear` 是 `call_deferred("clear")`**，不是同步清空（`.rodata 0x19de23` = `"clear"`，`0x44db30 mov w2,#0x5`）。
+8. **`show_pop_up` = 按名字查表 + `set_visible(true)`**：表 `items@+0x18`、槽位步长 `0x28`、键按
+   长度 + `memcmp` 比；命中后 `mov w1,#0x1` 并**尾调用** `CanvasItem::set_visible`（`0x7e68e0`）；
+   未命中只有 `ret`（**不 panic**）。
+9. **`print_help_and_exit_if_requested` 的判定式读全了**：`bl user_args` → `bl clap Parser::try_parse_from`
+   → 只看 `Err` 臂 → `ldrb [`+0xdd`]`（ErrorKind）→ **`orr #0x2`** → **`cmp #0xe`**
+   ⇒ 判据 **`(kind|2) == 0xe`**（即 kind ∈ {0xc, 0xe} 两个值）；命中臂 = `Error::print` →
+   `stdout().flush()` → `fflush(0)` → **`_exit(0)`**（`0x3ab284`）；未命中臂 = `drop_in_place<ErrorInner>` +
+   `dealloc(0xe0, 8)` ⇒ `ErrorInner` **224 字节**。
+10. **`computer_function_thread` = 线程体三步**：`Evolutionator::new`（`0x415158`）→
+    `tbz w25,#0` 二分（位 0 == 0 ⇒ `calculate_functions` `0x412900`；否则 `calculate_functions_old` `0x413da0`）
+    → `mpmc::Sender::send`（`0x42a868`）→ 收尾 drop（含 `drop_in_place<Vec<FunctionResult>>`）。
+
+### 153.4 未落的 5 条：**缺什么、要多久、缺哪个工具**
+
+| # | 函数 | 已读到什么 | **缺什么** | 下一步具体动作 | 估时 |
+|---|---|---|---|---|---|
+| ① | `user_args`（`0x3ab2bc` / 672 B） | 它把 `Args::augment_args` 的 **5752 B** derive 展开逐个注册到 `clap_builder::Command`；`print_help_and_exit_if_requested` 里 `bl user_args` 的调用点已确认（`0x3ab1b0`） | **本仓库不依赖 clap**（`Cargo.toml` 无该依赖），且那 5752 B 是 clap builder 调用序列（`Command::new/.arg/.about`），不是业务逻辑；直接"照抄"会引入一个外部库的行为依赖 | 两条路：(a) 引同版本 clap 依赖（会动 `Cargo.toml`，超本任务范围）；(b) **把 5752 B 逐条 `adrp/add` 的串解析成参数表**（`(短名, 长名, 类型, 默认值, 帮助串)`）并在模块里校验**条数**——需要一个"批量串解析"脚本（现有工具只按单地址读串），先把 5752 B 里所有 `adrp+add` 目标导出 | (b) 约 1–2 h |
+| ② | `append_debug_text`（`0x3deec8` / 436 B）、`append_function_entry`（`0x3df07c` / 1424 B） | **操作序列已读出**：都作用在 `self+0x38` 的 `RichTextLabel` 上，依次 `push_color` → `Control::get_size` → `push_font_size` → `push_outline_size` → `push_outline_color` → `append_text(…)` → `append_text("\n")` → 收尾 `pop`；`append_function_entry` 里还拼了 `.rodata 0x19bed0` 起的 **`"f(x) = "`** | **实参值没解**：`push_color` 的 RGBA 四分量、`push_font_size` 的公式（从 `get_size()` 的 Vector2 算出来的，需要逐条追算术）、`push_outline_*` 的常数、以及 `append_function_entry` 的文本拼装尾部（约 1 KB，含数字/坐标格式化） | 先把 `push_*` 的**入参准备段**逐条反汇编（`Color` 是 4 个 f32 从 `.rodata` 取还是从常量折叠出来），再落"op 序列 + 实参"的模型；**不许只落序列不落实参**（那就是空壳） | 各 1–2 h |
+| ③ | `insert_button_in_vbox`（`0x44fa48` / 1012 B）、`update_buttons_background_in_vbox`（`0x450020` / 1180 B） | 都遍历 `Node::get_children_full` 的 `AnyArray`；`update_buttons_background_in_vbox` 里已看到串 **`"Skin"` / `"BackgroundButton"` / `"SkinBlock"` / `"PendingBlock"` / `"no_hat"` / `"soldier_helmet"`** 与 `Button::set_button_icon`；`insert_button_in_vbox` 里看到 `construct_engine_object`（新建节点） | **缺"节点模板 + 名字表"**：`insert_button_in_vbox` 需要新建什么类、插在哪个下标（`len` 与插入位置的关系）；`update_…_in_vbox` 需要**完整的名字→图标映射表**（现有 `player_screen_control` 的名字表只覆盖帽子/脸/皮肤的一部分） | 先把两个函数体里的**所有** `adrp/add` 串导出来（名字表），再定"哪一类节点配哪张图"；这一步的产出会直接补 `player_screen_control` 的既有名字表 | 3–4 h |
+
+> **纪律声明**：这 5 条**一条都没有编语义**。①是"依赖不存在"，②③是"实参/映射表没解全"——
+> 按 `AGENTS.md` §0.3 宁可空着也不写"看起来像"的实现。
+
+### 153.5 两个**新建的原版模块**（本轮从零建起来）
+
+| 文件 | 原版模块 | 函数 | 关键证据 | 特别之处 |
+|---|---|---|---|---|
+| `src/graphwar_ban_list.rs` | `graphwar_ban_list` | `new`(0x4086a0) / `is_connection_banned`(0x408460) | 两表字段偏移 + 96 B 与容器注册表 `size: 96` 交叉相符；120 B `RcInner<RefCell<…>>` 有 drop glue 符号 | **整模块不在任何清单里**（§153.1-②）。封禁的可见效果 = 入队 `"You have been kicked."` |
+| `src/graphwar_version.rs` | `graphwar_version` | `graphwar_version_get_full_version`(0x3913e4) | 4 处立即数拼出 6 字节 + sret 3 字 | 同上；返回**编译期常量** `"2.0.60"` |
+
+两者都**不是** `scope=other` 里的模块（`scope=other` 的 16 个是 `entity_drawer` / `math_function` 这类
+**没有 `graphwar_` 前缀**的模块 + `graphwar_texture_loader`），所以「78 = 62 + 16」这个口径
+**至少要变成 80 = 64 + 16**（把 `graphwar_texture_loader` 的归类也顺手核一下更好）。
+
+### 153.6 口径与"三个数"（**分开报，不许混**）
+
+| 口径 | 含义 | 读数 | 本轮变化 |
+|---|---|---|---|
+| **机器码** | Android 游戏本 crate 具名地址（`fixtures/denom_outside.tsv` 的 1244 行） | 1244 | 0（本任务没新增/删除机器码；新建的两个模块在 Android 侧**本来就有** 3 个 FUNC） |
+| **源码函数** | 分母外真实源码函数 X | **143**（didn't move） | 0 |
+| — 其中 `real-missing` | 分母外、我方没有 | **55 → 41**（名字口径）／**55 → 43**（"真正新增行为语义"口径，扣掉 audio 那 2 条命名缺口） | −14 / −12 |
+| **A（招牌）** | F1 / 527 | **336/527 = 63.8 %** | 一位未动 |
+| **B** | F1 / 438 | **336/438 = 76.7 %** | 一位未动 |
+| **D_A（第四口径）** | F1 / (527 + X) | **336/670 = 50.1 %** | 一位未动 |
+| 严格 1:1 | 与真二进制逐位对拍的函数 | **89 / 527**（`coverage_matrix` 表头读数为准） | 0（本批最高只到**观测**；audio 那 2 条的上游证据是**逐位**，但它们不在 527 里） |
+
+**为什么不涨**：这 19 条的**全部**体内都没有 `panic::Location`（§152.1 的机制）⇒ 分母 527 收不进、
+分子 336 也收不进。它们让**真实缺口从 55 降到 41**，这才是本轮价值所在。
+`coverage_matrix` 重跑后**其它数字一位没动**（只有 `ours_funcs` 计数增加：audio 25→27、
+campaign 23→25、computer_player 33→34、function_input 104→105、game_server 18→19、
+level_manager 42→45、play_screen 97→100、replay_reader 11→12、root_node 141→146）。
+
+### 153.7 门槛读数（本轮实测，命令见 §153.8）
+
+| 项 | 读数 | 基线 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | **1698 passed / 0 failed / 0 ignored**（新增 24 条；本树基线 1674，任务书的 1666 是旧 master 读数） | 1666/0/1 | 只增不减 |
+| `cargo test --offline --features gdext-bindings` | **1858 passed / 0 failed / 0 ignored**（本树基线 1834） | 1826/0/1 | 只增不减 |
+| `tools/coverage_matrix.py --check` | **OK**（已重跑生成物 `docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md` 并一起提交） | OK | OK |
+| `tools/check_doc_refs.py` | **rc=0** | rc=0 | OK |
+| `tools/docsec.py check docs/06-verification.md` | 节数 150 / 范围 1..152，无重复号 / 无空心节 / 无冲突标记（43、89 为历史缺口） | 同 | OK |
+| 三轴（`fire` / `batch` / `batch_conv`） | **647 / 647 / 637**（原样：`驱动=fire … 内容命中 647`、`驱动=batch … 内容命中 647`、`batch_conv` 驱动 B `内容命中 637/1080`；本轮未碰任何数值/弹道路径） | 647/647/637 | 未退 |
+| `tools/boundary_audit.py --check` | mismatch **0**（match 441） | 0 | OK |
+
+### 153.8 复跑命令（全部一条条能跑）
+
+```bash
+# 真名 + 尺寸（19 行身份）
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | awk '$4=="FUNC"{print $2, $3, $8}' | c++filt -s rust \
+  | grep -E 'graphwar_(replay_reader|ban_list|version|campaign_control|level_manager|game_server|function_input|audio_control|play_screen_control|root_node|computer_player_manager)::'
+
+# 任取一条反汇编（例：clap 判定式）
+llvm-objdump -d --triple=aarch64-unknown-linux-gnu \
+  --start-address=0x3ab19c --stop-address=0x3ab2bc \
+  .reference/steam/android-2.0.60/libgraphwarrust.so | sed -n '/3ab1c0/,/3ab28c/p'
+
+# 调用者（例：is_connection_banned 全 .text 只有一个调用点）
+.reference/venv/bin/python tools/arm64_sym.py callers 0x408460
+
+# 模块清单缺口（65 vs 62）
+.reference/venv/bin/python - <<'PY'
+import subprocess,re,collections
+SO=".reference/steam/android-2.0.60/libgraphwarrust.so"
+out=subprocess.run(["readelf","-sW",SO],capture_output=True,text=True).stdout
+rows=[(f[1],f[2],f[7]) for f in (l.split() for l in out.splitlines()) if len(f)>=8 and f[0].endswith(":") and f[3]=="FUNC"]
+dem=subprocess.run(["c++filt","-s","rust"],input="\n".join(r[2] for r in rows),capture_output=True,text=True).stdout.splitlines()
+mods=collections.Counter(m.group(1) for d in dem if (m:=re.search(r"graphwarrust::(graphwar_[a-z0-9_]+)::",d)))
+cov={l.split("\t")[0][:-3] for l in open("docs/coverage-matrix.tsv") if not l.startswith("#") and l.split("\t")[1:2]==["graphwar"]}
+print("android 模块数", len(mods), "｜62 行里没有的:", sorted(set(mods)-cov), "｜62 行里 android 没有的:", sorted(cov-set(mods)))
+PY
+
+# 本轮新增/新增的测试
+cargo test --offline --test graphwar_replay_reader --test graphwar_ban_list_version \
+                     --test denom_rest_p4 --test denom_rest_p6
+```
+
+### 153.9 门槛实测日志（本轮，原样贴）
+
+```text
+$ cargo test --offline
+test result: ... （70 个 test 二进制 + lib + doc-tests 全部 ok，逐二进制 `test result: ok.`）
+**合计 passed 1698 / failed 0 / ignored 0**
+
+$ cargo test --offline --features gdext-bindings
+**合计 passed 1858 / failed 0 / ignored 0**
+
+# ⚠️ 基线口径（诚实标注）：任务书给的 1666/0/1ignored（gdext 1826）**在本树上不成立**
+# ——那是更早的 master 读数。本轮新增测试正好 **24 条**（graphwar_replay_reader +4、
+# graphwar_ban_list_version +7、denom_rest_p4 +9、denom_rest_p6 +4），没删任何测试
+# ⇒ **本树基线 = 1698 − 24 = 1674 passed / 0 failed / 0 ignored**（gdext 基线 = 1834）。
+# 结论：条数只增不减、失败 0。`#[ignore]` 的任务书那条在本树上也是 0。
+
+$ python3 tools/check_doc_refs.py            → rc=0
+$ python3 tools/docsec.py check docs/06-verification.md
+  docs/06-verification.md: 节数 150｜范围 1..152
+    ⚠ 断号: [43, 89]
+    ✓ 无重复号、无冲突标记、无空心节、无子节重号
+$ COVERAGE_MATRIX_UPSTREAM=… python3 tools/coverage_matrix.py --check   → OK
+$ python3 tools/boundary_audit.py --check    → OK（527 个可归属函数：match 441 / mismatch 0 / multi 86）
+
+# 三轴原样输出（`.agent-work` 里的日志已删，命令见 §153.8 与 `AGENTS.md` §B.3）：
+#   驱动=fire   口径=default：文件 286（读失败 117）；结算批 1080；内容命中 647
+#   驱动=batch  口径=default：文件 286（读失败 117）；结算批 1080；内容命中 647
+#   batch_conv --policy strict：驱动 B（fire_batch）种类序列命中 1075/1080、内容命中 637/1080
+#                              单发批 950：种类 947/950、内容 605/950；逐批对照 变好 128 / 变差 0
+```
+
+### 153.10 遗留 / 下一步（按价值排序）
+
+1. **§153.4 的 5 条**（3–4 h 的 `player_screen_control` 两条最值钱：它们的名字表能反过来补既有名字表）。
+2. **"同语义不同名"缺口的全量统计**（§153.1-③）：55 条里还有多少是这种？口径 = `fn` 名字集合差 ∩ 语义已实现。
+   如果占比高，**55 这个分母本身也要改**（它混了"行为缺口"和"命名缺口"两种东西）。
+3. **模块分母 78 → 80**：把 `graphwar_ban_list` / `graphwar_version` 补进 `docs/02` §17 与
+   `coverage_matrix` 的生成源（本轮按纪律没手改生成物与别人的文档）。
+4. **`fixtures/denom_outside.tsv` 的 `real-missing` 计数**：本轮落码后该改成 41 行（名字口径）。
+   该文件是 `tools/global_triage.py --denom-outside` 的**生成物**，本轮**没有手改** —— 重跑一次即可。
+5. 顺带发现：`graphwar_game_server.rs:175` 这条**非 Location 的源码行号**说明
+   **日志格式串是第二条"源码级证据"来源**（`panic::Location` 之外），值得专门扫一遍
+   （例如 `grep` 所有 `.rodata` 里的 `<模块>.rs:<行号>` 形态的串）。
