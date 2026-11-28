@@ -2,6 +2,8 @@
 # 一行 = 一个 Ghidra funcstart（13,263 个 .text 可分析函数），六类分类见文件头判据
 # 重算：.reference/venv/bin/python tools/global_triage.py
 # 地址口径 = ELF vaddr（RVA）；size = funcstart 分区，size_fde = .eh_frame 范围（非 FDE 起点为 —）
+# layer=L1-t93 的 49 行 = **T93 人工裁决**（本 crate 泛型单态化副本 / drop glue，源码层无独立 fn）；
+#   证据 fixtures/gap_modcontainer.tsv + docs/06 §139、§142.3；表在 tools/global_triage.py::T93_MANUAL_NA
 addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x37b940		0x170	0x16b	—	—	na:other	prop:third	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 third；**这是推断，不是观测**
 0x37bab0		0x160	0x156	—	—	na:other	prop:third	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 third；**这是推断，不是观测**
@@ -155,9 +157,9 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3a2130		0x1c0	0x1c0	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refUpcast failed. This is a bug; please report it）⇒ gdext 侧产物
 0x3a22f0		0xb20	0xb1e	—	—	real-missing	prop:game	L4-prop	0	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3a2e10	graphwar_root_node.rs::GraphwarRootNode::ready	0x26d0	0x26c8	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3a54e0	graphwar_root_node::GraphwarRootNode::ready	0x100	0xfd	src/graphwar_root_node.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x3a55e0	graphwar_root_node::GraphwarRootNode::ready	0x40	0x3c	src/graphwar_root_node.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x3a5620	graphwar_root_node::GraphwarRootNode::ready	0x40	0x3c	src/graphwar_root_node.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
+0x3a54e0	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	0x100	0xfd	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3a55e0	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	0x40	0x3c	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3a5620	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	0x40	0x3c	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3a5660	graphwar_root_node.rs::GraphwarRootNode::ready::{{closure}}	0x100	0xf6	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	1	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3a5760	graphwar_root_node.rs::GraphwarRootNode::process	0x4f40	0x4f36	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3aa6a0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_root_node.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
@@ -166,18 +168,18 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3aaa60		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyProjectSettingsglobalize_pathOSget_environmentOshas；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x3aab20		0x180	0x172	—	—	real-missing	str-game	L3-str	2	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：Graphwar II0.1.0The following required argument was not provided
 0x3aaca0		0x1c0	0x1b4	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refUpcast failed. This is a bug; please report it）⇒ gdext 侧产物
-0x3aae60	button_manager::ButtonManager::new	0x40	0x3d	src/button_manager.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x3aaea0	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	9	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3aae60	button_manager::ButtonManager::new::{{closure}}	0x40	0x3d	src/button_manager.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
+0x3aaea0	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	9	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3aafa0	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	7	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3ab0a0	graphwar_nodes::GraphwarNodes::get_node_by_name	0xf0	0xe2	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	3	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3ab190	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	17	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3ab290	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	4	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3ab390	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	7	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3ab490	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	5	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3ab290	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	4	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3ab390	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	7	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3ab490	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	5	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3ab590	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	24	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3ab690	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3ab790	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3ab890	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3ab690	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3ab790	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	2	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3ab890	graphwar_nodes::GraphwarNodes::get_node_by_name	0x100	0xf9	src/graphwar_nodes.rs	hard	na:other	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3ab990		0x390	0x38d	—	—	na:std-mono	std:	L1-location	2	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x3abd20		0x330	0x328	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x3ac050		0x390	0x38a	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
@@ -235,13 +237,13 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3b67c0		0x1e0	0x1d3	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3b69a0		0x180	0x17a	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3b6b20		0x150	0x145	—	—	na:std-mono	std:	L1-location	2	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x3b6c70	—	0xd0	0xd0	src/graphwar_logger.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3b6c70	—	0xd0	0xd0	src/graphwar_logger.rs	hard	na:std-mono	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3b6d40		0xc0	0xba	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x3b6e00	—	0x90	0x85	src/graphwar_root_node.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3b6e00	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	0x90	0x85	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3b6e90		0x40	0x3b	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x3b6ed0	—	0x150	0x14a	src/graphwar_root_node.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x3b7020	—	0x90	0x85	src/graphwar_root_node.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x3b70b0	—	0x90	0x86	src/button_manager.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3b6ed0	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	0x150	0x14a	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3b7020	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	0x90	0x85	src/graphwar_root_node.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3b70b0	button_manager::ButtonManager::new::{{closure}}	0x90	0x86	src/button_manager.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
 0x3b7140		0x10	0x1	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3b7150		0x310	0x2ad	—	—	na:gdext-glue	prop:gdext	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x3b7460		0xf0	0xe9	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -269,7 +271,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3b9f60		0x240	0x1c8	—	—	na:gdext-glue	prop:gdext	L4-prop	11	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x3ba1a0		0x130	0x121	—	—	unknown	no-evidence	L-none	1	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3ba2d0		0x110	0x107	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x3ba3e0		0xe0	0xdc	—	—	na:std-mono	prop:std	L4-prop	1	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
+0x3ba3e0		0xe0	0xdc	—	—	na:gdext-glue	prop:gdext	L4-prop	1	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x3ba4c0		0x570	0x570	—	—	unknown	no-evidence	L-none	1	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3baa30		0x1f0	0x1eb	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x3bac20		0x1d0	0x99	—	—	real-missing	prop:game	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
@@ -300,7 +302,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3bf620		0x280	0x271	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3bf8a0		0x2b0	0x2ab	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x3bfb50		0x280	0x271	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x3bfdd0	—	0x260	0x25b	src/graphwar_audio_control.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3bfdd0	—	0x260	0x25b	src/graphwar_audio_control.rs	hard	na:std-mono	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3c0030		0x380	0x371	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3c03b0		0x210	0x20e	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3c05c0		0x200	0x1f2	—	—	na:other	third-party	L1-location	2	0	.cargo/registry Location ⇒ 三方 crate：/home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clap_builder-4.5.11/src/util/flat_map.rs
@@ -315,7 +317,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3c1980	graphwar_team_manager.rs::GraphwarTeamManager::remove_from_team	0x1c0	0x1bd	src/graphwar_team_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3c1b40	graphwar_team_manager.rs::GraphwarTeamManager::get_most_empty_team	0x1b0	0x1aa	src/graphwar_team_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3c1cf0	graphwar_team_manager.rs::GraphwarTeamManager::send_all_info_events	0x250	0x243	src/graphwar_team_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3c1f40	graphwar_team_manager.rs::GraphwarTeamManager::handle_entity_removed_event::panic_cold_explicit	0x40	0x31	src/graphwar_team_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3c1f40	graphwar_team_manager.rs::GraphwarTeamManager::handle_entity_removed_event	0x40	0x31	src/graphwar_team_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3c1f80		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3c1fa0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3c1fc0	graphwar_team_manager.rs::GraphwarTeamManager::new	0x160	0x159	src/graphwar_team_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -329,7 +331,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3c64c0	graphwar_plane_pos_manager.rs::GraphwarPlanePosManager::set_position	0x1e0	0x1d9	src/graphwar_plane_pos_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3c66a0	graphwar_plane_pos_manager.rs::GraphwarPlanePosManager::get_all_positions	0x370	0x368	src/graphwar_plane_pos_manager.rs	hard	implemented	F1	L1-location	7	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3c6a10	graphwar_plane_pos_manager.rs::GraphwarPlanePosManager::send_all_info_events	0x130	0x12c	src/graphwar_plane_pos_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3c6b40	graphwar_plane_pos_manager.rs::GraphwarPlanePosManager::handle_entity_removed_event::panic_cold_explicit	0x1b0	0x1a5	src/graphwar_plane_pos_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3c6b40	graphwar_plane_pos_manager.rs::GraphwarPlanePosManager::handle_entity_removed_event	0x1b0	0x1a5	src/graphwar_plane_pos_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3c6cf0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3c6d10		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3c6d30	graphwar_plane_pos_manager.rs::GraphwarPlanePosManager::new	0x160	0x156	src/graphwar_plane_pos_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -342,7 +344,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3c7630		0x560	0x4b8	—	—	real-missing	prop:game	L4-prop	7	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3c7b90		0x120	0x41	—	—	real-missing	prop:game	L4-prop	19	6	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3c7cb0		0x8e0	0x8d9	—	—	na:other	third-party	L1-location	4	0	.cargo/registry Location ⇒ 三方 crate：/home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-automata-0.4.7/src/util/pool.rs
-0x3c8590		0x260	0xb8	—	—	real-missing	prop:game	L4-prop	9	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x3c8590		0x260	0xb8	—	—	unknown	no-evidence	L-none	9	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3c87f0		0xd0	0xc8	—	—	unknown	no-evidence	L-none	4	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3c88c0		0x5b0	0x5af	—	—	real-missing	prop:game	L4-prop	12	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3c8e70		0x410	0x384	—	—	real-missing	prop:game	L4-prop	8	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
@@ -359,7 +361,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3ca530		0x2a0	0x66	—	—	na:gdext-glue	prop:gdext	L4-prop	6	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x3ca7d0		0x1e0	0x1db	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x3ca9b0		0x70	0x6a	—	—	real-missing	prop:game	L4-prop	9	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x3caa20	graphwar_game_state_manager::GraphwarGameStateManager::request_update_function	0x430	0x426	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3caa20	graphwar_game_state_manager::GraphwarGameStateManager::request_update_function	0x430	0x426	src/graphwar_game_state_manager.rs	hard	na:std-mono	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3cae50		0xa0	0xa0	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3caef0		0x190	0x184	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refvariant identifiera Display implementation ret）⇒ gdext 侧产物
 0x3cb080		0x1d0	0x1cd	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
@@ -382,7 +384,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3cc330		0x180	0x178	—	—	unknown	no-evidence	L-none	3	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3cc4b0		0x250	0x24f	—	—	real-missing	prop:game	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3cc700		0xc0	0xb4	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x3cc7c0		0x180	0x17f	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x3cc7c0		0x180	0x17f	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x3cc940		0x40	0x39	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3cc980		0x50	0x49	—	—	real-missing	prop:game	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3cc9d0		0xc0	0xbb	—	—	unknown	no-evidence	L-none	9	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -391,7 +393,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3cd180		0xa0	0x99	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3cd220		0x100	0x6b	—	—	real-missing	prop:game	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3cd320		0x180	0xd0	—	—	na:std-mono	prop:std	L4-prop	10	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
-0x3cd4a0		0x140	0xc3	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x3cd4a0		0x140	0xc3	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3cd5e0		0x70	0x6b	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3cd650		0x2b30	0x2b22	—	—	na:other	third-party	L1-location	1	0	.cargo/registry Location ⇒ 三方 crate：/home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-0.4.38/src/format/formatting.rs, /home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-0.4.38/src/naive/internals.rs
 0x3d0180		0x230	0x222	—	—	na:std-mono	std:	L1-location	2	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
@@ -452,7 +454,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3d3530		0x100	0xf8	—	—	real-missing	prop:game	L4-prop	0	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3d3630	graphwar_event_handler.rs::GraphwarEventHandler::process_events	0x2c0	0x2b7	src/graphwar_event_handler.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3d38f0	graphwar_event_handler.rs::GraphwarEventHandler::subscribe_to_event	0x16b0	0x16a7	src/graphwar_event_handler.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3d4fa0	graphwar_game_recorder.rs::GraphwarGameRecorder::save_event	0x2c0	0x2b8	src/graphwar_game_recorder.rs	hard	real-missing	T82	L1-t82	1	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x3d4fa0	graphwar_game_recorder.rs::GraphwarGameRecorder::subscribe_to_events::{{closure}}	0x2c0	0x2b8	src/graphwar_game_recorder.rs	hard	real-missing	T82	L1-t82	1	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x3d5260		0x4e0	0x4d8	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3d5740	graphwar_game_recorder.rs::GraphwarGameRecorder::save_game	0x940	0x936	src/graphwar_game_recorder.rs	hard	implemented	F1	L1-location	3	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3d6080	graphwar_replay_player.rs::GraphwarReplayPlayer::toggle_pause	0x120	0x11e	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -547,7 +549,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3edeb0		0x80	0x7a	—	—	unknown	no-evidence	L-none	6	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3edf30		0x100	0xf8	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3ee030		0x160	0x156	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x3ee190	graphwar_obstacle_manager.rs::GraphwarObstacleManager::get_image	0x1460	0x1452	src/obstacle_drawer.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3ee190	obstacle_drawer.rs::ObstacleDrawer::update	0x1460	0x1452	src/obstacle_drawer.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3ef5f0		0x1d0	0x1c8	—	—	na:gdext-glue	loc-gdext	L1-location	1	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-cell/src/guards.rs
 0x3ef7c0		0x1d0	0x1c8	—	—	na:gdext-glue	loc-gdext	L1-location	0	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-cell/src/guards.rs
 0x3ef990	graphwar_lobby_control.rs::GraphwarLobbyControl::new	0x6e0	0x6dd	src/graphwar_lobby_control.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -556,7 +558,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3f00b0		0x1c0	0x1b4	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refShowLocalButtonGraphwarLanVBoxexplicit panicfu；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x3f0270	function_button_manager.rs::FunctionButtonManager::new	0x440	0x440	src/function_button_manager.rs	hard	implemented	F2	L1-location	1	0	Location src/… 硬归属；T38 台账 F2（已实现）
 0x3f06b0	function_button_manager.rs::FunctionButtonManager::new::{{closure}}	0x790	0x784	src/function_button_manager.rs	hard	implemented	F2	L1-location	1	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x3f0e40	function_history_recorder.rs::FunctionHistoryRecorder::handle_function_fire_event::panic_cold_explicit	0x240	0x236	src/function_history_recorder.rs	hard	implemented	F2	L1-location	0	0	Location src/… 硬归属；T38 台账 F2（已实现）
+0x3f0e40	function_history_recorder.rs::FunctionHistoryRecorder::handle_function_fire_event	0x240	0x236	src/function_history_recorder.rs	hard	implemented	F2	L1-location	0	0	Location src/… 硬归属；T38 台账 F2（已实现）
 0x3f1080		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x3f10a0		0x140	0x13c	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（function_info_eventtick_eventinternal error: entered unr）⇒ gdext 侧产物
 0x3f11e0	graphwar_obstacle_manager.rs::GraphwarObstacleData::draw_circle	0x3d0	0x3c8	src/graphwar_obstacle_manager.rs	hard	implemented	F2	L1-location	3	0	Location src/… 硬归属；T38 台账 F2（已实现）
@@ -564,7 +566,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x3f17a0	graphwar_obstacle_manager.rs::GraphwarObstacleManager::add_obstacle	0x200	0x1f4	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	5	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3f19a0	graphwar_obstacle_manager.rs::GraphwarObstacleManager::clear_obstacles	0x190	0x189	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	8	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3f1b30	graphwar_obstacle_manager.rs::GraphwarObstacleManager::destroy_obstacle	0x200	0x1f7	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x3f1d30	graphwar_obstacle_manager.rs::GraphwarObstacleManager::handle_tick_event::panic_cold_explicit	0x120	0x117	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x3f1d30	graphwar_obstacle_manager.rs::GraphwarObstacleManager::handle_tick_event	0x120	0x117	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3f1e50		0x2a0	0x298	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x3f20f0	graphwar_obstacle_manager.rs::GraphwarObstacleManager::queue_destroy_obstacle	0x270	0x269	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x3f2360	graphwar_obstacle_manager.rs::GraphwarObstacleManager::new	0x100	0xf4	src/graphwar_obstacle_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -633,7 +635,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x402c20		0x1a0	0x199	—	—	unknown	no-evidence	L-none	4	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x402dc0		0x1a0	0x199	—	—	unknown	no-evidence	L-none	4	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x402f60		0x4a0	0x494	—	—	na:std-mono	std:	L1-location	5	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x403400		0x150	0x14e	—	—	na:std-mono	prop:std	L4-prop	15	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
+0x403400		0x150	0x14e	—	—	unknown	no-evidence	L-none	15	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x403550		0x670	0x668	—	—	unknown	no-evidence	L-none	21	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x403bc0		0x610	0x608	—	—	unknown	no-evidence	L-none	6	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4041d0		0x580	0x57a	—	—	na:std-mono	prop:std	L4-prop	4	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
@@ -643,7 +645,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4055d0		0x70	0x6c	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x405640		0x370	0x361	—	—	na:gdext-glue	loc-gdext	L1-location	1	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/obj/bounds.rs, /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/obj/raw_gd.rs
 0x4059b0		0xb0	0xaf	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x405a60		0xb0	0xaf	—	—	real-missing	prop:game	L4-prop	17	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x405a60		0xb0	0xaf	—	—	unknown	no-evidence	L-none	17	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x405b10		0xb0	0xaf	—	—	na:gdext-glue	prop:gdext	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x405bc0		0xb0	0xaf	—	—	unknown	no-evidence	L-none	33	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x405c70		0xb0	0xaf	—	—	na:gdext-glue	prop:gdext	L4-prop	7	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
@@ -855,7 +857,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x419ac0		0x110	0x10a	—	—	na:gdext-glue	prop:gdext	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x419bd0		0x130	0x121	—	—	na:gdext-glue	prop:gdext	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x419d00		0x110	0x107	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
-0x419e10		0xe0	0xdc	—	—	unknown	no-evidence	L-none	3	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x419e10		0xe0	0xdc	—	—	na:gdext-glue	prop:gdext	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x419ef0		0xb0	0xa8	—	—	na:std-mono	prop:std	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
 0x419fa0		0x630	0x568	—	—	na:gdext-glue	prop:gdext	L4-prop	4	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x41a5d0		0x2f0	0x2e7	—	—	na:gdext-glue	prop:gdext	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
@@ -1267,13 +1269,13 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x44f560		0x1f0	0x1f0	—	—	na:gdext-glue	region:gdext	L5-region	1	0	布局局部性推断：region 0x440000 内硬证据 70 条里 61 条是 gdext（≥85%） ⇒ 该 region 的未定函数判 gdext；**是推断不是观测**
 0x44f750		0x240	0x23c	—	—	real-missing	str-game	L3-str	4	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：Failed to join server thread.Failed to spawn game server threade
 0x44f990	graphwar_game_server.rs::GraphwarGameServer::start	0x730	0x72c	src/graphwar_game_server.rs	hard	na:gdext-glue	region:gdext	L5-region	1	0	布局局部性推断：region 0x440000 内硬证据 70 条里 61 条是 gdext（≥85%） ⇒ 该 region 的未定函数判 gdext；**是推断不是观测**
-0x4500c0	graphwar_server_connection_handler.rs::GraphwarServerConnectionHandler::new	0x39a0	0x3999	src/graphwar_game_server.rs	hard	implemented	F2	L1-location	1	0	Location src/… 硬归属；T38 台账 F2（已实现）
+0x4500c0	graphwar_game_server.rs::game_server_thread	0x39a0	0x3999	src/graphwar_game_server.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x453a60	graphwar_life_manager.rs::GraphwarLifeManager::get_death_tick	0x200	0x1fe	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x453c60	graphwar_life_manager.rs::GraphwarLifeManager::get_all_entities	0x180	0x174	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x453de0	graphwar_life_manager.rs::GraphwarLifeManager::set_queued_death	0x240	0x231	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x454020	graphwar_life_manager.rs::GraphwarLifeManager::handle_tick_event::panic_cold_explicit	0x100	0xf8	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x454020	graphwar_life_manager.rs::GraphwarLifeManager::handle_tick_event	0x100	0xf8	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x454120	graphwar_life_manager.rs::GraphwarLifeManager::send_all_info_events	0x300	0x300	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x454420	graphwar_life_manager.rs::GraphwarLifeManager::handle_entity_removed_event::panic_cold_explicit	0x310	0x30a	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x454420	graphwar_life_manager.rs::GraphwarLifeManager::handle_entity_removed_event	0x310	0x30a	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x454730		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x454750		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x454770		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -1281,19 +1283,19 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x454950	graphwar_life_manager.rs::GraphwarLifeManager::get_alive	0x1f0	0x1e2	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	7	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x454b40	graphwar_life_manager.rs::GraphwarLifeManager::set_alive	0x240	0x235	src/graphwar_life_manager.rs	hard	implemented	F1	L1-location	5	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x454d80	graphwar_rank_manager.rs::GraphwarRankManager::send_all_info_events	0x100	0xfc	src/graphwar_rank_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x454e80	graphwar_rank_manager.rs::GraphwarRankManager::handle_entity_removed_event::panic_cold_explicit	0x70	0x66	src/graphwar_rank_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x454e80	graphwar_rank_manager.rs::GraphwarRankManager::handle_entity_removed_event	0x70	0x66	src/graphwar_rank_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x454ef0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x454f10		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x454f30	graphwar_rank_manager.rs::GraphwarRankManager::new	0x160	0x159	src/graphwar_rank_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x455090	graphwar_rank_manager.rs::GraphwarRankManager::set_rank	0xd0	0xc1	src/graphwar_rank_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x455160	graphwar_player_manager.rs::GraphwarPlayerManager::send_all_info_events	0xf0	0xe9	src/graphwar_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x455250	graphwar_player_manager.rs::GraphwarPlayerManager::handle_entity_removed_event::panic_cold_explicit	0x180	0x180	src/graphwar_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x455250	graphwar_player_manager.rs::GraphwarPlayerManager::handle_entity_removed_event	0x180	0x180	src/graphwar_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4553d0		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4553f0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x455410	graphwar_player_manager.rs::GraphwarPlayerManager::new	0x160	0x159	src/graphwar_player_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x455570	graphwar_soldier_manager.rs::GraphwarSoldierManager::send_all_info_events	0xf0	0xe9	src/graphwar_soldier_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x455660		0x70	0x61	—	—	real-missing	prop:game	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x4556d0	graphwar_soldier_manager.rs::GraphwarSoldierManager::handle_entity_removed_event::panic_cold_explicit	0x50	0x44	src/graphwar_soldier_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4556d0	graphwar_soldier_manager.rs::GraphwarSoldierManager::handle_entity_removed_event	0x50	0x44	src/graphwar_soldier_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x455720		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x455740		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x455760	graphwar_soldier_manager.rs::GraphwarSoldierManager::new	0x160	0x159	src/graphwar_soldier_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -1305,7 +1307,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x456810	graphwar_function_manager.rs::GraphwarFunctionManager::set_function_points	0x370	0x365	src/graphwar_function_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x456b80	graphwar_function_manager.rs::GraphwarFunctionManager::set_function_active_tick	0x270	0x26c	src/graphwar_function_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x456df0	graphwar_function_manager.rs::GraphwarFunctionManager::get_active_functions_on_tick	0x190	0x182	src/graphwar_function_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x456f80	graphwar_function_manager.rs::GraphwarFunctionManager::get_active_functions_on_tick_no_fade	0x190	0x182	src/graphwar_function_manager.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x456f80	graphwar_function_manager.rs::GraphwarFunctionManager::get_active_functions_on_tick_no_fade	0x190	0x182	src/graphwar_function_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x457110		0x1b0	0x1a2	—	—	na:gdext-glue	struct:G1b	L2-struct	0	1	结构证据 G1b（体积 0x1b0 ≤ 上限 0x721；调用点 0、表槽 1）
 0x4572c0	graphwar_lan_broadcaster_v6.rs::GraphwarLanBroadcasterV6::set_room_info	0x1c0	0x1bf	src/graphwar_lan_broadcaster_v6.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x457480	graphwar_lan_broadcaster_v6.rs::GraphwarLanBroadcasterV6::new	0x180	0x179	src/graphwar_lan_broadcaster_v6.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -1320,7 +1322,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4592d0	graphwar_client_connection_handler.rs::GraphwarClientConnectionHandler::disconnect	0x3c0	0x3b5	src/graphwar_client_connection_handler.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x459690	graphwar_client_connection_handler.rs::GraphwarClientConnectionHandler::forward_event	0x1b0	0x1a4	src/graphwar_client_connection_handler.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x459840	graphwar_client_connection_handler.rs::GraphwarClientConnectionHandler::get_connection_state	0x110	0x104	src/graphwar_client_connection_handler.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x459950	graphwar_client_connection_handler.rs::GraphwarClientConnectionHandler::handle_connected_to_server::panic_cold_explicit	0x40	0x36	src/graphwar_client_connection_handler.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x459950	graphwar_client_connection_handler.rs::GraphwarClientConnectionHandler::handle_connected_to_server	0x40	0x36	src/graphwar_client_connection_handler.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x459990		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4599b0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4599d0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -1481,7 +1483,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x463170	graphwar_turn_manager.rs::GraphwarTurnManager::set_end_of_turn_tick	0x1d0	0x1c9	src/graphwar_turn_manager.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x463340	graphwar_turn_manager.rs::GraphwarTurnManager::get_current_turn_players	0x120	0x11f	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	4	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x463460	graphwar_turn_manager.rs::GraphwarTurnManager::get_current_turn_soldiers	0x120	0x11f	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	7	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x463580	graphwar_turn_manager.rs::GraphwarTurnManager::handle_entity_removed_event::panic_cold_explicit	0x1d0	0x1ca	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x463580	graphwar_turn_manager.rs::GraphwarTurnManager::handle_entity_removed_event	0x1d0	0x1ca	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x463750		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x463770		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x463790	graphwar_turn_manager.rs::GraphwarTurnManager::new	0x160	0x159	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -1492,12 +1494,12 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x464d10	graphwar_color_manager.rs::GraphwarColorManager::add_team_color	0x360	0x351	src/graphwar_color_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x465070		0x3f0	0x3ee	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x465460	graphwar_color_manager.rs::GraphwarColorManager::send_all_info_events	0x110	0x101	src/graphwar_color_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x465570	graphwar_color_manager.rs::GraphwarColorManager::handle_entity_removed_event::panic_cold_explicit	0x70	0x66	src/graphwar_color_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x465570	graphwar_color_manager.rs::GraphwarColorManager::handle_entity_removed_event	0x70	0x66	src/graphwar_color_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4655e0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x465600		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x465620	graphwar_color_manager.rs::GraphwarColorManager::new	0x160	0x159	src/graphwar_color_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x465780	graphwar_target_manager.rs::GraphwarTargetManager::send_all_info_events	0xf0	0xe7	src/graphwar_target_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x465870	graphwar_target_manager.rs::GraphwarTargetManager::handle_entity_removed_event::panic_cold_explicit	0x60	0x5e	src/graphwar_target_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x465870	graphwar_target_manager.rs::GraphwarTargetManager::subscribe_to_events_event_handler::{{closure}}	0x60	0x5e	src/graphwar_target_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4658d0		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4658f0		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x465910	graphwar_target_manager.rs::GraphwarTargetManager::new	0x160	0x159	src/graphwar_target_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -1511,82 +1513,82 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x468b60	graphwar_graphics_manager.rs::GraphwarGraphicsManager::set_face_graphics	0x110	0x107	src/graphwar_graphics_manager.rs	hard	implemented	F1	L1-location	4	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x468c70	graphwar_graphics_manager.rs::GraphwarGraphicsManager::set_skin_graphics	0x110	0x107	src/graphwar_graphics_manager.rs	hard	implemented	F1	L1-location	5	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x468d80	graphwar_graphics_manager.rs::GraphwarGraphicsManager::send_all_info_events	0x4a0	0x496	src/graphwar_graphics_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x469220	graphwar_graphics_manager.rs::GraphwarGraphicsManager::handle_entity_removed_event::panic_cold_explicit	0x130	0x12d	src/graphwar_graphics_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x469220	graphwar_graphics_manager.rs::GraphwarGraphicsManager::handle_entity_removed_event	0x130	0x12d	src/graphwar_graphics_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x469350		0x20	0x1d	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x469370		0x20	0x20	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x469390	graphwar_graphics_manager.rs::GraphwarGraphicsManager::new	0x160	0x159	src/graphwar_graphics_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4694f0		0xa0	0x97	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x469590		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469630		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x4696d0		0xa0	0x97	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x469770		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469810		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x4698b0		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469950		0xa0	0x97	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x4699f0		0xa0	0x97	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x469a90		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469b30		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469bd0		0xa0	0x97	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x469c70		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469d10		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469db0		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469e50		0xa0	0x97	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x469ef0		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x469f90		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a030		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a0d0		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a170		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a210		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a2b0		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a350		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a3f0		0xa0	0x97	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a490		0x170	0x163	—	—	real-missing	prop:game	L4-prop	30	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a600		0x170	0x163	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a770		0x170	0x163	—	—	real-missing	prop:game	L4-prop	26	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46a8e0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46aa50		0x170	0x163	—	—	real-missing	prop:game	L4-prop	31	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46abc0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	30	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46ad30		0x170	0x163	—	—	real-missing	prop:game	L4-prop	17	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46aea0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b010		0x170	0x163	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b180		0x170	0x163	—	—	real-missing	prop:game	L4-prop	6	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b2f0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	4	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b460		0x170	0x163	—	—	real-missing	prop:game	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b5d0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b740		0x170	0x163	—	—	real-missing	prop:game	L4-prop	14	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46b8b0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	27	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46ba20		0x170	0x163	—	—	real-missing	prop:game	L4-prop	4	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46bb90		0x170	0x163	—	—	real-missing	prop:game	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46bd00		0x170	0x163	—	—	real-missing	prop:game	L4-prop	15	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46be70		0x170	0x163	—	—	real-missing	prop:game	L4-prop	40	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46bfe0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46c150		0x170	0x163	—	—	real-missing	prop:game	L4-prop	12	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46c2c0		0x170	0x163	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x46c430		0x170	0x163	—	—	real-missing	prop:game	L4-prop	6	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x4694f0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarLocalPlayerManager）
+0x469590		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarColorManager）
+0x469630		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarEffectManager）
+0x4696d0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarServerConnectionHandler）
+0x469770		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarTeamManager）
+0x469810		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarTickHandler）
+0x4698b0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarGraphicsManager）
+0x469950		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarClientConnectionHandler）
+0x4699f0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarBanList）
+0x469a90		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarModeManager）
+0x469b30		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarLifeManager）
+0x469bd0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=FunctionHistoryRecorder）
+0x469c70		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarGameRecorder）
+0x469d10		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarEntityEffectManager）
+0x469db0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarFunctionManager）
+0x469e50		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarComputerPlayerManager）
+0x469ef0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarRankManager）
+0x469f90		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarPlayerManager）
+0x46a030		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarTurnManager）
+0x46a0d0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarPlanePosManager）
+0x46a170		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarSoldierManager）
+0x46a210		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarGameStateManager）
+0x46a2b0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarNameManager）
+0x46a350		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarTargetManager）
+0x46a3f0		0xa0	0x97	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（A M=GraphwarObstacleManager）
+0x46a490		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	30	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarPlayerManager）
+0x46a600		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarEffectManager）
+0x46a770		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	26	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarSoldierManager）
+0x46a8e0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	5	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarGraphicsManager）
+0x46aa50		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	31	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarTickHandler）
+0x46abc0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	30	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarModeManager）
+0x46ad30		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	17	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarPlanePosManager）
+0x46aea0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarGameRecorder）
+0x46b010		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=FunctionHistoryRecorder）
+0x46b180		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	6	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarClientConnectionHandler）
+0x46b2f0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	4	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarServerConnectionHandler）
+0x46b460		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	5	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarComputerPlayerManager）
+0x46b5d0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	5	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarColorManager）
+0x46b740		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	14	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarTurnManager）
+0x46b8b0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	27	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarTeamManager）
+0x46ba20		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	4	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarNameManager）
+0x46bb90		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	5	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarFunctionManager）
+0x46bd00		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	15	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarObstacleManager）
+0x46be70		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	40	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarGameStateManager）
+0x46bfe0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	1	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarRankManager）
+0x46c150		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	12	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarTargetManager）
+0x46c2c0		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	2	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarLifeManager）
+0x46c430		0x170	0x163	—	—	na:other	own-generic-mono	L1-t93	6	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（B M=GraphwarLocalPlayerManager）
 0x46c5a0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x46c7c0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	25	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x46c9e0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	11	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46cc00	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	4	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46ce20	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	13	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46d040	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	15	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46d260	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	5	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46d480	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	8	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46d6a0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	10	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46d8c0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	17	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46dae0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	5	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46dd00	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	3	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46df20	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	2	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46e140	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	11	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46e360	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	2	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46e580	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	19	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46e7a0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	16	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46e9c0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	10	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46ebe0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	10	0	Location src/… 硬归属；T38 台账 F2（已实现）
-0x46ee00	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F2	L1-location	6	0	Location src/… 硬归属；T38 台账 F2（已实现）
+0x46c9e0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	11	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46cc00	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	4	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46ce20	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	13	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46d040	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	15	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46d260	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	5	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46d480	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	8	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46d6a0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	10	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46d8c0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	17	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46dae0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	5	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46dd00	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	3	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46df20	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46e140	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	11	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46e360	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46e580	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	19	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46e7a0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	16	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46e9c0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	10	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46ebe0	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	10	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46ee00	graphwar_module_container::GraphwarModuleContainer::get_module_wk	0x220	0x214	src/graphwar_module_container.rs	hard	implemented	F1	L1-location	6	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x46f020		0xa0	0x9f	—	—	unknown	str-weak-game	L3-str	0	0	只命中**弱**游戏词（ConnectingSetupWaitingForFunctionsCalculatingRes）；`.rodata` 串连续排布会把相邻串一起读出，弱词在三方 crate 的字段名 blob 里也会命中 ⇒ 不单独定案
 0x46f0c0		0x250	0x24d	—	—	na:other	prop:third	L4-prop	3	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 third；**这是推断，不是观测**
 0x46f310	graphwar_game_state_manager.rs::GraphwarGameStateManager::add_target	0x380	0x37e	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x46f690	graphwar_turn_manager.rs::GraphwarTurnManager::initialize_turns	0x11b0	0x11a9	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x46f690	graphwar_game_state_manager.rs::GraphwarGameStateManager::start_game	0x11b0	0x11a9	src/graphwar_turn_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x470840	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_tick	0x330	0x32d	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x470b70	graphwar_game_state_manager.rs::GraphwarGameStateManager::set_all_alive	0x340	0x333	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x470eb0	graphwar_game_state_manager.rs::GraphwarGameStateManager::fire_functions	0x1550	0x154f	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	3	0	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -1595,7 +1597,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x473520	graphwar_game_state_manager.rs::GraphwarGameStateManager::get_alive_teams	0x280	0x27d	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	3	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4737a0	graphwar_game_state_manager.rs::GraphwarGameStateManager::remove_all_players	0x220	0x214	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4739c0	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_new_player	0x340	0x337	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x473d00	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_chat_message	0x150	0x145	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x473d00	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_chat_message	0x150	0x145	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x473e50	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_change_team	0x350	0x343	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4741a0	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_graphics_info	0x2f0	0x2e8	src/graphwar_game_state_manager.rs	hard	implemented	F2	L1-location	0	0	Location src/… 硬归属；T38 台账 F2（已实现）
 0x474490	graphwar_game_state_manager.rs::GraphwarGameStateManager::setup_and_start_game	0x580	0x574	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
@@ -1606,13 +1608,13 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4759f0	graphwar_game_state_manager.rs::GraphwarGameStateManager::queue_end_turn_trigger::{{closure}}	0x560	0x560	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x475f50	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_update_function	0x3d0	0x3c8	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x476320	graphwar_game_state_manager.rs::GraphwarGameStateManager::set_player_num_soldiers	0x190	0x18e	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4764b0	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_axis_mode_change	0x140	0x139	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4765f0	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_time_mode_change	0x140	0x13f	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4764b0	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_axis_mode_change	0x140	0x139	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4765f0	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_time_mode_change	0x140	0x13f	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x476730	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_turn_mode_change	0x100	0xf6	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x476830	graphwar_game_state_manager.rs::GraphwarGameStateManager::remove_soldier_from_player	0x1f0	0x1e7	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	2	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x476a20	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_entity_removed_event	0x720	0x720	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x477140	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_new_connection_event	0x2d0	0x2c7	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x477410	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_function_mode_change	0x130	0x12e	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x477410	graphwar_game_state_manager.rs::GraphwarGameStateManager::request_function_mode_change	0x130	0x12e	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x477540	graphwar_game_state_manager.rs::GraphwarGameStateManager::handle_connection_removed_event	0x5a0	0x59b	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x477ae0		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x477b00		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
@@ -1622,19 +1624,19 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x477b80		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x477ba0		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x477bc0	graphwar_game_state_manager.rs::GraphwarGameStateManager::new	0x3e0	0x3db	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x477fa0	graphwar_game_state_manager::GraphwarGameStateManager::set_lock	0x70	0x68	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x478010	graphwar_game_state_manager::GraphwarGameStateManager::set_name	0xb0	0xae	src/graphwar_game_state_manager.rs	hard	real-missing	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x477fa0	graphwar_game_state_manager::GraphwarGameStateManager::set_lock	0x70	0x68	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x478010	graphwar_game_state_manager::GraphwarGameStateManager::set_name	0xb0	0xae	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4780c0	graphwar_game_state_manager.rs::GraphwarGameStateManager::set_state	0x230	0x22d	src/graphwar_game_state_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4782f0	graphwar_entity_effect_manager.rs::GraphwarEntityEffectManager::send_all_info_events	0x100	0xf3	src/graphwar_entity_effect_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4782f0	graphwar_entity_effect_manager.rs::GraphwarEntityEffectManager::subscribe_to_events_event_handler::{{closure}}	0x100	0xf3	src/graphwar_entity_effect_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4783f0	graphwar_entity_effect_manager.rs::GraphwarEntityEffectManager::handle_entity_removed_event::panic_cold_explicit	0x60	0x5e	src/graphwar_entity_effect_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x478450		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x478470		0x20	0x1d	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x478490	graphwar_entity_effect_manager.rs::GraphwarEntityEffectManager::new	0x160	0x159	src/graphwar_entity_effect_manager.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4785f0	graphwar_computer_player_manager.rs::GraphwarComputerPlayerManager::handle_tick	0x9d0	0x9ce	src/graphwar_computer_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x478fc0	graphwar_computer_player_manager.rs::GraphwarComputerPlayerManager::add_computer_player	0x560	0x558	src/graphwar_computer_player_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x479520	graphwar_computer_player_manager.rs::GraphwarComputerPlayerManager::handle_turn_info_event::panic_cold_explicit	0xde0	0xdd6	src/graphwar_computer_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x479520	graphwar_computer_player_manager.rs::GraphwarComputerPlayerManager::handle_turn_info_event	0xde0	0xdd6	src/graphwar_computer_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x47a300		0x220	0x212	—	—	real-missing	region:game	L5-region	1	0	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
-0x47a520	graphwar_computer_player_manager.rs::GraphwarComputerPlayerManager::handle_entity_removed_event::panic_cold_explicit	0x1a0	0x192	src/graphwar_computer_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x47a520	graphwar_computer_player_manager.rs::GraphwarComputerPlayerManager::handle_entity_removed_event	0x1a0	0x192	src/graphwar_computer_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x47a6c0		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x47a6e0		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x47a700		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x470000 内硬证据 49 条里 43 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
@@ -1777,7 +1779,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x485220		0x2a0	0x187	—	—	na:gdext-glue	prop:gdext	L4-prop	6	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x4854c0		0x10	0x16d	—	—	unknown	no-evidence	L-none	18	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4854d0		0x160	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x485630		0x8	0x6e	—	—	unknown	no-evidence	L-none	4	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x485630		0x8	0x6e	—	—	na:gdext-glue	prop:gdext	L4-prop	4	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x485638		0x68	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4856a0		0x400	0xff	—	—	real-missing	prop:game	L4-prop	22	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x485aa0		0x110	0x108	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -1843,7 +1845,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x496640		0x5e0	0x5dd	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x496c20		0x5c0	0x5b4	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4971e0		0x90	0x8e	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x497270		0x1a0	0x198	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x497270		0x1a0	0x198	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x497410		0x110	0xe3	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x497520		0xf0	0xf0	—	—	na:gdext-glue	loc-gdext	L1-location	4	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/storage/mod.rs
 0x497610		0xf0	0xf0	—	—	na:gdext-glue	loc-gdext	L1-location	1	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/storage/mod.rs
@@ -1876,7 +1878,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x499050		0x260	0x260	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refWrite a function of x to hit the target.A cons）⇒ gdext 侧产物
 0x4992b0		0x110	0x103	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refWrite a function of x to hit the target.A cons）⇒ gdext 侧产物
 0x4993c0		0x380	0x376	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refWrite a function of x to hit the target.A cons）⇒ gdext 侧产物
-0x499740	graphwar_level_manager.rs::GraphwarLevelManager::setup_level_13	0x4e30	0x4e2a	src/graphwar_level_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x499740	graphwar_level_manager.rs::GraphwarLevelManager::setup_level	0x4e30	0x4e2a	src/graphwar_level_manager.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x49e570	graphwar_level_manager::GraphwarLevelManager::setup_level_0	0xe0	0xd9	src/graphwar_level_manager.rs	hard	implemented	F1	L1-location	1	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x49e650	graphwar_level_manager::GraphwarLevelManager::setup_level_0	0x230	0x22a	src/graphwar_level_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x49e880	graphwar_level_manager::GraphwarLevelManager::setup_level_1	0x230	0x22a	src/graphwar_level_manager.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -1982,8 +1984,8 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4b1ec0		0xa0	0xa0	—	—	na:gdext-glue	loc-gdext	L1-location	3	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/tools/save_load.rs
 0x4b1f60	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/entity_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4b20e0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/entity_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4b2260	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_plane.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4b23e0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_plane.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4b2260	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_plane.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4b23e0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_plane.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4b2560		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（GraphwarSetupControlreadyEntityDrawerprocessUpcast faile；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4b2620		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（EntityDrawerprocessUpcast failed. This is a bug; please ；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4b26e0		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（EntityDrawerprocessUpcast failed. This is a bug; please ；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
@@ -2021,18 +2023,18 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4bbee0	axis_drawer::?::_	0x1b0	0x1a6	src/entity_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4bc090	graphwar_button::?::_	0x1b0	0x1a8	src/entity_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4bc240	axis_drawer::?::_	0x250	0x24f	src/entity_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4bc490	axis_drawer::?::_	0x220	0x219	src/graphwar_plane.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4bc6b0	axis_drawer::?::_	0x1b0	0x1a6	src/graphwar_plane.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4bc860	axis_drawer::?::_	0x250	0x24f	src/graphwar_plane.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4bcab0	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_plane.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4bc490	axis_drawer::?::_	0x220	0x219	src/graphwar_plane.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4bc6b0	axis_drawer::?::_	0x1b0	0x1a6	src/graphwar_plane.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4bc860	axis_drawer::?::_	0x250	0x24f	src/graphwar_plane.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4bcab0	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_plane.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4bcc60	graphwar_setup_control.rs::_::__init::__inner_init	0x220	0x219	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4bce80	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4bd030	axis_drawer::?::_	0x250	0x24f	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4bd280	axis_drawer::?::_	0x1b0	0x1a6	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4bd430	graphwar_long_press_animation.rs::_::__init::__inner_init	0x220	0x219	src/graphwar_long_press_animation.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4bd650	axis_drawer::?::_	0x1b0	0x1a6	src/graphwar_long_press_animation.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4bd800	axis_drawer::?::_	0x250	0x24f	src/graphwar_long_press_animation.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4bda50	axis_drawer::?::_	0x1b0	0x1aa	src/graphwar_long_press_animation.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4bd650	axis_drawer::?::_	0x1b0	0x1a6	src/graphwar_long_press_animation.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4bd800	axis_drawer::?::_	0x250	0x24f	src/graphwar_long_press_animation.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4bda50	axis_drawer::?::_	0x1b0	0x1aa	src/graphwar_long_press_animation.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4bdc00		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	0	引用 Godot 引擎/gdext 字符串（EntityDrawerprocessUpcast failed. This is a bug; please ；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4bdcc0		0xf0	0xf0	—	—	na:gdext-glue	str-godot	L3-str	0	0	引用 Godot 引擎/gdext 字符串（EntityDrawerprocessUpcast failed. This is a bug; please ；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4bddb0		0x120	0x11b	—	—	na:gdext-glue	str-godot	L3-str	3	0	引用 Godot 引擎/gdext 字符串（upcast_refresizedpos_info_eventlife_info_evententity_rem）⇒ gdext 侧产物
@@ -2073,16 +2075,16 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4c4850	graphwar_setup_control.rs::GraphwarSetupControl::force_title_update	0x350	0x34b	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4c4ba0		0x80	0x7d	—	—	na:gdext-glue	str-godot	L3-str	2	0	引用 Godot 引擎/gdext 字符串（upcast_refresizedpos_info_eventlife_info_evententity_rem）⇒ gdext 侧产物
 0x4c4c20	graphwar_setup_control.rs::GraphwarSetupControl::connect_entry_buttons	0xf30	0xf23	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4c5b50	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons	0xb0	0xa9	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4c5c00	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons	0xb0	0xa9	src/graphwar_game_client.rs	hard	unknown	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4c5cb0	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons	0xb0	0xa9	src/graphwar_game_client.rs	hard	unknown	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4c5d60	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons	0xb0	0xa9	src/graphwar_game_client.rs	hard	unknown	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4c5b50	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0xb0	0xa9	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4c5c00	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0xb0	0xa9	src/graphwar_game_client.rs	hard	unknown	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4c5cb0	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0xb0	0xa9	src/graphwar_game_client.rs	hard	unknown	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4c5d60	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0xb0	0xa9	src/graphwar_game_client.rs	hard	unknown	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4c5e10		0x50	0x48	—	—	na:gdext-glue	str-godot	L3-str	2	0	引用 Godot 引擎/gdext 字符串（upcast_refresizedpos_info_eventlife_info_evententity_rem）⇒ gdext 侧产物
 0x4c5e60		0x140	0x132	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4c5fa0		0x580	0x575	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x4c6520		0x480	0x480	—	—	real-missing	str-game	L3-str	1	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：https://graphwar.com/graphwar_II_ip.txtFailed to get global serv
 0x4c69a0		0x1a0	0x197	—	—	na:gdext-glue	prop:gdext	L4-prop	1	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
-0x4c6b40		0x180	0x175	—	—	real-missing	prop:game	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x4c6b40		0x180	0x175	—	—	na:std-mono	prop:std	L4-prop	1	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
 0x4c6cc0		0x280	0x277	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refresizedpos_info_eventlife_info_evententity_rem）⇒ gdext 侧产物
 0x4c6f40	graphwar_replay_control.rs::GraphwarReplayScreenControl::process	0x2250	0x224b	src/graphwar_replay_control.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4c9190		0x6130	0x6122	—	—	real-missing	str-game	L3-str	1	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：res://unlock.svg
@@ -2090,18 +2092,18 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4cf380		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（GraphwarSetupControlreadyEntityDrawerprocessUpcast faile；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4cf440		0x230	0x224	—	—	real-missing	str-game	L3-str	0	1	引用**强**游戏侧串（res:// / 类名 / 场景文件）：res://team1_entry.tscnres://team2_entry.tscntext_changedvisibili
 0x4cf670	graphwar_setup_control.rs::GraphwarSetupControl::ready	0x2630	0x2622	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4d1ca0	graphwar_setup_control::GraphwarSetupControl::ready	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x4d1d50	graphwar_setup_control::GraphwarSetupControl::ready	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x4d1e00	graphwar_setup_control::GraphwarSetupControl::ready	0x60	0x58	src/graphwar_setup_control.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x4d1e60	graphwar_setup_control::GraphwarSetupControl::ready	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
+0x4d1ca0	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d1d50	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d1e00	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0x60	0x58	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d1e60	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d1f10	graphwar_setup_control::GraphwarSetupControl::ready	0x640	0x63e	src/graphwar_setup_control.rs	hard	implemented	F2	L1-location	1	1	Location src/… 硬归属；T38 台账 F2（已实现）
-0x4d2550	graphwar_setup_control::GraphwarSetupControl::ready	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
+0x4d2550	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xb0	0xa2	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d2600	graphwar_setup_control::GraphwarSetupControl::ready	0x970	0x96f	src/graphwar_setup_control.rs	hard	implemented	F2	L1-location	1	1	Location src/… 硬归属；T38 台账 F2（已实现）
 0x4d2f70	graphwar_setup_control::GraphwarSetupControl::ready	0x210	0x202	src/graphwar_setup_control.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
 0x4d3180	graphwar_setup_control.rs::GraphwarSetupControl::process	0x3e40	0x3e37	src/graphwar_setup_control.rs	hard	implemented	F2	L1-location	0	1	Location src/… 硬归属；T38 台账 F2（已实现）
 0x4d6fc0		0xc00	0xbfa	—	—	na:std-mono	std:	L1-location	2	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x4d7bc0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_long_press_animation.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4d7d40	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_long_press_animation.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d7bc0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_long_press_animation.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4d7d40	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_long_press_animation.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4d7ec0		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（processUpcast failed. This is a bug; please report it.on；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4d7f80		0xc0	0xb6	—	—	real-missing	str-game	L3-str	0	1	引用**强**游戏侧串（res:// / 类名 / 场景文件）：GraphwarLongPressAnimationuser://crash_log.txt<unnamed>unknowndr
 0x4d8040		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyEntityDrawerprocessUpcast failed. This is a bug; pl；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
@@ -2113,29 +2115,29 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4d8740		0x30	0x30	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d8770		0x70	0x34	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d87e0		0xd0	0xc1	—	—	unknown	str-weak-game	L3-str	0	1	只命中**弱**游戏词（UnfinishedSamplechat_message_reqphics_info_event）；`.rodata` 串连续排布会把相邻串一起读出，弱词在三方 crate 的字段名 blob 里也会命中 ⇒ 不单独定案
-0x4d88b0	—	0xb0	0xa7	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d88b0	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xb0	0xa7	src/graphwar_setup_control.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d8960		0x3c	0x91	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d899c		0x64	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x4d8a00	—	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d8a00	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d8b00		0x1c0	0x1b3	—	—	na:gdext-glue	loc-gdext	L1-location	0	6	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-cell/src/guards.rs
 0x4d8cc0		0x1f	0x6c	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d8cdf		0x51	—	—	—	real-missing	prop:game	L4-prop	0	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x4d8d30	—	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d8d30	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d8e30		0x1c0	0x1bf	—	—	na:gdext-glue	loc-gdext	L1-location	0	2	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-cell/src/guards.rs
-0x4d8ff0	—	0xef	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d8ff0	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xef	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d90df		0x61	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9140		0x50	0x4c	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9190		0x22	0x6c	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d91b2		0x4e	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9200		0x6	0x6c	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9206		0x6a	—	—	—	real-missing	prop:game	L4-prop	0	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x4d9270	—	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4d9370	—	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d9270	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d9370	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}	0x100	0xf4	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d9470		0x80	0x5	—	—	real-missing	prop:game	L4-prop	0	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x4d94f0		0x10	0x5	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x4d9500	—	0xf0	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4d95f0	—	0xf0	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4d96e0	—	0x140	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d9500	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xf0	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d95f0	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0xf0	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4d96e0	graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}	0x140	0xf0	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4d9820		0x10	0x1	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9830		0xa0	0xa0	—	—	na:gdext-glue	str-godot	L3-str	0	0	引用 Godot 引擎/gdext 字符串（on_resizedupcast_refresizedpos_info_eventlife_info_event）⇒ gdext 侧产物
 0x4d98d0		0x230	0x22c	—	—	na:gdext-glue	prop:gdext	L4-prop	0	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
@@ -2144,13 +2146,13 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4d9c90		0xc0	0xc0	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9d50		0x10	0x1	—	—	unknown	no-evidence	L-none	0	13	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4d9d60		0x480	0x2fb	—	—	real-missing	prop:game	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x4da1e0		0xb0	0x41	—	—	real-missing	prop:game	L4-prop	15	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x4da1e0		0xb0	0x41	—	—	unknown	no-evidence	L-none	15	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4da290		0xb	0x9a	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4da29b		0x95	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x4da330		0x50	0x41	—	—	unknown	no-evidence	L-none	12	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x4da330		0x50	0x41	—	—	na:gdext-glue	prop:gdext	L4-prop	12	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x4da380		0x60	0x5c	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4da3e0		0x60	0x5f	—	—	unknown	no-evidence	L-none	3	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x4da440		0x90	0x41	—	—	real-missing	prop:game	L4-prop	26	3	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x4da440		0x90	0x41	—	—	na:gdext-glue	prop:gdext	L4-prop	26	3	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x4da4d0		0x30	0x10	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4da500		0xd0	0xc5	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4da5d0		0xb0	0xaf	—	—	real-missing	prop:game	L4-prop	7	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
@@ -2166,7 +2168,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4db030		0x70	0x6e	—	—	unknown	no-evidence	L-none	4	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4db0a0		0x130	0x121	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x4db1d0		0x110	0x107	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x4db2e0		0xe0	0xdc	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x4db2e0		0xe0	0xdc	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x4db3c0		0x18	0x568	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x4db3d8		0x558	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4db930		0x40	0x37	—	—	na:gdext-glue	str-godot	L3-str	7	0	引用 Godot 引擎/gdext 字符串（upcast_refresizedpos_info_eventlife_info_evententity_rem）⇒ gdext 侧产物
@@ -2231,7 +2233,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4de450		0x290	0x288	—	—	na:gdext-glue	loc-gdext	L1-location	1	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/meta/signature.rs, /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/method.rs
 0x4de6e0		0x290	0x28d	—	—	na:gdext-glue	loc-gdext	L1-location	1	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/meta/signature.rs, /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/method.rs
 0x4de970		0x290	0x288	—	—	na:gdext-glue	loc-gdext	L1-location	2	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/meta/signature.rs, /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/method.rs
-0x4dec00	—	0x210	0x205	src/graphwar_lan_vbox.rs	hard	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
+0x4dec00	graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}	0x210	0x205	src/graphwar_lan_vbox.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4dee10		0x200	0x1ff	—	—	na:gdext-glue	loc-gdext	L1-location	2	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/method.rs
 0x4df010		0x290	0x288	—	—	na:gdext-glue	loc-gdext	L1-location	1	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/meta/signature.rs, /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/method.rs
 0x4df2a0		0x290	0x288	—	—	na:gdext-glue	loc-gdext	L1-location	3	0	gdext/godot 的 Location（git checkout 或 build 产物）⇒ /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/meta/signature.rs, /home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/method.rs
@@ -2249,8 +2251,8 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4e0c20		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyPlayerShowcaseGraphwarLanVBoxAudioServerget_bus_ind；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4e0ce0		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（processupcast_refEffectDrawerGraphwarSetupControlGraphwa；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4e0da0		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（EffectDrawerGraphwarSetupControlGraphwarFunctionInputUpc；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
-0x4e0e60	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_button.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e0fe0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_button.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4e0e60	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_button.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e0fe0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_button.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e1160	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/player_showcase.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e12e0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/player_showcase.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e1460		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyPlayerShowcaseGraphwarLanVBoxAudioServerget_bus_ind；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
@@ -2279,16 +2281,16 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4e4ec0		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（PlayerShowcaseGraphwarLanVBoxAudioServerget_bus_indexCon；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4e4f80		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyPlayerShowcaseGraphwarLanVBoxAudioServerget_bus_ind；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4e5040		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（PlayerShowcaseGraphwarLanVBoxAudioServerget_bus_indexCon；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
-0x4e5100	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_ad_switch.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e5280	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_ad_switch.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4e5100	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_ad_switch.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e5280	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_ad_switch.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e5400	player_showcase.rs::PlayerShowcase::draw	0x1080	0x1076	src/player_showcase.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4e6480	player_showcase.rs::PlayerShowcase::ready	0x470	0x46b	src/player_showcase.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4e68f0	player_showcase.rs::PlayerShowcase::process	0x290	0x290	src/player_showcase.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4e6b80		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyPlayerShowcaseGraphwarLanVBoxAudioServerget_bus_ind；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4e6c40		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（GraphwarLanVBoxAudioServerget_bus_indexControladd_theme_；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4e6d00		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	1	引用 Godot 引擎/gdext 字符串（readyPlayerShowcaseGraphwarLanVBoxAudioServerget_bus_ind；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
-0x4e6dc0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_function_input.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e6f40	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_function_input.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4e6dc0	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_function_input.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e6f40	axis_drawer::AxisDrawer::__register_methods	0x180	0x179	src/graphwar_function_input.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e70c0	graphwar_root_node::?::_	0x1a0	0x19c	src/axis_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e7260	graphwar_root_node::?::_	0x210	0x20f	src/axis_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e7470	axis_drawer.rs::_::__init::__inner_init	0x250	0x245	src/axis_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
@@ -2298,9 +2300,9 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4e7bc0	effect_drawer.rs::_::__init::__inner_init	0x250	0x245	src/effect_drawer.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4e7e10	graphwar_root_node::?::_	0x210	0x20f	src/effect_drawer.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e8020	graphwar_button.rs::_::__init::__inner_init	0x210	0x20f	src/graphwar_button.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e8230	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_button.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e83d0	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_button.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e8580	graphwar_root_node::?::_	0x250	0x245	src/graphwar_button.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4e8230	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_button.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e83d0	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_button.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e8580	graphwar_root_node::?::_	0x250	0x245	src/graphwar_button.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e87d0	graphwar_root_node::?::_	0x1a0	0x19c	src/player_showcase.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e8970	graphwar_button::?::_	0x1b0	0x1a8	src/player_showcase.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e8b20	graphwar_root_node::?::_	0x250	0x245	src/player_showcase.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
@@ -2309,13 +2311,13 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4e91d0	axis_drawer::?::_	0x1b0	0x1aa	src/graphwar_lan_vbox.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e9380	graphwar_root_node::?::_	0x210	0x20f	src/graphwar_lan_vbox.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e9590	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_lan_vbox.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
-0x4e9730	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_ad_switch.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e98e0	graphwar_root_node::?::_	0x210	0x20f	src/graphwar_ad_switch.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e9af0	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_ad_switch.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4e9730	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_ad_switch.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e98e0	graphwar_root_node::?::_	0x210	0x20f	src/graphwar_ad_switch.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4e9af0	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_ad_switch.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4e9c90	graphwar_ad_switch.rs::_::__init::__inner_init	0x250	0x245	src/graphwar_ad_switch.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4e9ee0	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_function_input.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4ea080	graphwar_root_node::?::_	0x250	0x245	src/graphwar_function_input.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
-0x4ea2d0	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_function_input.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
+0x4e9ee0	graphwar_root_node::?::_	0x1a0	0x19c	src/graphwar_function_input.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4ea080	graphwar_root_node::?::_	0x250	0x245	src/graphwar_function_input.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x4ea2d0	graphwar_button::?::_	0x1b0	0x1a8	src/graphwar_function_input.rs	hard	na:gdext-glue	T82	L1-t82	0	1	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x4ea480	graphwar_function_input.rs::_::__init::__inner_init	0x210	0x20f	src/graphwar_function_input.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4ea690		0x4c	0xc2d	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4ea6dc		0x1c4	—	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -2400,7 +2402,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4efd70	player_showcase.rs::PlayerShowcase::on_text_change	0x2a0	0x296	src/player_showcase.rs	hard	implemented	F1	L1-location	2	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4f0010		0xc0	0xb6	—	—	na:gdext-glue	str-godot	L3-str	0	0	引用 Godot 引擎/gdext 字符串（PlayerShowcaseGraphwarLanVBoxAudioServerget_bus_indexCon；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
 0x4f00d0		0xf0	0xf0	—	—	na:gdext-glue	str-godot	L3-str	0	0	引用 Godot 引擎/gdext 字符串（PlayerShowcaseGraphwarLanVBoxAudioServerget_bus_indexCon；同时含类名/方法名 blob，是方法注册壳）⇒ gdext 侧产物
-0x4f01c0	graphwar_lan_vbox::GraphwarLanVBox::update_game_list	0xf0	0xeb	src/graphwar_lan_vbox.rs	hard	implemented	F2	L1-location	0	2	Location src/… 硬归属；T38 台账 F2（已实现）
+0x4f01c0	graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}	0xf0	0xeb	src/graphwar_lan_vbox.rs	hard	implemented	F1	L1-location	0	2	Location src/… 硬归属；T38 台账 F1（已实现）
 0x4f02b0		0xc0	0xb6	—	—	real-missing	str-game	L3-str	0	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：are_ads_enabledget_ad_unit_idGraphwar Clipon_size_changedon_text
 0x4f0370		0xc0	0xb6	—	—	real-missing	str-game	L3-str	0	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：get_ad_unit_idGraphwar Clipon_size_changedon_text_submittedforce
 0x4f0430		0xf0	0xf0	—	—	real-missing	str-game	L3-str	0	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：get_ad_unit_idGraphwar Clipon_size_changedon_text_submittedforce
@@ -2489,7 +2491,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x4ffef0		0xc0	0xb4	—	—	na:std-mono	std:	L1-location	0	1	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x4fffb0		0x10	0x5	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x4fffc0		0xb0	0x37	—	—	na:std-mono	std:	L1-location	0	1	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x500070	—	0x140	0x13b	src/graphwar_lan_vbox.rs	hard	na:std-mono	prop:std	L4-prop	0	2	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
+0x500070	graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}	0x140	0x13b	src/graphwar_lan_vbox.rs	hard	implemented	F1	L1-location	0	2	Location src/… 硬归属；T38 台账 F1（已实现）
 0x5001b0		0x40	0x37	—	—	na:std-mono	std:	L1-location	0	1	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x5001f0		0x40	0x37	—	—	na:std-mono	std:	L1-location	0	1	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x500230		0x40	0x37	—	—	na:std-mono	std:	L1-location	0	1	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
@@ -2504,20 +2506,20 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x500530		0x40	0x37	—	—	na:std-mono	std:	L1-location	0	1	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x500570		0x10	0x1	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x500580		0x30	0x2f	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x5005b0	—	0x260	0x258	src/graphwar_lan_vbox.rs	hard	na:gdext-glue	prop:gdext	L4-prop	0	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
+0x5005b0	graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}	0x260	0x258	src/graphwar_lan_vbox.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x500810		0x1e0	0x1d9	—	—	real-missing	str-game	L3-str	0	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：on_text_changetext_changedGraphwarLongPressAnimationexplicit pan
 0x5009f0		0x170	0x16a	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x500b60		0x480	0x47f	—	—	real-missing	str-game	L3-str	0	0	引用**强**游戏侧串（res:// / 类名 / 场景文件）：are_ads_enabledget_ad_unit_idGraphwar Clipon_size_changedon_text
 0x500fe0		0x10	0x1	—	—	unknown	no-evidence	L-none	0	7	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x500ff0		0x90	0x81	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x501080		0x70	0x41	—	—	unknown	no-evidence	L-none	21	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x501080		0x70	0x41	—	—	na:gdext-glue	prop:gdext	L4-prop	21	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x5010f0		0x60	0x5a	—	—	real-missing	prop:game	L4-prop	21	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x501150		0x50	0x41	—	—	unknown	no-evidence	L-none	21	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x501150		0x50	0x41	—	—	na:gdext-glue	prop:gdext	L4-prop	21	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x5011a0		0x90	0x30	—	—	na:gdext-glue	prop:gdext	L4-prop	5	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
-0x501230		0xb0	0x41	—	—	unknown	no-evidence	L-none	43	2	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x501230		0xb0	0x41	—	—	na:gdext-glue	prop:gdext	L4-prop	43	2	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x5012e0		0x80	0x71	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
-0x501360		0x50	0x42	—	—	na:std-mono	prop:std	L4-prop	3	2	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 std；**这是推断，不是观测**
-0x5013b0		0x170	0x101	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
+0x501360		0x50	0x42	—	—	real-missing	prop:game	L4-prop	3	2	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x5013b0		0x170	0x101	—	—	na:gdext-glue	prop:gdext	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 gdext；**这是推断，不是观测**
 0x501520		0x40	0x3f	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x501560		0x90	0x84	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x5015f0		0x65	0x380	—	—	unknown	no-evidence	L-none	6	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -2799,7 +2801,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x515140		0x70	0x70	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x5151b0		0x170	0x169	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x515320		0xd0	0xc9	—	—	real-missing	region:game	L5-region	2	0	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
-0x5153f0	graphwar_backend::GraphwarBackend::subscribe_to_event_with_id	0x110	0x10a	src/graphwar_backend.rs	hard	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
+0x5153f0	graphwar_backend::GraphwarBackend::subscribe_to_event_with_id::{{closure}}	0x110	0x10a	src/graphwar_backend.rs	hard	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x515500		0x90	0x85	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x515590	graphwar_backend::GraphwarBackend::start_client_to_local_server	0x410	0x406	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
 0x5159a0	graphwar_backend::GraphwarBackend::start_client_to_remote_server	0x190	0x184	src/graphwar_game_client.rs	hard	implemented	F1	L1-location	0	1	Location src/… 硬归属；T38 台账 F1（已实现）
@@ -2828,7 +2830,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x518aa0		0x230	0x22f	—	—	real-missing	region:game	L5-region	3	0	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x518cd0		0x240	0x23e	—	—	real-missing	region:game	L5-region	4	0	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x518f10	graphwar_name_manager.rs::GraphwarNameManager::send_all_info_events	0x120	0x11d	src/graphwar_name_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x519030	graphwar_name_manager.rs::GraphwarNameManager::handle_entity_removed_event::panic_cold_explicit	0x90	0x8d	src/graphwar_name_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x519030	graphwar_name_manager.rs::GraphwarNameManager::handle_entity_removed_event	0x90	0x8d	src/graphwar_name_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x5190c0		0x20	0x1d	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x5190e0		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x519100		0x250	0x242	—	—	real-missing	region:game	L5-region	2	0	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
@@ -2843,9 +2845,9 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x519b80		0x20	0x1d	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x519ba0		0x1e0	0x1de	—	—	real-missing	region:game	L5-region	2	0	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x519d80	graphwar_effect_manager.rs::GraphwarEffectManager::tick	0x1c0	0x1ba	src/graphwar_effect_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x519f40	graphwar_local_player_manager.rs::GraphwarLocalPlayerManager::handle_player_info::panic_cold_explicit	0x630	0x62c	src/graphwar_local_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x51a570	graphwar_local_player_manager.rs::GraphwarLocalPlayerManager::handle_connected_to_server::panic_cold_explicit	0xa0	0x97	src/graphwar_local_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
-0x51a610	graphwar_local_player_manager.rs::GraphwarLocalPlayerManager::handle_entity_removed_event::panic_cold_explicit	0xe0	0xd6	src/graphwar_local_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x519f40	graphwar_local_player_manager.rs::GraphwarLocalPlayerManager::handle_player_info	0x630	0x62c	src/graphwar_local_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x51a570	graphwar_local_player_manager.rs::GraphwarLocalPlayerManager::handle_connected_to_server	0xa0	0x97	src/graphwar_local_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x51a610	graphwar_local_player_manager.rs::GraphwarLocalPlayerManager::handle_entity_removed_event	0xe0	0xd6	src/graphwar_local_player_manager.rs	hard	implemented	F1	L1-location	0	0	Location src/… 硬归属；T38 台账 F1（已实现）
 0x51a6f0		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x51a710		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x51a730		0x20	0x20	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
@@ -2859,7 +2861,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x51fed0		0x140	0x49	—	—	real-missing	region:game	L5-region	0	1	布局局部性推断：region 0x510000 内硬证据 39 条里 36 条是 game（≥85%） ⇒ 该 region 的未定函数判 game；**是推断不是观测**
 0x520010		0x10	0x10	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x520020		0xe0	0x6c	—	—	real-missing	prop:game	L4-prop	0	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
-0x520100	graphwar_game_state_manager::GraphwarGameStateManager::request_update_function	0x400	0x152	src/graphwar_backend.rs	hard	real-missing	prop:game	L4-prop	0	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x520100	graphwar_backend::GraphwarBackend::subscribe_to_event_with_id::{{closure}}	0x400	0x152	src/graphwar_backend.rs	hard	real-missing	prop:game	L4-prop	0	1	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x520500		0x120	0x8e	—	—	real-missing	prop:game	L4-prop	7	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x520620		0x130	0x124	—	—	real-missing	prop:game	L4-prop	2	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x520750		0x90	0x86	—	—	unknown	no-evidence	L-none	2	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -2926,7 +2928,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x521ca0		0x240	0xc3	—	—	real-missing	prop:game	L4-prop	4	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x521ee0		0x16	0x7e	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x521ef6		0x17a	—	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（upcast_refresizedpos_info_eventlife_info_evententity_rem）⇒ gdext 侧产物
-0x522070	—	0x480	0x477	src/graphwar_play_screen_control.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x522070	—	0x480	0x477	src/graphwar_play_screen_control.rs	hard	na:std-mono	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x5224f0		0x220	0x21d	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x522710		0x180	0x17e	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x522890		0x140	0x13d	—	—	real-missing	prop:game	L4-prop	6	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
@@ -2935,9 +2937,9 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x522e50		0x1d0	0x1d0	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x523020		0x230	0x22e	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x523250		0x1c0	0x1bb	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x523410	—	0x2d0	0x2c1	src/graphwar_replay_control.rs	hard	implemented	F1	L1-location	1	0	Location src/… 硬归属；T38 台账 F1（已实现）
+0x523410	—	0x2d0	0x2c1	src/graphwar_replay_control.rs	hard	na:std-mono	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x5236e0		0x1e0	0x1d6	—	—	na:std-mono	std:	L1-location	2	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
-0x5238c0	—	0x360	0x358	src/graphwar_audio_control.rs	hard	real-missing	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
+0x5238c0	—	0x360	0x358	src/graphwar_audio_control.rs	hard	na:std-mono	T82	L1-t82	1	0	T82 §129 逐条裁决（见 fixtures/f3_triage.tsv）
 0x523c20		0x1c0	0x1b8	—	—	na:gdext-glue	str-godot	L3-str	1	0	引用 Godot 引擎/gdext 字符串（cloneinit_ref() failed）⇒ gdext 侧产物
 0x523de0		0x360	0x359	—	—	na:std-mono	std:	L1-location	1	0	/rustc/…/library/ 或 /rust/deps/ 的 Location ⇒ 标准库代码（）
 0x524140		0x1b0	0x1a3	—	—	unknown	no-evidence	L-none	1	0	无 Location、无结构证据、无可判串 ⇒ 判不了
@@ -3020,7 +3022,7 @@ addr	name	size	size_fde	module	attributed	cls	sub	layer	callers	slots	evid
 0x527e40		0x20	0x13	—	—	unknown	no-evidence	L-none	0	2	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x527e60		0x10	0x10	—	—	unknown	no-evidence	L-none	0	1	无 Location、无结构证据、无可判串 ⇒ 判不了
 0x527e70		0x10	0x10	—	—	unknown	no-evidence	L-none	0	0	无 Location、无结构证据、无可判串 ⇒ 判不了
-0x527e80		0x60	0x20	—	—	real-missing	prop:game	L4-prop	54	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
+0x527e80		0x60	0x20	—	—	na:other	drop-glue	L1-t93	54	0	T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（D M=GraphwarModuleContainer）
 0x527ee0		0x20	0x20	—	—	real-missing	prop:game	L4-prop	25	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x527f00		0x6	0x20	—	—	real-missing	prop:game	L4-prop	7	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**
 0x527f06		0x24	—	—	—	real-missing	prop:game	L4-prop	57	0	调用图 3 轮扩散（规则同 docs/02 §10：≥2 条已标注邻居边且同一族占 ≥67%） ⇒ 推断为 game；**这是推断，不是观测**

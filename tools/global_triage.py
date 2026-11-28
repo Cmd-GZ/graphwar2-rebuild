@@ -38,10 +38,19 @@ T82（`docs/06` §129）给了 F3 的 153 条的判据（`na:std-mono` / `na:gde
 
     PY=$WT/.reference/venv/bin/python
     $PY tools/global_triage.py --build-index       # 全 .text 反汇编 + 特征索引（约 1 分钟，缓存到 .agent-work）
-    $PY tools/global_triage.py --control           # 正/负对照（T82 的 153 条 + T71 的 31 条）
+    $PY tools/global_triage.py --control           # 正/负对照（T82 的 F3 裁决 + T71 的 31 条）
     $PY tools/global_triage.py                     # 全量：写 fixtures/global_triage.tsv + 打印统计
+    $PY tools/global_triage.py --android-census    # 兄弟构建真名普查 + fixtures/global_triage_modules.tsv
     $PY tools/global_triage.py --dump 0x4600e0 ... # 单条取证（人工复核用）
     $PY tools/global_triage.py --sample 20         # 预注册抽样（人工复核用）
+
+    # T96 新增（预注册 fixtures/global_triage_refresh_plan.txt）：
+    $PY tools/global_triage.py --no-manual --out BASE.tsv   # 不含 T93 人工裁决的基线（不写 fixtures）
+    $PY tools/global_triage.py --self-check --baseline BASE.tsv   # 自校验 S1/S2/S3（只读，rc≠0 即失败）
+    $PY tools/global_triage.py --write-diff OLD.tsv          # 逐行改判台账 fixtures/global_triage_refresh_diff.tsv
+
+`T93_MANUAL_NA`（49 行 → `na:other`）是**唯一**在五层判据之外的人工裁决表，应用在 L4/L5 **之后**；
+它的地址集合每次运行都与 `fixtures/gap_modcontainer.tsv` 交叉校验（多一条/少一条直接退出）。
 
 地址一律 **ELF vaddr（RVA）**。本工具**不改**任何既有计分工具。
 """
@@ -630,7 +639,161 @@ def load_f3_label():
                 F3_LABEL[int(p[0], 16)] = p[4]
 
 
-def build_all(verbose=True):
+
+# ---------------------------------------------------------------------------
+# **T93 人工裁决表**（预注册：`fixtures/global_triage_refresh_plan.txt` §2.2 / §3.2）
+#
+# 为什么这张表必须存在：L2 的结构规则（`struct_na` 的 A/B/C 组）只认 **std 排序/比较单态化**；
+# `GraphwarModuleContainer::add_module::<M>` / `get_module::<M>` 是**本 crate 自己的泛型单态化**
+# （TypeId 常量 + `dyn Any` vtable + `HashMap::insert`/`hash_one`），一个 `panic::Location` 都没有
+# ⇒ 进不了按 Location 建的 527，只能落到 L5 布局 / L4 调用图扩散 ⇒ 旧快照把它们误判成
+# `real-missing/prop:game`（"把已实现函数的邻居也算成 real"，T86 §134.7 第 1 条自己预告过）。
+#
+# 证据（**逐行**，不是"按名字猜"）：`fixtures/gap_modcontainer.tsv` 69 行 × T93 `docs/06` §139.2–§139.4 ——
+# 三个等距块（x86 `0x4694f0 + i·0xa0` / `0x46a490 + i·0x170` / `0x46c5a0 + i·0x220`，独立按函数体形态复算）
+# + 同构建 TypeId 常量锚定 + 装配点调用序配对（4 处 22/20/1/1）⇒ 48 条 = **2 个泛型方法的其它实例化副本**
+# + 1 条 `core::ptr::drop_in_place<Weak<RefCell<..>>>`（编译器生成）⇒ **源码函数 3 个，源码级缺口 0**。
+#
+# 表的形状：`addr -> (sub, note)`；**地址集合运行时与 gap_modcontainer.tsv 交叉校验**（`_manual_cross_check()`），
+# 少一条/多一条/子类不符 ⇒ 直接退出（不许静默放宽）。
+# 应用位置 = L4/L5 **之后**（`apply_manual`），所以改判面恰好是这 49 行（自校验 S3 靠这条逐行核）。
+# ---------------------------------------------------------------------------
+T93_MANUAL_NA = {
+# 49 行 = 48 单态化副本（A:add_module 25 型 / B:get_module 23 型）+ 1 编译器 drop glue（D）
+    0x4694f0: ("own-generic-mono", "A M=GraphwarLocalPlayerManager"),
+    0x469590: ("own-generic-mono", "A M=GraphwarColorManager"),
+    0x469630: ("own-generic-mono", "A M=GraphwarEffectManager"),
+    0x4696d0: ("own-generic-mono", "A M=GraphwarServerConnectionHandler"),
+    0x469770: ("own-generic-mono", "A M=GraphwarTeamManager"),
+    0x469810: ("own-generic-mono", "A M=GraphwarTickHandler"),
+    0x4698b0: ("own-generic-mono", "A M=GraphwarGraphicsManager"),
+    0x469950: ("own-generic-mono", "A M=GraphwarClientConnectionHandler"),
+    0x4699f0: ("own-generic-mono", "A M=GraphwarBanList"),
+    0x469a90: ("own-generic-mono", "A M=GraphwarModeManager"),
+    0x469b30: ("own-generic-mono", "A M=GraphwarLifeManager"),
+    0x469bd0: ("own-generic-mono", "A M=FunctionHistoryRecorder"),
+    0x469c70: ("own-generic-mono", "A M=GraphwarGameRecorder"),
+    0x469d10: ("own-generic-mono", "A M=GraphwarEntityEffectManager"),
+    0x469db0: ("own-generic-mono", "A M=GraphwarFunctionManager"),
+    0x469e50: ("own-generic-mono", "A M=GraphwarComputerPlayerManager"),
+    0x469ef0: ("own-generic-mono", "A M=GraphwarRankManager"),
+    0x469f90: ("own-generic-mono", "A M=GraphwarPlayerManager"),
+    0x46a030: ("own-generic-mono", "A M=GraphwarTurnManager"),
+    0x46a0d0: ("own-generic-mono", "A M=GraphwarPlanePosManager"),
+    0x46a170: ("own-generic-mono", "A M=GraphwarSoldierManager"),
+    0x46a210: ("own-generic-mono", "A M=GraphwarGameStateManager"),
+    0x46a2b0: ("own-generic-mono", "A M=GraphwarNameManager"),
+    0x46a350: ("own-generic-mono", "A M=GraphwarTargetManager"),
+    0x46a3f0: ("own-generic-mono", "A M=GraphwarObstacleManager"),
+    0x46a490: ("own-generic-mono", "B M=GraphwarPlayerManager"),
+    0x46a600: ("own-generic-mono", "B M=GraphwarEffectManager"),
+    0x46a770: ("own-generic-mono", "B M=GraphwarSoldierManager"),
+    0x46a8e0: ("own-generic-mono", "B M=GraphwarGraphicsManager"),
+    0x46aa50: ("own-generic-mono", "B M=GraphwarTickHandler"),
+    0x46abc0: ("own-generic-mono", "B M=GraphwarModeManager"),
+    0x46ad30: ("own-generic-mono", "B M=GraphwarPlanePosManager"),
+    0x46aea0: ("own-generic-mono", "B M=GraphwarGameRecorder"),
+    0x46b010: ("own-generic-mono", "B M=FunctionHistoryRecorder"),
+    0x46b180: ("own-generic-mono", "B M=GraphwarClientConnectionHandler"),
+    0x46b2f0: ("own-generic-mono", "B M=GraphwarServerConnectionHandler"),
+    0x46b460: ("own-generic-mono", "B M=GraphwarComputerPlayerManager"),
+    0x46b5d0: ("own-generic-mono", "B M=GraphwarColorManager"),
+    0x46b740: ("own-generic-mono", "B M=GraphwarTurnManager"),
+    0x46b8b0: ("own-generic-mono", "B M=GraphwarTeamManager"),
+    0x46ba20: ("own-generic-mono", "B M=GraphwarNameManager"),
+    0x46bb90: ("own-generic-mono", "B M=GraphwarFunctionManager"),
+    0x46bd00: ("own-generic-mono", "B M=GraphwarObstacleManager"),
+    0x46be70: ("own-generic-mono", "B M=GraphwarGameStateManager"),
+    0x46bfe0: ("own-generic-mono", "B M=GraphwarRankManager"),
+    0x46c150: ("own-generic-mono", "B M=GraphwarTargetManager"),
+    0x46c2c0: ("own-generic-mono", "B M=GraphwarLifeManager"),
+    0x46c430: ("own-generic-mono", "B M=GraphwarLocalPlayerManager"),
+    0x527e80: ("drop-glue", "D M=GraphwarModuleContainer"),
+}
+
+MANUAL_LAYER = "L1-t93"
+GAP_MODCONTAINER = os.path.join(ROOT, "fixtures", "gap_modcontainer.tsv")
+
+
+def _load_gap_modcontainer():
+    """读 T93 的逐行台账（只读引用，不改它）。返回 {addr: row}；只取 `group ∉ {C}` 的 49 行。"""
+    if not os.path.exists(GAP_MODCONTAINER):
+        return None
+    rows, hdr = {}, None
+    with open(GAP_MODCONTAINER, encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("#") or not ln.strip():
+                continue
+            p = ln.rstrip("\n").split("\t")
+            if hdr is None:
+                hdr = p
+                continue
+            if not p[0].startswith("0x"):
+                continue
+            d = dict(zip(hdr, p))
+            if d["linux_addr"] in ("", "—"):
+                continue
+            if d["group"].startswith("C"):
+                continue                    # C 组 20 条**本来就在 527**（F1），不改判
+            rows[int(d["linux_addr"], 16)] = d
+    return rows
+
+
+def _manual_cross_check():
+    """返回错误串（None = 通过）。用 T93 台账交叉校验人工表的 49 个地址与子类。"""
+    want = _load_gap_modcontainer()
+    if want is None:
+        return "缺 %s（T93 逐行台账）⇒ 人工表无法交叉校验" % GAP_MODCONTAINER
+    got = set(T93_MANUAL_NA)
+    if set(want) != got:
+        extra = sorted("%#x" % a for a in got - set(want))
+        miss = sorted("%#x" % a for a in set(want) - got)
+        return "人工表与 gap_modcontainer.tsv 不一致：多 %s / 少 %s" % (extra, miss)
+    bad = []
+    for a, d in want.items():
+        if d["subclass"] != T93_MANUAL_NA[a][0]:
+            bad.append("%#x 台账=%s 人工表=%s" % (a, d["subclass"], T93_MANUAL_NA[a][0]))
+    if bad:
+        return "子类不一致：%s" % "; ".join(bad)
+    n_own = sum(1 for v in T93_MANUAL_NA.values() if v[0] == "own-generic-mono")
+    n_drop = sum(1 for v in T93_MANUAL_NA.values() if v[0] == "drop-glue")
+    if (n_own, n_drop) != (48, 1):
+        return "子类计数应为 48 own-generic-mono + 1 drop-glue，实为 %d + %d" % (n_own, n_drop)
+    return None
+
+
+def apply_manual(rows, verbose=True):
+    """把 T93 已逐行取证的 49 行改判 `na:other`。**在 L4/L5 之后调用**（改判面恰好 49 行）。"""
+    err = _manual_cross_check()
+    if err:
+        raise SystemExit("T93_MANUAL_NA 自校验失败：%s" % err)
+    before = collections.Counter()
+    hit = 0
+    for r in rows:
+        a = int(r["addr"], 16)
+        ent = T93_MANUAL_NA.get(a)
+        if ent is None:
+            continue
+        sub, note = ent
+        before["%s/%s" % (r["cls"], r["sub"])] += 1
+        r["cls"] = CLS_OTHER
+        r["sub"] = sub
+        r["layer"] = MANUAL_LAYER
+        r["evid"] = ("T93 逐行证据（docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv）：本 crate 泛型方法的"
+                     "单态化副本 / 编译器 drop glue，原版源码里没有独立 `fn` ⇒ 不算缺口（%s）" % note)
+        hit += 1
+    if hit != len(T93_MANUAL_NA):
+        raise SystemExit("apply_manual 只命中 %d/%d 行（地址不在 13,263 里？）"
+                         % (hit, len(T93_MANUAL_NA)))
+    if verbose:
+        print("\n=== T93 人工裁决（L4/L5 之后；预注册 plan §2.2/§3.2）===")
+        print("  改判 %d 行 → na:other（48 own-generic-mono + 1 drop-glue）；改判前分布：" % hit)
+        for k, v in before.most_common():
+            print("    %-28s %3d" % (k, v))
+    return hit
+
+
+def build_all(verbose=True, use_manual=True):
     ctx, starts, data = build_index(verbose=verbose)
     load_f3_label()
     funcs = data["funcs"]
@@ -677,6 +840,8 @@ def build_all(verbose=True):
         ))
     apply_region_prior(rows, verbose=verbose)      # 先补布局局部性（强于邻居投票）
     apply_propagation(rows, data, verbose=verbose)
+    if use_manual:
+        apply_manual(rows, verbose=verbose)        # **最后一步**：T93 人工裁决（改判面恰好 49 行）
     return ctx, starts, data, rows
 
 
@@ -856,6 +1021,9 @@ def write_tsv(rows, path=OUT):
         fh.write("# 一行 = 一个 Ghidra funcstart（13,263 个 .text 可分析函数），六类分类见文件头判据\n")
         fh.write("# 重算：.reference/venv/bin/python tools/global_triage.py\n")
         fh.write("# 地址口径 = ELF vaddr（RVA）；size = funcstart 分区，size_fde = .eh_frame 范围（非 FDE 起点为 —）\n")
+        fh.write("# layer=L1-t93 的 %d 行 = **T93 人工裁决**（本 crate 泛型单态化副本 / drop glue，源码层无独立 fn）；\n"
+                 "#   证据 fixtures/gap_modcontainer.tsv + docs/06 §139、§142.3；表在 tools/global_triage.py::T93_MANUAL_NA\n"
+                 % len(T93_MANUAL_NA))
         fh.write("\t".join(cols) + "\n")
         for r in rows:
             fh.write("\t".join(str(r[c]) for c in cols) + "\n")
@@ -905,6 +1073,13 @@ def cmd_control(argv):
         return classify(ctx, s, funcs[s], callers, bnd, cov, idx, size_freq, set(),
                         use_ledger=use_ledger)
 
+    def ledger_moved(s):
+        """控制组的期望是**当年**的台账状态；现在 bucket 变 F1/F2 ⇒ 已被落码，
+        台账模式判 `implemented` 是**台账说得对**，不是判据错（与 D 组同一条豁免）。
+        独立列（use_ledger=False）仍然照旧，那才是判据真正被检的地方。"""
+        return (cov.get(s) or {}).get("bucket") in ("F1", "F2")
+
+    drift_ab = collections.Counter()
     fails = 0
     print("\n=== A：T71 台账 12 条 std 单态化（期望 na:std-mono）===")
     print("     ⚠ 这些地址本身在 527 台账里 ⇒ 第 1 列是「抄台账」的**回归闸**，"
@@ -913,20 +1088,31 @@ def cmd_control(argv):
         s = int(a, 16)
         r, r2 = judge(s), judge(s, False)
         ok = r["cls"] == CLS_STD
-        fails += 0 if ok else 1
+        moved = (not ok) and ledger_moved(s)
+        if moved:
+            drift_ab["A"] += 1
+        fails += 0 if (ok or moved) else 1
         print("  %s %-10s 台账=%-13s 独立=%-13s %s"
-              % ("✓" if ok else "✗", a, r["cls"], r2["cls"],
-                 (r2 if r2["cls"] == CLS_STD else r)["evid"][:74]))
+              % ("✓" if ok else ("△" if moved else "✗"), a, r["cls"], r2["cls"],
+                 "台账已变档（现 F1/F2）" if moved else (r2 if r2["cls"] == CLS_STD else r)["evid"][:74]))
     print("\n=== B：T71 台账 19 条 gdext（16 期望 na:gdext-glue / 3 源码闭包期望 unknown）===")
     for a in CTRL_GDEXT:
         s = int(a, 16)
         r, r2 = judge(s), judge(s, False)
         want = CLS_UNK if a in CTRL_GDEXT_CLOSURE else CLS_GDX
         ok = r["cls"] == want
-        fails += 0 if ok else 1
+        moved = (not ok) and ledger_moved(s)
+        if moved:
+            drift_ab["B"] += 1
+        fails += 0 if (ok or moved) else 1
         print("  %s %-10s want=%-13s 台账=%-13s 独立=%-13s %s"
-              % ("✓" if ok else "✗", a, want, r["cls"], r2["cls"],
-                 (r2 if r2["cls"] == want else r)["evid"][:62]))
+              % ("✓" if ok else ("△" if moved else "✗"), a, want, r["cls"], r2["cls"],
+                 "台账已变档（现 F1/F2，T87/T89 之后该函数已被落码）" if moved
+                 else (r2 if r2["cls"] == want else r)["evid"][:62]))
+    if drift_ab:
+        print("  △ 台账已变档 %d 条（A %d / B %d）—— 控制组的**期望**是当年的台账状态，"
+              "那些函数后来被落码了 ⇒ 台账模式判 implemented 是对的（与 D 组同一条豁免）；"
+              "判据本身仍由「独立」列检验" % (sum(drift_ab.values()), drift_ab["A"], drift_ab["B"]))
     diag = 0
     print("\n=== C：T71 落码的真业务 2 条 + 负对照 3 条（期望非 na）===")
     for a in CTRL_REAL + CTRL_REAL_EXTRA:
@@ -938,7 +1124,7 @@ def cmd_control(argv):
         fails += 0 if ok else 1
         print("  %s %-10s 台账=%-13s 独立=%-13s %s"
               % ("✓" if ok else "✗", a, r["cls"], r2["cls"], r["evid"][:58]))
-    print("\n=== D：T82 的 153 条 F3（回归闸：不许把 F3 判坏）===")
+    print("\n=== D：T82 的 F3 裁决 %d 条（回归闸：不许把 F3 判坏）===" % len(F3_LABEL))
     n = agree = drift = 0
     for s, want in sorted(F3_LABEL.items()):
         if s not in funcs:
@@ -955,8 +1141,8 @@ def cmd_control(argv):
             continue
         print("  ✗ %-10s T82=%-14s 本工具=%-14s %s"
               % ("%#x" % s, want, r["cls"], r["evid"][:58]))
-    print("  T82 153 条：一致 %d ／ 台账已变档（现为 F1/F2，**不是本工具判错**，是 T82 之后"
-          "有人把这些函数落码了）%d ／ 真不一致 %d" % (agree, drift, n - agree - drift))
+    print("  T82 的 %d 条裁决：一致 %d ／ 台账已变档（现为 F1/F2，**不是本工具判错**，是 T82 之后"
+          "有人把这些函数落码了）%d ／ 真不一致 %d" % (n, agree, drift, n - agree - drift))
     fails += 0 if agree + drift == n else 1
     print("\n  [诊断] C 组独立模式（不看台账）判对 %d/5：结构规则在真业务大函数上会假阳性 2 条"
           "（`0x3b4ec0` / `0x519840`），已登记 docs/06 §132.4/§132.5；它们**只影响无 Location 的行**，"
@@ -1127,7 +1313,9 @@ def cmd_android_census(argv):
         fh.write("# global_triage_modules.tsv —— 按模块的全局缺口表（tools/global_triage.py --android-census）\n")
         fh.write("# android_fns = 同源 Android 构建里该模块的**真名**函数数（观测，但属**兄弟构建**）\n")
         fh.write("# lin527 = Linux 侧能按 panic::Location 硬归属到该模块的函数数；lin_F1F2 = 其中已实现\n")
-        fh.write("# lin_F3 = **今天仍是** F3 的条数（T82 判过的 153 条里，35 条已被后续轮次落码）；lin_F3_real = 其中 T82 判 real-missing\n")
+        fh.write("# lin_F3 = **今天仍是** F3 的条数（口径 = 在 f3_triage.tsv 主表里且 function_coverage.tsv 现在 bucket=F3；"
+                 "T82 原判 153 条，到 2026-11-28 已有 11 条落码归档、1 条 T89 新登记；主表另留 6 条 T94 落码后待归档的陈旧行被本列过滤）；"
+                 "lin_F3_real = 其中 T82 判 real-missing\n")
         fh.write("# gap_proxy = android_fns − lin_F1F2（**代理估计**：Android 比 Linux 少 654 条函数，平台层差异未扣）\n")
         fh.write("module\tandroid_fns\tlin527\tlin_F1F2\tlin_F3\tlin_F3_real\tgap_proxy\n")
         rows = []
@@ -1263,6 +1451,318 @@ def cmd_sample(args):
     print("复核清单（不提交）：%s" % dump)
 
 
+
+
+# ---------------------------------------------------------------------------
+# 自校验（预注册：fixtures/global_triage_refresh_plan.txt §5 的 S1–S3）
+#   只读：不写任何 fixtures。rc≠0 = 失败。
+# ---------------------------------------------------------------------------
+MODULES_TSV_X = MODULES_TSV          # 同一路径（下面用得到，起个别名防止被误改）
+
+
+def _expected_modules():
+    """独立重算模块表（只用 read_boundary/read_cov/f3 标签 + Android 普查表，**不经过 classify**）。"""
+    bnd = read_boundary()
+    cov = {int(r["addr"], 16): r for r in read_cov()}
+    lin, f12 = collections.Counter(), collections.Counter()
+    for a, r in cov.items():
+        mod = os.path.basename(bnd.get(a, {}).get("loc_main_file") or "")
+        if mod:
+            lin[mod] += 1
+            if r["bucket"] in ("F1", "F2"):
+                f12[mod] += 1
+    f3, f3real = collections.Counter(), collections.Counter()
+    for a, lab in F3_LABEL.items():
+        if (cov.get(a) or {}).get("bucket") != "F3":
+            continue
+        mod = os.path.basename(bnd.get(a, {}).get("loc_main_file") or "")
+        f3[mod] += 1
+        if lab == CLS_REAL:
+            f3real[mod] += 1
+    mods = {}
+    if os.path.exists(CENSUS_TSV):
+        with open(CENSUS_TSV, encoding="utf-8") as fh:
+            for ln in fh:
+                if ln.startswith("game_module\t"):
+                    _, k, v = ln.rstrip("\n").split("\t")
+                    mods[k] = int(v)
+    allmods = sorted(set(k + ".rs" if not k.endswith(".rs") else k for k in mods) | set(lin) | set(f3))
+    rows = []
+    for m in allmods:
+        key = m[:-3] if m.endswith(".rs") else m
+        rows.append((m, mods.get(key, 0), lin.get(m, 0), f12.get(m, 0),
+                     f3.get(m, 0), f3real.get(m, 0), mods.get(key, 0) - f12.get(m, 0)))
+    rows.sort(key=lambda r: (-r[1], -r[2]))
+    return rows
+
+
+def _read_modules_tsv(path):
+    out = {}
+    with open(path, encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("#"):
+                continue
+            p = ln.rstrip("\n").split("\t")
+            if p[0] == "module" or len(p) < 7:
+                continue
+            out[p[0]] = tuple(int(x) for x in p[1:])
+    return out
+
+
+def cmd_self_check(argv):
+    fails = []
+
+    def bad(msg):
+        fails.append(msg)
+        print("  ✗ %s" % msg)
+
+    # ---- S1：模块表逐值 = 独立重算（含 §4.1 的合计期望） ----
+    print("\n=== S1 模块表（fixtures/global_triage_modules.tsv）逐值核 ===")
+    if not os.path.exists(MODULES_TSV_X):
+        bad("缺 %s" % MODULES_TSV_X)
+    else:
+        want_rows = _expected_modules()
+        want = {r[0]: tuple(r[1:]) for r in want_rows}
+        got = _read_modules_tsv(MODULES_TSV_X)
+        tot = dict(android=sum(r[1] for r in want_rows), lin527=sum(r[2] for r in want_rows),
+                   f12=sum(r[3] for r in want_rows), f3=sum(r[4] for r in want_rows),
+                   f3real=sum(r[5] for r in want_rows))
+        print("  独立重算：模块 %d／android_fns %d／lin527 %d／lin_F1F2 %d／lin_F3 %d／lin_F3_real %d"
+              % (len(want_rows), tot["android"], tot["lin527"], tot["f12"], tot["f3"], tot["f3real"]))
+        if set(want) != set(got):
+            bad("模块集合不一致：多 %s / 少 %s"
+                % (sorted(set(got) - set(want))[:5], sorted(set(want) - set(got))[:5]))
+        else:
+            diff = [m for m in want if want[m] != got[m]]
+            if diff:
+                for m in diff[:10]:
+                    bad("模块行不一致 %s：期望 %s 实为 %s" % (m, want[m], got[m]))
+            else:
+                print("  ✓ %d 个模块逐值相同（含 §4.1 预注册的 15 行变化）" % len(want))
+        # 行序也要一致（表是机读表）
+        if os.path.exists(MODULES_TSV_X):
+            order = [m for m in _read_modules_tsv(MODULES_TSV_X)]
+            if order != [r[0] for r in want_rows]:
+                bad("模块行序与独立重算不同（前 3 个差异：期望 %s 实为 %s）"
+                    % ([r[0] for r in want_rows][:3], order[:3]))
+
+    # ---- S2：527 行的类逐条 = 今天台账的期望 ----
+    # 注意（本轮实测更正预注册的写法）：layer=`L1-location` **不等于**"在 527 里" ——
+    # 走 registry/std/gdext Location 分支的行 layer 也是 L1-location（2579 条，不在 527）。
+    # 所以 S2 的正确写法是**以 527 台账为循环对象**：bucket F1/F2 ⇒ implemented；bucket F3 ⇒ f3_triage 标签。
+    print("\n=== S2 527 行的类（按 bucket/f3 标签逐条核）===")
+    gt = {}
+    with open(OUT, encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("#"):
+                continue
+            p = ln.rstrip("\n").split("\t")
+            if len(p) < 12 or not p[0].startswith("0x"):
+                continue
+            gt[int(p[0], 16)] = dict(zip(["addr", "name", "size", "size_fde", "module", "attributed",
+                                          "cls", "sub", "layer", "callers", "slots", "evid"], p))
+    cov = {int(r["addr"], 16): r for r in read_cov()}
+    lc = collections.Counter(gt[a]["layer"] for a in cov if a in gt)
+    print("  527 行的 layer 分布：%s" % dict(lc.most_common()))
+    n_f12 = n_f12_ok = n_f3 = n_f3_ok = 0
+    anomalies = []
+    for a, row in cov.items():
+        g = gt.get(a)
+        if not g:
+            bad("%#x 在 527 台账里但不在 13,263 输出里" % a)
+            continue
+        b = row["bucket"]
+        if b in ("F1", "F2"):
+            n_f12 += 1
+            if g["cls"] == CLS_IMPL:
+                n_f12_ok += 1
+            else:
+                bad("%#x bucket=%s ⇒ 期望 implemented，实为 %s" % (a, b, g["cls"]))
+        elif b == "F3":
+            n_f3 += 1
+            want = F3_LABEL.get(a)
+            if not want:
+                bad("%#x 是 F3 但 f3_triage.tsv 没有它的裁决" % a)
+            elif g["cls"] == want:
+                n_f3_ok += 1
+            elif g["layer"] in ("L5-region", "L4-prop"):
+                anomalies.append((a, b, want, g["cls"], g["sub"], g["layer"]))
+            else:
+                bad("%#x bucket=F3 标签=%s ⇒ 期望 %s，实为 %s/%s（layer=%s）"
+                    % (a, want, want, g["cls"], g["sub"], g["layer"]))
+        else:
+            bad("%#x 的 bucket = %r" % (a, b))
+    print("  F1/F2 行 %d（全是 implemented：%d）；F3 行 %d（按 T82 标签对上 %d，落在推断层 %d）"
+          % (n_f12, n_f12_ok, n_f3, n_f3_ok, len(anomalies)))
+    # 推断层异常行是**旧快照就有**的既有性质（旧 7 条 → 今天 %d 条），不在本轮修的范围：
+    for a, b, want, got, sub, layer in anomalies:
+        print("    △ %#x F3 标签=%s，但该地址落在 %s（%s/%s）⇒ 台账在推断层被覆盖（既有性质，登记不改）"
+              % (a, want, layer, got, sub))
+    if len(anomalies) > 7:
+        bad("落在推断层的 527 行 %d 条 > 旧快照的 7 条（本轮不该变多）" % len(anomalies))
+
+    # ---- S3：MANUAL 面 = 恰好 49 行（默认跑 vs --no-manual 基线） ----
+    print("\n=== S3 T93 MANUAL 面（默认 vs --no-manual）===")
+    err = _manual_cross_check()
+    if err:
+        bad(err)
+    else:
+        print("  ✓ 人工表 49 地址与 fixtures/gap_modcontainer.tsv 逐条相等（48 own-generic-mono + 1 drop-glue）")
+    n_manual = sum(1 for r in gt.values() if r["layer"] == MANUAL_LAYER)
+    if n_manual != len(T93_MANUAL_NA):
+        bad("输出里 layer=L1-t93 的行 %d ≠ 人工表 %d" % (n_manual, len(T93_MANUAL_NA)))
+    for a, (sub, _n) in T93_MANUAL_NA.items():
+        r = gt.get(a)
+        if not r:
+            bad("%#x 不在输出里" % a)
+        elif (r["cls"], r["sub"]) != (CLS_OTHER, sub):
+            bad("%#x 应为 %s/%s，实为 %s/%s" % (a, CLS_OTHER, sub, r["cls"], r["sub"]))
+    base = getattr(argv, "baseline", None)
+    if base:
+        if not os.path.exists(base):
+            bad("基线文件不存在：%s" % base)
+        else:
+            old = {}
+            with open(base, encoding="utf-8") as fh:
+                for ln in fh:
+                    if ln.startswith("#"):
+                        continue
+                    p = ln.rstrip("\n").split("\t")
+                    if len(p) < 12 or not p[0].startswith("0x"):
+                        continue
+                    old[int(p[0], 16)] = p
+            changed = {a for a in gt if a in old and
+                       (old[a][6], old[a][7]) != (gt[a]["cls"], gt[a]["sub"])}
+            want = set(T93_MANUAL_NA)
+            extra = sorted("%#x" % a for a in changed - want)
+            missing = sorted("%#x" % a for a in want - changed)
+            print("  --no-manual 基线 ↔ 默认：类别/子类有差异的行 %d（期望恰好 %d）"
+                  % (len(changed), len(want)))
+            if extra:
+                bad("出现第 50 类改判（人工表之外）：%s" % extra[:10])
+            if missing:
+                bad("人工表里这些行没被改判：%s" % missing[:10])
+            if not extra and not missing:
+                print("  ✓ 改判面恰好 = 人工表 49 行，没有多一条")
+    else:
+        print("  （未给 --baseline，跳过\"改判面恰好 49 行\"的差集核；建议："
+              "--no-manual --out <path> 后带 --baseline <path> 重跑）")
+
+    print("\n自校验结论：%s（失败 %d 项）" % ("通过 ✓" if not fails else "失败 ✗", len(fails)))
+    return 0 if not fails else 1
+
+
+def cmd_write_diff(old_path):
+    """写 `fixtures/global_triage_refresh_diff.tsv`：逐行改判台账（哪一行、原值、新值、依据）。"""
+    if not os.path.exists(old_path):
+        raise SystemExit("找不到旧快照：%s" % old_path)
+    old = {}
+    with open(old_path, encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("#"):
+                continue
+            p = ln.rstrip("\n").split("\t")
+            if len(p) < 12 or not p[0].startswith("0x"):
+                continue
+            old[int(p[0], 16)] = dict(zip(["addr", "name", "size", "size_fde", "module", "attributed",
+                                           "cls", "sub", "layer", "callers", "slots", "evid"], p))
+    new = {}
+    with open(OUT, encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("#"):
+                continue
+            p = ln.rstrip("\n").split("\t")
+            if len(p) < 12 or not p[0].startswith("0x"):
+                continue
+            new[int(p[0], 16)] = dict(zip(["addr", "name", "size", "size_fde", "module", "attributed",
+                                           "cls", "sub", "layer", "callers", "slots", "evid"], p))
+    cov = {int(r["addr"], 16): r for r in read_cov()}
+    out = []
+    kinds = collections.Counter()
+
+    def add(kind, a, cause, ev):
+        kinds[kind] += 1
+        o, n = old.get(a), new.get(a)
+        out.append(dict(kind=kind, addr="%#x" % a,
+                        old_name=(o or {}).get("name") or "—",
+                        name=(n or {}).get("name") or (o or {}).get("name") or "—",
+                        module=(n or {}).get("module") or "—",
+                        old_cls=(o or {}).get("cls") or "(不在旧快照)",
+                        old_sub=(o or {}).get("sub") or "—",
+                        old_layer=(o or {}).get("layer") or "—",
+                        new_cls=(n or {}).get("cls") or "(不在新表)",
+                        new_sub=(n or {}).get("sub") or "—",
+                        new_layer=(n or {}).get("layer") or "—",
+                        cause=cause, evidence=ev))
+
+    for a in sorted(set(old) | set(new)):
+        o, n = old.get(a), new.get(a)
+        if a in T93_MANUAL_NA:
+            sub, note = T93_MANUAL_NA[a]
+            add("manual-t93", a,
+                "T93 人工裁决：%s（源码层没有独立 fn）" % note,
+                "docs/06 §139.2–§139.4 + fixtures/gap_modcontainer.tsv（%s）" % sub)
+            continue
+        if o is None or n is None:
+            add("row-set", a, "13,263 funcstart 集合变了（不该发生）", "—")
+            continue
+        cls_changed = o["cls"] != n["cls"]
+        sub_changed = (o["cls"], o["sub"]) != (n["cls"], n["sub"])
+        name_changed = o["name"] != n["name"]
+        if not cls_changed and not sub_changed and not name_changed:
+            continue
+        row = cov.get(a)
+        bucket = row["bucket"] if row else ""
+        if not cls_changed and sub_changed and o["cls"] == CLS_IMPL == n["cls"]:
+            # 类没变、只把 F2（有实现无物证）升成 F1（有物证）：T87/T89/T94 定名/落码带来的物证升档
+            add("sub-refresh", a,
+                "527 台账物证升档 %s→%s（类不变，仍是 implemented）" % (o["sub"], n["sub"]),
+                "fixtures/function_coverage.tsv 今天 bucket=%s" % bucket)
+            continue
+        if cls_changed:
+            if n["layer"] in ("L1-location", "L1-t82"):
+                if o["cls"] == CLS_IMPL:
+                    kind = "ledger-lost"
+                    cause = ("527 台账 F 档下滑：旧快照 F1/F2 ⇒ 今天 F3（%s）⇒ 按 f3_triage 的 T82 裁决改判"
+                             % bucket)
+                    ev = "fixtures/function_coverage.tsv 今天 bucket=%s；fixtures/f3_triage.tsv 标签=%s" % (
+                        bucket, F3_LABEL.get(a, "—"))
+                elif n["cls"] == CLS_IMPL:
+                    kind = "ledger-gain"
+                    cause = "527 台账 F 档上抬：旧快照 F3/T82 ⇒ 今天 F%s（被落码/定名）" % bucket[1:]
+                    ev = "fixtures/function_coverage.tsv 今天 bucket=%s" % bucket
+                else:
+                    kind = "t82-label"
+                    cause = "f3_triage 标签被人工裁决改过（T89 §138.5）"
+                    ev = "fixtures/f3_triage.tsv 今天标签=%s（旧快照标签见 old_sub）" % F3_LABEL.get(a, "—")
+                add(kind, a, cause, ev)
+            else:
+                add("cascade", a, "L4/L5 级联（种子族变了：34 行换成 third/gdext/std、15 行换成 game）",
+                    "逐行 region/调用图归因见 docs/06 §142.4.1（%s/%s → %s/%s）"
+                    % (o["cls"], o["layer"], n["cls"], n["layer"]))
+        else:
+            add("name-refresh", a, "T87/T89 定名结果进了 527 台账的 name 列（类未变）",
+                "fixtures/function_coverage.tsv name 列")
+    cols = ["kind", "addr", "old_name", "name", "module", "old_cls", "old_sub", "old_layer",
+            "new_cls", "new_sub", "new_layer", "cause", "evidence"]
+    path = os.path.join(ROOT, "fixtures", "global_triage_refresh_diff.tsv")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# global_triage_refresh_diff.tsv —— T96：T86 旧快照 → 今天 的**逐行改判台账**（由 tools/global_triage.py --write-diff 生成，不要手改）\n")
+        fh.write("# 旧快照 = HEAD 版 fixtures/global_triage.tsv（T86 d877738 产出）；新表 = 同目录 global_triage.tsv\n")
+        fh.write("# kind：ledger-lost=527 台账 F 档下滑导致 implemented 掉档 / ledger-gain=台账上抬后改判 implemented /\n")
+        fh.write("#       sub-refresh=类不变、F2→F1 物证升档 / t82-label=f3_triage 标签被人工裁决改过 /\n")
+        fh.write("#       manual-t93=T93 人工裁决 49 行 / cascade=L4-L5 级联 / name-refresh=只换名字（名字变化在所有行都可比 old_name 列）\n")
+        fh.write("# 计数：" + " / ".join("%s %d" % (k, v) for k, v in kinds.most_common()) + "\n")
+        fh.write("# 判据与期望值见 fixtures/global_triage_refresh_plan.txt（预注册）；本轮逐行说明见 docs/06 §142\n")
+        fh.write("\t".join(cols) + "\n")
+        for r in sorted(out, key=lambda x: (x["kind"], int(x["addr"], 16))):
+            fh.write("\t".join(str(r[c]) for c in cols) + "\n")
+    print("\n写出 %s（%d 行）" % (path, len(out)))
+    for k, v in kinds.most_common():
+        print("  %-14s %5d" % (k, v))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -1274,6 +1774,14 @@ def main(argv=None):
     p.add_argument("--android-census", action="store_true")
     p.add_argument("--seed", type=int, default=20261127)
     p.add_argument("--no-write", action="store_true")
+    p.add_argument("--no-manual", action="store_true",
+                   help="不应用 T93 人工裁决表（复现\"未人工改判\"的基线，自校验 S3 用）")
+    p.add_argument("--out", metavar="PATH", help="TSV 写到别处（默认 fixtures/global_triage.tsv）")
+    p.add_argument("--self-check", action="store_true",
+                   help="自校验 S1/S2/S3（只读，不写 fixtures）；可配 --baseline <--no-manual 的输出>")
+    p.add_argument("--baseline", metavar="PATH", help="--self-check 的基线（--no-manual --out 的产物）")
+    p.add_argument("--write-diff", metavar="OLD_TSV",
+                   help="写 fixtures/global_triage_refresh_diff.tsv（逐行改判台账），OLD_TSV = 旧快照")
     a = p.parse_args(argv)
     if a.build_index:
         build_index()
@@ -1289,11 +1797,17 @@ def main(argv=None):
     if a.android_census:
         load_f3_label()
         return cmd_android_census(a)
-    ctx, starts, data, rows = build_all(verbose=True)
+    if a.self_check:
+        load_f3_label()
+        return cmd_self_check(a)
+    if a.write_diff:
+        return cmd_write_diff(a.write_diff)
+    ctx, starts, data, rows = build_all(verbose=True, use_manual=not a.no_manual)
     stats(rows)
     if not a.no_write and not a.stats:
-        path = write_tsv(rows)
-        print("\n写出 %s（%d 行）" % (path, len(rows)))
+        path = write_tsv(rows, a.out or OUT)
+        print("\n写出 %s（%d 行；人工裁决表 %s）"
+              % (path, len(rows), "关(--no-manual)" if a.no_manual else "开"))
     return 0
 
 
