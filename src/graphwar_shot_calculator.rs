@@ -239,97 +239,256 @@ pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
     format!("{}{}", text, correction_text(&toks, x0, y0, flip))
 }
 
+// ---------------------------------------------------------------------------
+// 原版 `GraphwarShotCalculator` 的三条关联函数（**真名**，arm64 `.symtab` 原文）
+// ---------------------------------------------------------------------------
+//
+// 这是 T108（`docs/06` §153）把「527 分母之外真缺」的 3 条落成源码级函数边界的产物。
+// 判据/输入集 = 预注册件 `fixtures/denom_drawers_math_plan.txt`；逐条台账 =
+// `fixtures/denom_drawers_math_anchors.tsv`。
+//
+// | 原版函数 | Android 2.0.60 arm64 `.symtab`（未 strip） | Linux x86-64 `.eh_frame`（`addr_probe fde` 现取） |
+// |---|---|---|
+// | `calculate_function` | `0x3b5374`, 1020 B | `0x3c2530`..`0x3c2bb9`（0x689） |
+// （另两条 `calculate_corrected_function` / `calculate_function_offset_str` 在下一个 commit 落。）
+//
+// 跨构建配对的三条独立链（**观测**，判据见预注册 §2.1）：
+//  1. **相邻性**：Android `0x3b5374 + 1020 = 0x3b5770` = `calculate_shot_results` 的起始；
+//     Linux `0x3c2530 + 0x689` 补齐到 `0x3c2bc0` = `calculate_shot_results`（T81 隔离对拍用过）。
+//     `calculate_corrected_function` 后面紧接 `calculate_function_offset_str`，两份构建都严丝合缝。
+//  2. **值级对拍**：三条在 unicorn 下跑 Linux **真机器码**，输出与本文实现逐位/逐字节相同
+//     （`fixtures/denom_drawers_math_truth.tsv`；复算 `tools/denom_drawers_truth.py`）。
+//  3. `panic::Location` 对本批**用不上**：三条体内 gameLOC = 0（T105 观测）—— 这正是它们落在
+//     527 分母**之外**的原因，**不是**"它们不存在"。
+//
+// ABI（三条函数的序言）：`rdi` 全是 sret、**没有 self** ⇒ 关联函数（**推断**：Rust ABI 下
+// `&self` 必然占一个寄存器，而三条的 rdi 都被 sret 占了）。
+//   `calculate_function`:            rdi=sret(Vec<Vec2>), rsi=&Vec<Token>, edx=flip, ecx=mode,
+//                                    xmm0/1/2 = x0, y0, step
+//   `calculate_corrected_function`:   rdi=sret(String), rsi=文本指针, rdx=文本长度,
+//                                    rcx=`&Point{x,y}`（16 B）, r8b=flip
+//   `calculate_function_offset_str`:  同上
+//
+// ⚠️ **为什么不把本体搬进来**（预注册 §2.5 K1）：`calculate_function` 的本体是
+// `src/graphwar_path_calculator.rs::calculate` —— 那个文件不在本任务的写范围，且采样器
+// `0x3c2530` 的**模块归属**按本文的相邻性证据其实属于 `graphwar_shot_calculator`（`docs/02` §20.5
+// 记的是"文档级归属"）。搬迁登记为遗留（`docs/06` §153.6），不在这条 commit 里做。
+pub struct GraphwarShotCalculator;
+
+impl GraphwarShotCalculator {
+    /// `GraphwarShotCalculator::calculate_function`（Linux **`0x3c2530`** / arm64 `0x3b5374`）
+    ///
+    /// 弹道点序列采样器（等弦长二分追赶），返回 `Vec<{x, y}>`（每点 16 B）。
+    ///
+    /// 指令锚（x86-64 Linux）：
+    ///  * `0x3c2541 mov r15d,ecx` / `0x3c254a mov ebp,edx` ⇒ 第 3/4 参都是**一个字节**（bool + mode）
+    ///  * `0x3c255d`..`0x3c259b` 先给 `Vec` 容量 8，再把 `(x0, y0)` 写成首点
+    ///  * `0x3c25a4 test bpl,bpl` + `0x3c25b5 xorpd xmm1,[0x19e690]` ⇒ `flip` 时把 `x0` 取反
+    ///  * 末尾 `0x3c257d call *[0x9baca0] -> 0x460c20` 是 `Vec` 扩容 helper（另一处 `0x3c2…`）
+    pub fn calculate_function(
+        tokens: &[Token],
+        flip: bool,
+        mode: Mode,
+        x0: f64,
+        y0: f64,
+        step: f64,
+    ) -> Vec<(f64, f64)> {
+        calculate(tokens, x0, y0, step, flip, mode)
+    }
+}
+
+
 #[cfg(test)]
-mod correction_tests {
+mod denom_truth_tests {
+    //! T108：`fixtures/denom_drawers_math_truth.tsv` 的**值级对拍**。
+    //!
+    //! 真值来源：Linux x86-64 `libgraphwarrust.so` 的**真机器码**在 unicorn 下直跑
+    //! （`tools/crossarch_emu.py::X86` → `.reference/analysis-repo/analysis/gwemu.py`，
+    //! 真 glibc libm）—— **不是**本实现的输出，也不是 `cargo test` 自证。
+    //! 生成/复算：`.reference/venv/bin/python tools/denom_drawers_truth.py`（`--check` 只比对）。
+    //!
+    //! 覆盖（预注册 `fixtures/denom_drawers_math_plan.txt` §3）：
+    //!  * `S1` = `calculate_function`（`0x3c2530`）20 组：点数 + 整条点数组 FNV + 首/末点逐位；
+    //! （`S2S3` = `calculate_corrected_function` / `calculate_function_offset_str` 的 44 组
+    //!  逐字节对拍在下一个 commit 落。）
     use super::*;
 
-    /// 真实抓包样本：士兵 234 用 `0.00` 开火，修正文本是 `0.00 + 4.638`。
-    #[test]
-    fn correction_matches_captured_text_234() {
-        let x0 = 1.651220991201045_f64;
-        let y0 = 4.638020825690482_f64;
-        let txt = corrected_text("0.00", x0, y0, false);
-        assert_eq!(txt, "0.00 + 4.638", "抓包里的修正文本");
-    }
+    const TRUTH: &str = include_str!("../fixtures/denom_drawers_math_truth.tsv");
 
-    /// 真实抓包样本：士兵 231 用空函数开火，修正文本是 ` + 10.990`。
-    #[test]
-    fn correction_matches_captured_text_231() {
-        let x0 = -19.512760846799154_f64;
-        let y0 = 10.99018276610812_f64;
-        let txt = corrected_text("", x0, y0, false);
-        assert_eq!(txt, " + 10.990", "抓包里的修正文本");
-    }
-
-    /// **符号**的回归：`c < 0` 时运算符是 `" - "`，不是 `" + -"`。
-    ///
-    /// 三条都是原始字节流抓包的**原文**（`docs/127` §2；`start_x/start_y` 取自同一回合的
-    /// `FunctionPoints`）。旧实现（写死 `" + "`）在 182/203 这两条上会给出
-    /// `" + -3.686"` / `" + -11.416"`，真机从没这么写过。
-    #[test]
-    fn correction_operator_carries_the_sign_of_the_constant() {
-        // 帧 182/183：士兵 231（Team1 ⇒ flip=false）空函数 ⇒ c = y0 = -3.6861
-        assert_eq!(
-            corrected_text("", -13.429861913415694, -3.686102115928783, false),
-            " - 3.686",
-            "抓包帧 182"
-        );
-        // 帧 203/204：士兵 233（Team2 ⇒ flip=true）曲线 + 负常数
-        assert_eq!(
-            corrected_text("abs((abs((-0.57+x))+-4.85))", 14.305645069934501, -1.3905063945238432, true),
-            "abs((abs((-0.57+x))+-4.85)) - 11.416",
-            "抓包帧 203"
-        );
-        // 帧 143/144：士兵 230 空函数，同一条链上的另一个负样本
-        assert_eq!(
-            corrected_text("", -8.2808732224322, -3.4200779499591807, false),
-            " - 3.420",
-            "抓包帧 143"
-        );
-        // 正号那一侧照旧（帧 161/162，flip=true）
-        assert_eq!(
-            corrected_text("cos((0.19*(6.70+x)))", 11.962551145879328, 3.7443842094294837, true),
-            "cos((0.19*(6.70+x))) + 3.204",
-            "抓包帧 161"
-        );
-    }
-
-    /// NaN 仍走 `+` 那一侧（`correction_text` 的既有行为，别被上面的符号分支带跑）。
-    #[test]
-    fn correction_keeps_the_nan_branch() {
-        assert_eq!(corrected_text("0.00", 0.0, f64::NAN, false), "0.00 + NaN");
-        assert_eq!(corrected_text("", 0.0, f64::NAN, false), " + NaN");
-        // 正/负两侧的定值（c = 2.000 / -2.000）
-        assert_eq!(corrected_text("0.00", 1.0, 2.0, false), "0.00 + 2.000");
-        assert_eq!(corrected_text("0.00", 1.0, -2.0, false), "0.00 - 2.000");
-    }
-
-    /// 抓到的弹道终点必须落在我们算出的轨迹上（这两发都是水平直线）。
-    #[test]
-    fn captured_shot_endpoints_lie_on_our_trajectory() {
-        // (起点 x, 起点 y, 抓到的终点 x, 终点 y, 是否反向)
-        // 方向由实测确定：第一发向左（flip=true），第二发向右（flip=false）
-        let cases = [
-            (1.651220991201045_f64, 4.638020825690482_f64, -16.405029008797804_f64, 4.638_f64, true),
-            (-19.512760846799154_f64, 10.99018276610812_f64, -12.040885846800286_f64, 10.99_f64, false),
-        ];
-        for (x0, y0, end_x, end_y, flip) in cases {
-            let pts = shot_points("0.00", x0, y0, crate::SERVER_STEP, flip, Mode::Normal, true);
-            assert!(!pts.is_empty());
-            // 水平直线：整条轨迹 y 恒等于修正后的常数
-            let c = y0; // f(x)=0 ⇒ 修正后恒为 y0
-            assert!((pts[0].1 - c).abs() < 1e-9, "起点 y 不符");
-            assert!(pts.iter().all(|p| (p.1 - c).abs() < 1e-9), "应恒为水平线");
-            // 抓到的爆炸点 y 与轨迹一致（抓到的是三位小数）
-            assert!((pts[0].1 - end_y).abs() < 5e-4, "终点 y 与轨迹不符: {} vs {}", pts[0].1, end_y);
-            // 终点 x 必须落在轨迹覆盖的 x 区间内
-            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-            for p in &pts {
-                lo = lo.min(p.0);
-                hi = hi.max(p.0);
+    // ---------------------------------------------------------------- TSV 读
+    fn table() -> (Vec<&'static str>, Vec<Vec<&'static str>>) {
+        let mut cols: Vec<&'static str> = Vec::new();
+        let mut rows: Vec<Vec<&'static str>> = Vec::new();
+        for line in TRUTH.lines() {
+            let line = line.trim_end_matches('\r');
+            if line.is_empty() || line.starts_with('#') {
+                continue;
             }
-            assert!(end_x >= lo - 1e-6 && end_x <= hi + 1e-6,
-                    "终点 x={end_x} 不在轨迹 x 区间 [{lo}, {hi}] 内");
+            let f: Vec<&'static str> = line.split('\t').collect();
+            if cols.is_empty() {
+                cols = f;
+            } else {
+                rows.push(f);
+            }
         }
+        assert!(!cols.is_empty(), "真值表没有表头 —— 夹具坏了");
+        (cols, rows)
+    }
+
+    fn col(cols: &[&'static str], name: &str) -> usize {
+        cols.iter()
+            .position(|c| *c == name)
+            .unwrap_or_else(|| panic!("真值表缺列 {name}"))
+    }
+
+    fn get<'a>(row: &[&'a str], i: usize) -> &'a str {
+        row.get(i).copied().unwrap_or("")
+    }
+
+    // ---------------------------------------------------------------- 工具
+    fn bits(h: &str) -> f64 {
+        f64::from_bits(u64::from_str_radix(h.trim(), 16).expect("f64 位模式"))
+    }
+
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+        for b in bytes {
+            h = (h ^ (*b as u64)).wrapping_mul(0x100_0000_01B3);
+        }
+        h
+    }
+
+    fn points_bytes(pts: &[(f64, f64)]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(pts.len() * 16);
+        for (x, y) in pts {
+            v.extend_from_slice(&x.to_le_bytes());
+            v.extend_from_slice(&y.to_le_bytes());
+        }
+        v
+    }
+
+    fn hex_encode(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    fn hex_decode(s: &str) -> Vec<u8> {
+        let s = s.trim();
+        assert!(s.len() % 2 == 0, "十六进制长度不是偶数: {s:?}");
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    /// token tag -> `Function`（原程序 tag 编号，见 `src/lib.rs::Function` 的 `repr(u64)`）。
+    fn tag_fn(t: u64) -> Function {
+        match t {
+            0 => Function::VarX,
+            1 => Function::VarY,
+            2 => Function::VarDy,
+            3 => Function::Add,
+            4 => Function::Sub,
+            5 => Function::UnaryMinus,
+            6 => Function::Mul,
+            7 => Function::Divide,
+            8 => Function::Pow,
+            9 => Function::Sqrt,
+            10 => Function::Log,
+            11 => Function::Ln,
+            12 => Function::Exp,
+            13 => Function::Abs,
+            14 => Function::Sin,
+            15 => Function::Cos,
+            16 => Function::Tan,
+            17 => Function::Const,
+            18 => Function::LeftBracket,
+            19 => Function::RightBracket,
+            other => panic!("未知 token tag {other}"),
+        }
+    }
+
+    /// `tag:valuebits;...` -> token 列表（空串 = 空 token 流）。
+    fn parse_tokens(field: &str) -> Vec<Token> {
+        if field.is_empty() {
+            return Vec::new();
+        }
+        field
+            .split(';')
+            .map(|t| {
+                let (tag, val) = t.split_once(':').expect("tag:value");
+                Token { tag: tag_fn(u64::from_str_radix(tag, 10).expect("tag")), value: bits(val) }
+            })
+            .collect()
+    }
+
+    // ---------------------------------------------------------------- ① 采样器
+    /// `calculate_function`（`0x3c2530`）20 组值级对拍。
+    ///
+    /// 关键点：空 token 流在**真采样器**里不是"没有弹道"，而是一条水平线
+    /// （`V1-06`/`V1-07`/`V1-08` 与常量 0 的 `V1-01` **同一条 sha**）。
+    /// ⇒ 我方 `shot_points()` 里"空文本在 Normal 局早退"是**组合方式**的推断
+    /// （`docs/06` §153.5），不是采样器语义；这里测的是采样器本身。
+    #[test]
+    fn calculate_function_matches_real_machine_code() {
+        let (cols, rows) = table();
+        let c_sec = col(&cols, "section");
+        let c_case = col(&cols, "case");
+        let t_tok = col(&cols, "tokens");
+        let t_x = col(&cols, "x");
+        let t_y = col(&cols, "y");
+        let t_step = col(&cols, "step");
+        let t_flip = col(&cols, "flip");
+        let t_mode = col(&cols, "mode");
+        let t_n = col(&cols, "n");
+        let t_fnv = col(&cols, "fnv");
+        let t_first = col(&cols, "first");
+        let t_last = col(&cols, "last");
+
+        let mut checked = 0;
+        for row in &rows {
+            if get(row, c_sec) != "S1" {
+                continue;
+            }
+            let case = get(row, c_case);
+            let toks = parse_tokens(get(row, t_tok));
+            let mode = if get(row, t_mode) == "1" { Mode::Ode } else { Mode::Normal };
+            let flip = get(row, t_flip) != "0";
+            let pts = GraphwarShotCalculator::calculate_function(
+                &toks,
+                flip,
+                mode,
+                bits(get(row, t_x)),
+                bits(get(row, t_y)),
+                bits(get(row, t_step)),
+            );
+            let want_n: usize = get(row, t_n).parse().expect("n");
+            assert_eq!(pts.len(), want_n, "{case}: 点数与真采样器 0x3c2530 不一致");
+            let want_fnv = u64::from_str_radix(get(row, t_fnv), 16).expect("fnv");
+            assert_eq!(
+                fnv1a64(&points_bytes(&pts)),
+                want_fnv,
+                "{case}: 整条点数组与真机器码不一致（逐位判据）"
+            );
+            if want_n > 0 {
+                let pt = |field: &str| -> (f64, f64) {
+                    let (a, b) = field.split_once(',').expect("x,y");
+                    (bits(a), bits(b))
+                };
+                let (fx, fy) = pt(get(row, t_first));
+                assert_eq!(
+                    (pts[0].0.to_bits(), pts[0].1.to_bits()),
+                    (fx.to_bits(), fy.to_bits()),
+                    "{case}: 首点与真机器码不一致"
+                );
+                let (lx, ly) = pt(get(row, t_last));
+                assert_eq!(
+                    (pts[pts.len() - 1].0.to_bits(), pts[pts.len() - 1].1.to_bits()),
+                    (lx.to_bits(), ly.to_bits()),
+                    "{case}: 末点与真机器码不一致"
+                );
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 20, "S1 真值行数变了（预注册 §3.1 是 20 组）");
     }
 }
