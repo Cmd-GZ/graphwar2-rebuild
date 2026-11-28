@@ -30937,10 +30937,10 @@ cargo run --release --offline -q --example batch_conv   -- --dir .reference/repl
 
 | # | vaddr | FDE | 真名 | 落点 | 档位 |
 |---|---|---|---|---|---|
-| 1 | `0x4737a0` | `0x214` | `GraphwarGameStateManager::remove_all_players` | `src/graphwar_game_state_manager.rs:722` | 逐位（tag/偏移）+ 观测（语义） |
-| 2 | `0x476830` | `0x1e7` | `GraphwarGameStateManager::remove_soldier_from_player` | `src/graphwar_game_state_manager.rs:764` | 逐位 + 观测 |
-| 3 | `0x476320` | `0x18e` | `GraphwarGameStateManager::set_player_num_soldiers` | `src/graphwar_game_state_manager.rs:807` | 逐位 |
-| 4 | `0x475590` | `0x316` | `GraphwarGameStateManager::request_remove_player` | `src/graphwar_game_state_manager.rs:862` | 逐位 + 观测 |
+| 1 | `0x4737a0` | `0x214` | `GraphwarGameStateManager::remove_all_players` | `src/graphwar_game_state_manager.rs:735` | 逐位（tag/偏移）+ 观测（语义） |
+| 2 | `0x476830` | `0x1e7` | `GraphwarGameStateManager::remove_soldier_from_player` | `src/graphwar_game_state_manager.rs:781` | 逐位 + 观测 |
+| 3 | `0x476320` | `0x18e` | `GraphwarGameStateManager::set_player_num_soldiers` | `src/graphwar_game_state_manager.rs:825` | 逐位 |
+| 4 | `0x475590` | `0x316` | `GraphwarGameStateManager::request_remove_player` | `src/graphwar_game_state_manager.rs:881` | 逐位 + 观测 |
 | 5 | `0x5185a0` | `0xfd` | `GraphwarModeManager::send_all_info_events` | `src/graphwar_mode_manager.rs:353` | 观测（**函数体本来就在**，被扫描器误判成 F3，见 §157.6） |
 
 **没落 28 条**：逐条理由在 §157.4，没有一条写"没时间"——都指名缺哪一样证据。
@@ -31106,8 +31106,15 @@ $PY tools/addr_probe.py callers <vaddr>   # call rel32 + 函数指针三形态
    （`remote_event_handler` 档位 = **推断**）我**没落**，正是因为它落了也只能到 F2
    —— 这条口径在预注册里就写死了，不是事后找理由。
 3. **`removed_entities` 的消费方未知**：`[self+0x90]` 那个 `Vec<u32>` 我只找到**三个写点**
-   （全部逐条抄在 `src/game.rs` 的字段文档里），**没找到读点**。所以它只被如实记录，
+   （全部逐条抄在 `ManagerBytes::removed_entities` 的字段文档里），**没找到读点**。所以它只被如实记录，
    不参与任何判决。
+4. **第一版把这一格加在 `Match`（`src/game.rs`）上，被 `merge_check` 的禁区挡住，已改建在 `ManagerBytes` 上**：
+   `tools/merge_check.py` 的 `FORBIDDEN` 把 `src/game.rs` 当禁区（"核心拟合逻辑"）。
+   改法不是绕过检查，而是**换成本文件既定的切法**——`ManagerBytes` 的注释本来就写着
+   "装的不是实体状态、`Match` 里也没有对应字段 ⇒ 单独成一个纯数据块，由调用方持有并传入"，
+   而且现有成员就是数据 `+0x11e`/`+0x11f`/`+0x80`/`+0x20`，`+0x90` 与 `+0x80` 是**同一片相邻区**。
+   四个函数因此多一个 `bits: &mut ManagerBytes` 形参（与同文件 `set_lock`/`handle_chat_message` 同款），
+   **函数体、vaddr 注释、单测期望值一个数字都没改**；`src/game.rs` 与基线逐字节相同。
 
 ### 157.6 扫描器假阴性：`send_all_info_events` 早就落码了，被判成 F3（**工具 bug，交 t110**）
 
