@@ -226,9 +226,6 @@ var _last_verdict := {}
 var _layout_override := {}
 var _functions := {}                            # player_index -> String
 var _active := 0
-## 联机 / 回放共用的倒计时秒数（**只给排版与联机那条路用**）。
-## 本地回合的时钟在 Rust：`GwTurnClock`（`0x470989` 的三个合取项，`docs/16` §53）。
-var _time_left := 0.0
 var _shot_queue: Array[Dictionary] = []         # 同时回合制下本轮的弹道
 var _show_names := true
 var _show_function_overlay := false
@@ -832,7 +829,6 @@ func begin_match() -> void:
 	_active = 0
 	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		_active = int(_soldiers[_active_soldier_idx].player)
-	_time_left = float(GwModes.turn_seconds(st.time_mode))
 	_running = true
 	_set_axis_mode(int(st.axis_mode))
 	_refresh_mode_indicators()
@@ -2903,7 +2899,6 @@ func _begin_online(app_node) -> void:
 	_destroyed_this_shot.clear()
 	_last_verdict = {}
 	_reset_shot_state()
-	_time_left = 0.0
 	_clear_curve()
 	_sync_entities()                  # 服务端的 `Match` 里只有士兵，没有靶子（docs/117）
 	_rebuild_pid_index(room)
@@ -2918,6 +2913,10 @@ func _begin_online(app_node) -> void:
 	_rules = GwLevelRules.new()
 	_rules.from_versus(_human_team())
 	_set_axis_mode(int(app_node.state.axis_mode))
+	# 回合时钟（T99 / `docs/06` §144）：改前联机分支在 `begin_match()` 里提前 return ⇒
+	# `_turn_clock` **一次都没配过**，联机倒计时是与它平行的第二份实现（墙钟 `_time_left`）。
+	# 现在档位来自服务端状态同步（`TimeModeInfo` → `state.time_mode`），秒数由 Rust 给。
+	_turn_clock.set_time_mode(int(app_node.state.time_mode))
 	_refresh_mode_indicators()
 	_refresh_plane()
 	_load_active_function()
@@ -3127,9 +3126,8 @@ func _apply_online_turn(room: Dictionary) -> void:
 	_online_turn_player = int(turn.get("player_id", -1))
 	_online_soldier = int(turn.get("soldier_id", -1))
 	_active = int(_pid_index.get(_online_turn_player, 0))
-	var app_node := app()
-	if app_node != null:
-		_time_left = float(GwModes.turn_seconds(app_node.state.time_mode))
+	# 新回合 ⇒ 计时归零（`TurnClock::restart`；时长档位来自服务端 `TimeModeInfo`）。
+	_turn_clock.restart()
 	# 服务端已经记着的函数原文（`FunctionInfo.owner_id` = **soldier_id**，`docs/24` §4.5）
 	var fns: Dictionary = room.get("functions", {})
 	for owner in fns:
@@ -3157,15 +3155,13 @@ func _online_can_fire() -> bool:
 
 ## 联机下的时钟：只走数、不换手。换手是服务端 `TurnInfo` 的事 ——
 ## 本地那条"到点自动换手"（`_process` 的另一半）在这里会让两个真相源打架。
+##
+## 倒计时**不是**我方的墙钟（T99 / `docs/06` §144）：改前是 `_time_left -= delta`，与
+## `GwTurnClock` 平行；现在推进 Rust 的 `TurnClock`（`graphwar_play_screen_control`）——
+## 它按 `TICKS_PER_SECOND` 把秒折成 tick、`seconds_left()` = 时长 − 已过 tick，
+## 时长来自 `graphwar_mode_manager::TimeMode::seconds()`（`docs/42` 抓包实证 30/60/120/180/300）。
 func _online_tick(delta: float) -> void:
-	var app_node := app()
-	if app_node == null:
-		return
-	var limit := GwModes.turn_seconds(app_node.state.time_mode)
-	if limit <= 0:
-		_update_timer_label()
-		return
-	_time_left = maxf(0.0, _time_left - delta)
+	_turn_clock.advance(delta)
 	_update_timer_label()
 
 ## 联机开火：**只发两条请求**，弹道与服务端算。判定/生死/回合全在服务端
@@ -3525,12 +3521,7 @@ func _update_timer_label() -> void:
 	var app_node := app()
 	if app_node == null:
 		return
-	# 联机：倒计时是本地那条 `_time_left`（换手与否归服务端，本屏只显示）。
-	if _online_mode:
-		var limit := GwModes.turn_seconds(app_node.state.time_mode)
-		_timer_label.text = "" if limit <= 0 else GwModes.format_clock(_time_left)
-		return
-	# 本地：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
+	# 本地与联机**同一条**路径：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
 	var left := _turn_clock.seconds_left()
 	_timer_label.text = "" if left < 0.0 else GwModes.format_clock(left)
 
