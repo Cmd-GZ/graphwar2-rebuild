@@ -31373,3 +31373,195 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    78→82 之后重跑会得到不同的行（本轮实测 `file_structure.tsv` 有 140 行左右变化）。那两个文件是**别人的
    写范围**，本任务**没有**入库它们的重跑产物（跑完已 `git checkout` 还原）⇒ **下一任跑这个工具时，
    记得连同它的生成物一起提交**，别把它当成"我改坏了"。
+
+## 159. T113 分母外「难啃但可攻」6 条：**4 条落码（实参值全解 + 1 条整函数）**、1 条复核 PASS、1 条**证死三件事但不落函数体**；**T109 §153.4 的三条前提被证伪**；分母外 `real-missing` **10 → 6**（X 仍 132）（2026-11-28，任务 `task-103` / 分支 `agent/denom-rest2`）
+
+> 预注册：[`fixtures/denom_rest2_plan.txt`](../fixtures/denom_rest2_plan.txt)（commit `79dd6cd`，**先单独提交、后跑**；跑完判据一字未改）。
+> 交付：本节的常量对照 + [`fixtures/user_args_table.tsv`](../fixtures/user_args_table.tsv)（5 条 CLI 参数全表）。
+> 地址口径：**arm64** = Android 2.0.60 未 strip 版（`.symtab` 有完整 Rust 真名，`.reference/steam/android-2.0.60/libgraphwarrust.so`）；
+> **x86** = Linux 2026-08-28 stripped 版（只能做**结构/常量对照**，名字来自 `fixtures/hybrid_names.tsv` 的指纹候选，逐条核过）。
+> **两份 `.so` 之间不做地址换算**（布局完全不同），只比"结构 + 常量槽的值 + `pop` 数"。
+> ⚠️ 节号说明：任务书下发时末节是 §156 ⇒ 排 §157；开发期间 master 依次被 **T110（§157）**、**T112（§158）** 占号 ⇒ 本节改 **§159**（不改别人的节）。
+
+### 159.0 一句话结论
+
+T109（§153.4）把 5 条判成"未落"并给了三条**前提**；本轮把三条前提**逐条证伪**，然后按真前提取证：
+**4 条落成源码级函数**（`user_args` / `append_debug_text` / `append_function_entry` / `update_buttons_background_in_vbox`），
+**1 条只落"证据 + 常量"不落函数体**（`insert_button_in_vbox`：分支布局仍是推断，写个空壳比不写更坏），
+`print_help_and_exit_if_requested` **复核 PASS 未改码**。
+最值钱的产出是 **`append_*` 的实参值全部解出**（颜色/字号/outline/零宽空格替换表，每项都指到 `.rodata` 槽地址与值）、
+**`user_args` 的取参语义**（解释了 `docs/09` §9.3 挂着的那条"CLI 完全不生效"），
+以及 **5 条 CLI 参数全表**（id / 长名 / 类型 / 必填 / help 原文 + 槽地址）。
+
+### 159.1 逐条结果（vaddr → 真名 → 落点 → 档位 → 落了/没落）
+
+| # | 原版函数（arm64 符号原文） | arm64（vaddr / 字节） | x86（FDE） | 落点 | 档位 | 结论 |
+|---|---|---|---|---|---|---|
+| 1 | `GraphwarRootNode::user_args` | `0x3ab2bc` / 672 | `0x3b5390` / `0x328`（候选名，见 §159.3） | [`src/graphwar_root_node.rs:3544`](../src/graphwar_root_node.rs) `user_args_from` + `:3567` `user_args` | 观测 | **落了** |
+| 2 | `GraphwarRootNode::print_help_and_exit_if_requested` | `0x3ab19c` / 288 | `0x3b5290` / `0xff` | （T109 已落，§153.4） | 观测 | **复核 PASS，未改码** |
+| 3 | `GraphwarPlayScreenControl::append_debug_text` | `0x3deec8` / 436 | `0x3d93c0` / `0x1c7` | [`src/graphwar_play_screen_control.rs:2254`](../src/graphwar_play_screen_control.rs) | 观测 | **落了**（含实参值） |
+| 4 | `GraphwarPlayScreenControl::append_function_entry` | `0x3df07c` / 1424 | `0x3d9590` / `0x5bc` | [`src/graphwar_play_screen_control.rs:2313`](../src/graphwar_play_screen_control.rs) | 观测 | **落了**（含实参值 + 7 次替换表） |
+| 5 | `GraphwarPlayerScreenControl::insert_button_in_vbox` | `0x44fa48` / 1012 | `0x4f7bb0` / `0x49d`（推断配对） | 只落常量/证据：[`src/graphwar_player_screen_control.rs:1237`](../src/graphwar_player_screen_control.rs) | 观测（三件事实） | **没落函数体**（理由 §159.4.4） |
+| 6 | `GraphwarPlayerScreenControl::update_buttons_background_in_vbox` | `0x450020` / 1180 | `0x4f8330` / `0x438` | [`src/graphwar_player_screen_control.rs:1301`](../src/graphwar_player_screen_control.rs) | 观测 | **落了**（整条） |
+
+**"落了"的四条判据**（预注册 §0）：真名 + 函数体第一段注释写 vaddr/字节/关键指令链 + 每个实参常数指到
+`.rodata` 槽或立即数 + 单测期望值来自反汇编。**档位仍是观测**：两构建逐指令同构、常量槽同值，
+但**没有运行时对拍**（这两条是 gdext 引擎调用，没有可隔离执行的输入/输出）⇒ 按 `AGENTS.md` §0.3 不能标逐位。
+
+### 159.2 `append_*` 的实参值对照（**本轮核心交付**：常量槽 = 值）
+
+`append_debug_text` 与 `append_function_entry` 前 5 步完全相同，作用对象都是 `self+0x38` 的 `RichTextLabel`
+（与 §153 的 `clear_state` 同一字段）。**每个实参都从 `.rodata` 槽读出来**：
+
+| 实参 | 常量 | arm64 槽 | x86 槽 | **值** | 关键指令 |
+|---|---|---|---|---|---|
+| `push_color`（debug） | [`DEBUG_TEXT_COLOR`] | **`0x198ed0`** | `0x19ed00` | **[1.0, 1.0, 1.0, 1.0]**（四份 `00 00 80 3f`） | `0x3deef8 add x1,x1,#0xed0`；x86 `0x3d93e2 lea rsi` |
+| `push_color`（entry） | 入参 | — | — | **不是常数**：调用点 `0x3e27dc`/`0x3e2a70` 用 `fdiv v0.4s` 算"字节色 / 255" | `0x3e27b0 fdiv v0.4s, v3.4s, q0.4s` |
+| `push_font_size` | [`FONT_SIZE_DIVISOR`] | `fmov` 立即数 | **`0x1b9b8c`** | **25.0**（x86 槽 `00 00 c8 41`），字号 = `(get_size().x / 25.0) as i32` | `0x3def38 fmov s0,#25.0` / `0x3def40 fcvtzs`；x86 `0x3d942f divss`+`cvttss2si`+`cmov` 饱和 |
+| `push_outline_size` | [`OUTLINE_SIZE`] | 立即数 | 立即数 | **4** | `0x3def64 mov w1,#4`；x86 `0x3d9472 mov esi,4` |
+| `push_outline_color` | [`DEBUG_OUTLINE_COLOR`] | **`0x197110`** | `0x19cf70` | **[0.0, 0.0, 0.0, 1.0]**（前 12 字节 0，第 4 个 `00 00 80 3f`） | `0x3def84 add x1,x1,#0x110`；x86 `0x3d9491 lea rsi` |
+| 收尾换行 | [`NEWLINE`] | **`0x19bdfe`** | `0x1bf7e6` | **`"\n"`**（单字节 `0a`） | `0x3defc8 add x1,x1,#0xdfe`；x86 `0x3d94d4 lea rsi` |
+| `pop` 次数（debug） | [`DEBUG_TEXT_POPS`] | 3 条 `bl` | 3 条 `call [GOT 0x9bb020]` | **3**（4 push / **3** pop，原版就不对称） | `0x3deff0`/`0x3df00c`/`0x3df028` |
+| `pop` 次数（entry） | [`FUNCTION_ENTRY_POPS`] | 4 条 `bl` | 1 次 `mov r15,[GOT]`+**4 次 `call r15`** | **4**（4 push / 4 pop） | `0x3df4c0`/`0x3df4d8`/`0x3df4f0`/`0x3df508` |
+
+**`append_function_entry` 的文本拼装**（三段 + 收尾换行）：
+
+| 段 | 内容 | arm64 槽 | x86 槽 | 关键指令 | 档位 |
+|---|---|---|---|---|---|
+| ① 标签 | `arg1 + ": "`（后缀两字节 `0x3a 0x20`） | 立即数 `mov w9,#0x203a` + `strh` | `mov word [rax+rsi],0x203a` | `0x3df1c0`/`0x3df1c4`；x86 `0x3d96d2` | 观测 |
+| ② 前缀（二选一） | **`"f(x) = "`**（7 B）/ **`"dy/dx = "`**（8 B），由 `arg3 != 0` 选 | **`0x19bed0`** / **`0x179a08`** | `0x1bf8c0` / `0x19f8d8` | `0x3df208 cmp w22,#0` + `0x3df220 csel` + `0x3df228 cinc x2,#7,ne`；x86 `0x3d9729 lea rdx,[rax+7]`+`cmovne` | 观测 |
+| ③ 函数文本 | **`arg2`** 克隆后做 **7 次 `str::replace`**：`+`,`-`,`*`,`/`,`^`,`(`,`)` → **`U+200B`**（`e2 80 8b`）+ 自身 | 7 对槽 `0x19bf7f/80`、`87/88`、`8f/90`、`97/98`、`9f/a0`、`a7/a8`、`af/b0` | `0x1bf96f/70` … `0x1bf99f/a0` | `0x3df284`…`0x3df464` 七次 `bl alloc::str::_<impl str>::replace` | 观测 |
+| ④ 收尾 | `"\n"` | `0x19bdfe` | `0x1bf7e6` | `0x3df4a8` | 观测 |
+
+> **为什么插零宽空格**：`U+200B` 是可断行位置，把长表达式按运算符切开 ⇒ 标签能换行而**不显示**任何字符。
+> 这是我方**推断**（二进制只给出"插什么、插在哪"），但语义上唯一说得通，且与 RichTextLabel 的自动换行一致。
+
+### 159.3 `user_args` 与 5 条 CLI 参数（含 `docs/09` §9.3 那条"CLI 完全不生效"的解释）
+
+`user_args`（arm64 `0x3ab2bc` / 672 B）**体内一条 clap builder 调用都没有**，它只做取参：
+
+```text
+0x3ab2e4  bl std::env::args()                     ; 进程 argv
+0x3ab2f0  bl Vec<String>::from_iter
+0x3ab334  ldr x12,[elem,#0x10] ; cmp x12,#2       ; 只认长度 == 2 的元素
+0x3ab344  ldrh w11,[ptr]       ; cmp w11,w10      ; w10 = 0x2d2d = "--"
+0x3ab3a0  movk 链 0x7261_7768_7061_7267 ; str x8,[x0]   ; 首元素 = "graphwar"（8 B）
+0x3ab490  add x23, x8, #0x18                      ; 从命中项**下一个**开始
+0x3ab4ac  bl String::clone                        ; 逐条克隆
+0x3ab328  cmp x8,x26 ; b.eq 0x3ab380              ; 扫完没命中 ⇒ 只造 ["graphwar"]
+```
+
+⇒ **`user_args()` = `["graphwar"] ++ argv[pos("--")+1..]`**，`pos` 取**第一个** `"--"`（命中即跳进构造臂）。
+
+**这解释了 `docs/09-network.md` §9.3 挂着的那条观测**：那节记「`--broker_address` 在这个构建里完全不生效
+（6 组受控实验：snake / kebab / `=` / 加必填端口 / 非法值 / 干净 argv 全都无效）」。
+机制是：**参数只在 `--` 之后才被读**。直接传 `--broker-address …` 时 `user_args()` 只返回 `["graphwar"]`，
+clap 拿到空参数表 ⇒ 既不报错也不生效；而且 `broadcast_port` / `logger_port` 是**必填**（见下表），
+就算走 clap 也还得补这两个。
+**这条解释的档位 = 推断**：那 6 组实验的 argv 原文没留档，无法确认它们是否试过 `-- --broker-address …`；
+机制本身（取参规则）是观测。**建议 lead 把 `docs/09` §9.3 补一句**（该节不在本任务写范围）。
+
+**CLI 参数全表**（`#[derive(Args)]` 的 5 个字段；逐条见 [`fixtures/user_args_table.tsv`](../fixtures/user_args_table.tsv)）：
+
+| # | id | 长名 | 类型 | 必填 | help 首句 | id 槽 |
+|---|---|---|---|---|---|---|
+| 1 | `broker_address` | `broker-address` | `Option<String>` | 否 | Address of the broker server to connect (e.g. 127.0.0.1:42970)… | `0x19ad2b` / 14 |
+| 2 | `broadcast_port` | `broadcast-port` | **`u16`** | **是** | Port used for LAN game discovery broadcasts | `0x19ad39` / 14 |
+| 3 | `logger_port` | `logger-port` | **`u16`** | **是** | Port used for the debug logger | `0x19ad47` / 11 |
+| 4 | `server_port` | `server-port` | `Option<u16>` | 否 | Port the game server listens on when hosting a game… | `0x19ad52` / 11 |
+| 5 | `crash_report_address` | `crash-report-address` | `Option<String>` | 否 | Address of the crash report collector server (e.g. 127.0.0.1:42972)… | `0x19ad5d` / 20 |
+
+取证链（全部 arm64）：
+* `augment_args`（`0x3b0bd8` / **5752** B，**独立符号**）：5 次 `Arg::value_names`、3 次
+  `_<u16 as ValueParserFactory>::value_parser`（`0x3b1178`/`0x3b1518`/`0x3b1890`）+ 2 次 String 的
+  `Arg::value_parser`（`0x3b0e70`/`0x3b1b80`）、5 次 `StyledStr::from`（help 串长度 **149/43/30/95/152**）；
+  命令名 `Command::new("Graphwar II")`（槽 `0x19afd2` / 11）+ 版本 `"0.1.0"`（槽 `0x19afdd` / 5，
+  **不是**游戏版本 `2.0.60`）。
+* `FromArgMatches::from_arg_matches_mut`（`0x3b2250` / 860 B）：5 次 `try_remove_one`，长度依次
+  **14 / 14 / 11 / 11 / 20**（= 5 个 id 的字节数）；u16 那份单态被 **14/11/11** 三处用 ⇒ 3 个端口；
+  String 那份被 **14/20** 两处用 ⇒ 2 个地址；随后 **2 次** `clap_builder::error::Error::raw`，
+  长度为 **64** / **61**，正是
+  `"The following required argument was not provided: broadcast_port"` 与同句 + `logger_port`
+  ⇒ **只有这两个必填**。
+* `value_name` 与参数的**逐条配对**是**推断**（5 次 `Arg::value_names` + 5 条大写串，命名与 id 一一对应，
+  但没把每次调用的实参逐个配对）；`required` 与 `rust_type` 是观测（上面那两条）。
+
+### 159.4 三条被证伪的旧结论（T109 §153.4）+ 一条我方旧文档收口
+
+| # | 旧结论（出处） | 本轮证据 | 裁决 |
+|---|---|---|---|
+| 1 | 「`user_args` 体内是 `Args::augment_args` 的 **5752 B** derive 展开 ⇒ 不引 clap 就落不了」（§153.4-①） | `.symtab` 里 `_<…Args as clap_builder::derive::Args>::augment_args` 是**独立符号** `0x3b0bd8` / **5752 B**；`user_args`（672 B）里**没有任何 clap builder 调用**，只有 `std::env::args`/`Vec`/`String::clone` | **前提错**。落得了，已落（§159.3） |
+| 2 | 「`insert_button_in_vbox` 需要**插入下标**（`len` 与插入位置的关系）」（§153.4-③） | 3 条 `Node::add_child_full`（`0x44fbf4`/`0x44fcd0`/`0x44fd48`）实参都是 `(force_readable_name=false, internal=0)` = **append 到末尾**；**没有任何 `move_child`/`add_sibling`** | **前提错**。不存在"插入下标" |
+| 3 | 「`update_buttons_background_in_vbox` 需要**完整的名字→图标映射表**（现有名字表只覆盖一部分）」（§153.4-③） | 该函数体内**只有一个**名字 `"SkinBackgroundButton"`（槽 `0x19df3f` / 20 B），图标是**第 2 个入参**；"哪张图配哪个 vbox"在**调用方** `update_buttons_background`（`0x44fe3c` / 484 B）：`get_skin_texture` 取一张图 → `get_node_by_name("FacesVbox", 9)`（槽 `0x19de28`）与 `get_node_by_name("HatsVbox", 8)`（槽 `0x1790f8`）**各刷一遍同一张图** | **张冠李戴**。映射在调用方，且是"一对二"不是"多对多" |
+| 4 | （我方旧文档）`src/graphwar_player_screen_control.rs` §8 unknowns ①「两个 per-vbox 助手的 x86 入口不知谁对谁」 | x86 `0x4f8330` 与 arm64 `update_buttons_background_in_vbox` 引用**同一个** `"SkinBackgroundButton"` 串（x86 槽 `0x1c45d2`）⇒ **观测级配对**；`0x4f7bb0` = `insert_button_in_vbox` 是**推断**（指纹 top-1 score 0.7647 + 两侧都恰好 3 条调用点） | **已配对**，旧 unknowns 条目就地改准（AGENTS §0.6） |
+
+**`insert_button_in_vbox` 本轮证死的三件事**（都是观测；写进模块常量 + 单测）：
+1. 新建的节点类是 **`HBoxContainer`**（一行按钮的容器）：`0x44fb70 bl construct_engine_object::hda9be1bf82a23c18`
+   → 该单态化函数体 `0x4b89b8 bl <HBoxContainer as GodotClass>::class_id` → `0x7ef13c bl classdb_construct_object`；
+2. `add_child(node, force_readable_name=false, internal=0)` = **append**，没有下标；
+3. "这一行还能再放一个"的判据是**子节点数 < 3**（`0x44fb24 cmp x0,#3` + `0x44fb28 b.lo`）。
+
+**为什么仍不落函数体**：3 条 `add_child` 各属哪条路径（"填已有行" / "新建一行" / 清理臂）**没逐条走完**，
+而这段是带 6 个 landing pad 的优化后控制流；按预注册 §1/P4"宁可只落串表与调用序列、不编语义"，
+本轮不写函数体 —— **写一个猜的分支布局 = 把推断写成代码**。
+
+### 159.5 分母外真缺与三个数
+
+* **`real-missing` 10 → 6**（本轮落 4 条；留下的 1 条是本节的 `insert_button_in_vbox`，另 5 条属其他线）。
+  ⚠️ **这是实跑**（不是算术）：`$PY tools/global_triage.py --denom-outside` 的原话是
+  `real-missing 6 / implemented(本模块) 118 / implemented(跨模块同名) 8 / scaffold-only 0`，`X = 132`（机器码 194）。
+  该命令**会重写 `fixtures/denom_outside.tsv`**（t110 的台账），本轮跑完**已逐字节还原**
+  （md5 `8129be66…a6fa` 与跑到前一致），不提交那次中间产物。
+* **X 不变 ⇒ `D_A` 分母不变**：`X` 是**分母**（T110 §157.2 纠正过），落码只在 X 内部把行从
+  `real-missing` 搬到 `implemented`，X 只因**分类改判**才变 ⇒ 本轮 X 仍 **132**。
+* **三个数分开报（本任务一处都没动，实测确认）**：
+  `A` 函数级 **336/527 = 63.8 %**｜`B` **336/438 = 76.7 %**｜`D_A` **336/659 = 51.0 %**。
+  原因同 §153：这 6 条体内**没有 `panic::Location`** ⇒ 527 的分母与分子都收不进它们；
+  它们的价值是**补真实缺口**（`denom_outside` 台账 + 源码级还原），不是抬指标。
+* `coverage_matrix`：函数分母 **527**、82 模块、逐位 89 / 观测 435 / 推断 3、未做 0（`--check` OK，生成物已重跑）。
+
+### 159.6 门槛读数（本分支实测，rebase 到 master `a285d0a` 之后）
+
+| 门槛 | 读数 | 命令 |
+|---|---|---|
+| `cargo test --offline` | **1786 / 0 / 1 ignored**（本轮新增 **18** 条单测：`append_*` 8 + `user_args` 7 + `vbox` 3；任务书上的 1765 是 T108 那轮的读数，本分支 rebase 前的基线已因别人合入而更高 ⇒ **条数只增不减、0 失败**） | `cargo test --offline`（`CARGO_HOME`/`CARGO_TARGET_DIR` 用本工作树自己的） |
+| `cargo test --features gdext-bindings` | **1946 / 0 / 1** | `cargo test --offline --features gdext-bindings` |
+| `coverage_matrix.py --check` | **OK**（已用 master 新版工具重跑生成物） | `COVERAGE_MATRIX_UPSTREAM=<ws>/.reference/upstream $PY tools/coverage_matrix.py --check` |
+| `boundary_audit.py --check` | **match 441 / mismatch 0 / multi 86** | `$PY tools/boundary_audit.py --check` |
+| `check_doc_refs.py` | **rc=0** | `python3 tools/check_doc_refs.py` |
+| `docsec.py check docs/06` | **✓ 无重复号、无冲突标记、无空心节**（断号 43/89 是历史缺口，不算错） | `python3 tools/docsec.py check docs/06-verification.md` |
+| 三轴 `fire` | **内容命中 647**（1080 结算批） | `cargo run --release --offline -q --example replay_attrib -- --dir <快照>/replays --drive fire --policy default --json f.jsonl` |
+| 三轴 `batch` | **内容命中 647** | 同上 `--drive batch` |
+| 三轴 `batch_conv` | **内容命中 637**（种类 1075） | `cargo run --release --offline -q --example batch_conv -- --dir <快照>/replays --policy strict` |
+
+三轴 **647 / 647 / 637 一位未退**（快照仍 401 份回放 / 403 条目，未动语料）。
+
+> ⚠️ **一条 flaky 记录**（本轮实测，别当回归）：首次全量 `--features gdext-bindings` 跑出现
+> `tests/replay_diff.rs::complete_replay_runs_and_matches` 失败（`left: 0, right: 1`，"应当切出 1 个结算批"）。
+> **单独跑该测试 12/12 通过**，**重跑全量 = 1946 / 0 / 1 通过** ⇒ 是**并行测试共享
+> `CARGO_TARGET_TMPDIR/replay_diff/` 同名文件**导致的偶发，与本次改动无关（该测试只依赖
+> `game::Match` 与 `_scaffold::replaydiff`，不碰本任务三个模块）。下次见到同一条，先单独复跑。
+
+### 159.7 复跑命令
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.cargo-target         # ⚠️ 每个工作树自己的
+$PY tools/global_triage.py --denom-outside          # §159.5 的 real-missing 6 / X 132（会重写 denom_outside.tsv）
+$PY tools/addr_probe.py fde 0x3d93c0                # x86 append_debug_text 的 FDE = 0x1c7
+$PY tools/addr_probe.py dis 0x3d9590                # x86 append_function_entry（常量槽/替换链）
+# arm64 侧（未 strip，名字直接可读）：
+$PY tools/arm64_sym.py find 'append_debug_text|append_function_entry|user_args|in_vbox'
+$PY tools/arm64_sym.py dis  0x3deec8                # 需要 aarch64 objdump/capstone；本机 objdump 不支持 aarch64
+```
+
+### 159.8 遗留 / 建议的下一步（**合并前必读**）
+
+| # | 遗留 | 缺什么 / 下一步 |
+|---|---|---|
+| 1 | **`insert_button_in_vbox` 未落函数体** | 缺"3 条 `add_child` 各属哪条路径"的**分支布局**。下一步：把 `0x44fa48..0x44fe3c` 的 6 个 landing pad 按 `b`/`cbz` 目标画成基本块图，再判"填已有行 vs 新建一行"；类名/append 语义/`>=3` 判据**已证**，不用重做 |
+| 2 | **`docs/09` §9.3 需补一句** | 该节「6 组实验全无效」现在有机制解释（参数只在 `--` 之后被读 + 两个端口必填）。**不在本任务写范围**，请 lead 或 `docs/09` owner 补；补的时候把"哪 6 组 argv 长什么样"一起写（否则下次还是无法确认） |
+| 3 | **`append_*` 的零宽空格** | 7 次 `str::replace` 的**语义**（插可断行点）是推断；若哪天有像素/文本真值，可拿"同一函数文本的换行位置"验证 |
+| 4 | **`append_*` 的 `pop` 不对称** | `append_debug_text` 4 push / 3 pop 是**原版如此**（两构建同数）；**为什么**（是否漏 pop / 是否依赖调用方补 pop）没解 —— 若下游出现"标签样式串色"，先查这里 |
+| 5 | **`Args` 的 `value_name` 逐条配对** | 现在是推断（5 次 `Arg::value_names` + 5 条大写串）。要升档：把 `0x3b0b..0x3b22` 那 5 处的实参寄存器逐个追到串槽（每处约 0x100 条指令的栈初始化，成本中等） |
+| 6 | **clap builder 链本体未落** | `augment_args`（5752 B）属 `clap_builder`，非游戏业务逻辑；本仓库不引 clap 依赖 ⇒ 只登记（§159.3 的表已把**字段级**信息全取出来，落不落 builder 链不影响"原版有哪些参数"） |
