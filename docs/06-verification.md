@@ -26478,3 +26478,222 @@ python3 tools/docsec.py check docs/06-verification.md   # 通过（断号 43/89 
 7. **不做的事**：没有改任何 `src/**`、`client/**`、`tests/**`、护栏/门槛、`fixtures/naming_android*.tsv`
    （T87 原始台账，只读引用；`verify` 重写过的那份已 `git checkout --` 还原）、`fixtures/name_to_addr.tsv`（v1，只读引用）、
    `fixtures/global_triage*`（只读引用）、`tools/function_coverage.py`、`tools/three_way_match.py`。
+
+## 142. T95 四个小模块的 16 条 F3 **全部裁决 + 13 条落码**（real-missing 13 / na:std-mono 3 / unknown 0）（2026-11-28，任务 T95，分支 `agent/gap-f3misc`）
+
+> **节号说明**：本轮起草时按“下一个空号”取了 §140，但同批的 T93（§139）、T94（§140）、T92（§141）
+> 先合入 master ⇒ 本节在 rebase 时按 `tools/docsec.py` 的“整段抽出、按号插入”做法改成 **§142**，
+> 正文里的自引用同步改号。**§140 号本身不空**：那是 T94 的 `graphwar_game_state_manager` 节。
+
+> **本节回答什么**：`tools/function_coverage.py --stats` 的「确证缺函数边界（gap）」榜上四个**小模块**
+> （`replay_player` 4/5、`backend` 4/6、`audio_control` 4/7、`play_screen_control` 4/10）共 **16 条 F3**
+> 到底是真缺口、编译器产物、还是判不了 —— 并把真缺口的落成函数体。
+> 判据**先写完提交**（`fixtures/gap_f3misc_plan.txt`，单独 commit `14c894e`），然后才反汇编、才改 `src/`；
+> 逐条台账是 `fixtures/gap_f3misc.tsv`（16 行 + 11 列）。
+
+### 142.0 一句话结论
+
+**16 条里 13 条是 `real-missing`（源码层真有这个函数），3 条是 `na:std-mono`（alloc 泛型实例），0 条 `unknown`；
+13 条 real-missing 全部落码（12 个源码函数 + 1 个闭包体，落成 13 条机器码 F1）。**
+其中 **`0x3db3e0`（4240 B，T62 记为"未落"的最大一条）攻下来了**：T62 的两条卡点都被证伪/解开（§142.3）。
+四个模块的 F3 从 **16 → 3**（剩的 3 条里 2 条就是 T89 已裁决的 `na:std-mono`，1 条是同一批的 `0x3bfdd0`）。
+
+### 142.1 判据（继承 + 一处新闸，**阈值一字未改**）
+
+* 五类定义 / 机判特征 / `R-STD`·`R-GDEXT`·`R-OTHER`·`R-REAL`·`R-UNKNOWN` 判决规则与优先级（E1–E4）
+  —— 逐字继承 `fixtures/f3_triage_plan.txt`（T82）；
+* **体积上限**（T85 `M4` / T86 `VOL_CAP`）：`na:*` 要求 FDE ≤ **0x800**（本轮最高一条 `0x3db3e0`=0x108e ⇒ 天然不可能 na）；
+* **调用形态闸**（T89 §137.5 新增，本轮**逐条记录** `rel32`/`slot` 两个数）：
+  `rel32≥1 & slot=0` = 直接被调（泛型单态化的必要形态，**但单靠它不能定案**）；
+  `rel32=0 & slot≥1` = 地址只在数据槽（**禁止据此判 `na:std-mono`**，T89 驳回 `0x438880` 的教训）；
+  `rel32=0 & slot=0` = 只经 vtable/间接调用 ⇒ **必须另找间接链，否则判 `unknown` 并写明缺哪条链**；
+* **`na:std-mono` 的正向指名**（T87/T89 判据①）：本址 `panic::Location` 键集在
+  `.reference/steam/android-2.0.60/libgraphwarrust.so` 的 `.symtab` 里必须命中**标准库/alloc 的泛型本体**。
+  本轮**独立复跑**（脚本 `.agent-work/android_hit.py`，读 `naming_android` 的特征缓存，可丢弃），不照抄 T89。
+
+### 142.2 逐条裁决（16 条，逐行依据见 `fixtures/gap_f3misc.tsv`）
+
+| # | vaddr | FDE | 真名 | `rel32/slot` | 裁决 | 落点（我方文件:行） |
+|---|---|---|---|---|---|---|
+| 1 | `0x3d61a0` | `0x70b` | `GraphwarReplayPlayer::inject_events` | 4/0 | real-missing | `src/graphwar_replay_player.rs:991` |
+| 2 | `0x3d68b0` | `0x186` | `…::go_to_next_checkpoint` | 3/0 | real-missing | `:1046` |
+| 3 | `0x3d6a40` | `0x162` | `…::go_to_first_checkpoint` | 1/0 | real-missing | `:1030` |
+| 4 | `0x3d6bb0` | `0x1bc` | `…::go_to_previous_checkpoint` | 1/0 | real-missing | `:1068` |
+| 5 | `0x514d80` | `0x112` | `GraphwarBackend::resubscribe_to_events` | 3/0 | real-missing | `src/graphwar_backend.rs:467` |
+| 6 | `0x514f20` | `0x213` | `GraphwarBackend::start_client_to_replay` | **0/1** | real-missing | `src/graphwar_backend.rs:531` |
+| 7 | `0x5153f0` | `0x10a` | `…::subscribe_to_event_with_id::{{closure}}`（`call_once` 项） | 0/1 | real-missing（原 `unknown`） | 父函数 `src/graphwar_backend.rs:508`（R2） |
+| 8 | `0x520100` | `0x152` | 同上（`call_mut` 项） | 0/1 | real-missing（原 `unknown`） | 同上（R2） |
+| 9 | `0x4bef20` | `0xd4` | `GraphwarAudioControl::game_state_event` | **0/0** | real-missing | `src/graphwar_audio_control.rs:435` |
+| 10 | `0x4bf090` | `0x2a9` | `GraphwarAudioControl::effect_info_event` | **0/0** | real-missing | `src/graphwar_audio_control.rs:379` |
+| 11 | `0x3bfdd0` | `0x25b` | —（无名） | 1/0 | **na:std-mono** | — |
+| 12 | `0x5238c0` | `0x358` | —（无名） | 1/0 | **na:std-mono** | — |
+| 13 | `0x3db3e0` | **`0x108e`** | `GraphwarPlayScreenControl::add_player_victory_icon` | 3/0 | real-missing | `src/graphwar_play_screen_control.rs:1657` |
+| 14 | `0x3dc470` | `0x1c0` | `…::update_names_button_texture` | 2/0 | real-missing | `:1701` |
+| 15 | `0x3dc630` | `0x1c0` | `…::update_view_function_button_texture` | 2/0 | real-missing | `:1722` |
+| 16 | `0x522070` | `0x477` | —（无名） | 1/0 | **na:std-mono** | — |
+
+**两处"调用形态"必须点名**（否则会得出错误结论）：
+
+1. **`0x514f20` 的 `slot=1` 不是"没被调用"**。那个重定位槽 **`0x9ba948` 有 1 个使用点：`0x3a6daa`（在
+   `GraphwarRootNode::process` = `0x3a5760` 里）** ⇒ 原版是 `call [rip+…]` 的 GOT 槽间接调用
+   （AGENTS.md「调用图会骗人」第 1 条的又一例：只看 `call rel32` = 0 会把它当成没人调的死代码）。
+2. **`0x4bef20`/`0x4bf090` 的 `rel32=0 & slot=0`**：本轮**没有**闭合"谁调用这两个本体"这条链（见 §142.8 遗留），
+   但找到了它们的**另一份副本**：tag 常量 `0x800000000000001e`（30）在 `.text` 里出现 2 次 ——
+   `0x4bef2b`（本体）与 **`0x4d2f7e`**；`0x800000000000002c`（44）也 2 次 —— `0x4bf09d`（本体）与 **`0x4e2dd6`**。
+   而后两个所在函数（`0x4d2f70` / `0x4e2d50`）**各是一个 vtable 项**（槽 `0x95f3c8` / `0x95fb70`，0 个代码使用点）
+   ⇒ 形态是**订阅闭包的 `call_mut` 里把这个方法体内联了一份**；独立本体则没被直接调用（原因本轮未知）。
+
+### 142.3 **`0x3db3e0` 攻下来了** —— T62 的两条"卡点"一条证伪、一条定性为 gdext 胶水
+
+T62（`docs/06` §…/`docs/14` §10.4）把这条记成「**三层嵌套循环**（每层一个 `Gd` 句柄 + 一次 `upcast_ref`），
+把 `0x447d10`/`0x447e20`/`0x3acb00` 三跳的身份定下来才能写」。本轮在 **arm64 未 strip 的 `.symtab`** 上重读
+（`0x3e0b64` / `0xbb4`），两条都不成立：
+
+1. **没有嵌套循环**：体内是**三段同形的顺序块**（皮肤 / 脸 / 帽子），每块 = 一次 hash 查找 + 一次取贴图 +
+   一次 `set_texture`。所谓"三层嵌套"是同一段代码展开三遍造成的错觉。
+2. **三跳身份全部落地**（arm64 真名）：
+   `GraphwarNodes::get_node_by_name_rec`（`0x3a51a8`）×4、`GraphwarModuleContainer::get_module::<GraphwarTextureLoader>`
+   （`0x49fb84`）、`CanvasItem::set_visible`（`0x7e68e0`）、
+   `GraphwarTextureLoader::get_skin_texture`（`0x40c1cc`）/`get_face_texture`（`0x40c0a4`）/`get_hat_texture`（`0x40bf7c`）、
+   `Object::call`（`0x36bdf4`）+ 串 `"set_texture"`（`0x19bec0`，len 11）。
+3. **T62 另一处卡点 `[rax+0x418]` 也定位了**：arm64 同一位置是
+   `BindingStorage::ensure_main_thread`（`0x7f0ebc`）→ `[x8+0xd10]` → `ldarb [x8+0x14f0]` → `blr [x8+0x418]`
+   = gdext 引擎接口表里的一格（`RefCounted::unreference` 的 ptrcall）。**不是游戏业务代码** ⇒ 不构成缺口。
+
+**语义（观测）**：`add_player_victory_icon(graphics_id, index)` = 取节点 `"VictoryPlayerContainer{index}"`
+（22 字节前缀 `0x19bf62` + `<u32>::_fmt` 十进制，arm64 `0x3e0ba8`/`0x3e0bdc`），把 `graphics_id` 对应的
+**皮肤 / 脸 / 帽子**三张贴图按 `SkinIcon`(`0x179470`) → `FaceIcon`(`0x1791f0`) → `HatIcon`(`0x19bf78`)
+刷上去，并把这一格 `set_visible(…, true)`；某类贴图没有（缓存表 +0x48/+0x78/+0xa8 查不到）就整块跳过。
+失败臂串 `"Upcast failed. This is a bug; please report it."`（`0x19be91`）。
+
+### 142.4 两条 `unknown` 闭包行（`0x5153f0` / `0x520100`）：**同一闭包的 `call_mut` + `call_once`**
+
+T82 按 G4（"同一个 `Location` 被 ≥2 条无名 F3 行共享 ⇒ 判不了"）把这两条记 `unknown`。本轮实读
+`.data.rel.ro` 的 **vtable `0x961fa8`**（`fixtures/gap_f3misc.tsv` 里逐项列出）：
+
+```
++0x00  0x520ce0   drop_in_place
++0x08  0x10       size   ← 与 subscribe_to_event_with_id 里 alloc(0x10, 8) 的捕获体逐字对上
++0x10  0x8        align
++0x18  0x520100   call_mut     ← 台账里的第 1 条
++0x20  0x5153f0   call_once    ← 台账里的第 2 条
+```
+
+⇒ 两条是**一个源码闭包的 `FnMut::call_mut` 与 `FnOnce::call_once` 两个编译器 shim**，不是两个源码函数；
+父函数 = `GraphwarBackend::subscribe_to_event_with_id`（arm64 `0x407580` 有真名；闭包体 `0x407688` 有真名：
+`self.表.borrow_mut().get_mut(&id)` 命中后 `ldp x0,x8,[entry-0x10]` + `blr [x8+0x20]` 再派发一层 `dyn FnMut`）。
+⇒ 裁决从 `unknown` 改成 **`real-missing`**（源码层确有这个闭包字面量），并把**父函数**落码；
+按 `function_coverage.py` 的 R2（`::{{closure}}` 取父函数）两条机器行随之判 F1。
+**诚实拆解：机器码 +2，源码级 +0（闭包体住在父函数里）**。
+
+### 142.5 三条 `na:std-mono` 的**独立复算**（不照抄 T89）
+
+| vaddr | 判据①（Android `.symtab` 正向指名，本轮复跑） | 判据② 调用形态 | 体积闸 | 结论 |
+|---|---|---|---|---|
+| `0x3bfdd0` | `<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter`（crate=`alloc`，arm64 `0x3b417c` size `0x23c`） | `rel32=1/slot=0` | `0x25b` ≤ 0x800 | `na:std-mono` ✅ |
+| `0x5238c0` | `alloc::rc::Rc<T,A>::new_cyclic_in`（`alloc`，`0x41921c` size `0x2c4`） | `rel32=1/slot=0` | `0x358` ≤ 0x800 | `na:std-mono` ✅ |
+| `0x522070` | `alloc::rc::Rc<T,A>::new_cyclic_in`（`alloc`，`0x41830c` size `0x3ec`，**5 个 Location 键全交上**） | `rel32=1/slot=0` | `0x477` ≤ 0x800 | `na:std-mono` ✅ |
+
+三条与 T89 §137.5 的裁决**一致**（本轮没有改判任何一条）。★ 仍未动 T82 台账 `fixtures/f3_triage.tsv`
+（历史裁决记录，本轮只在 `fixtures/gap_f3misc.tsv` 与本节登记新裁决 —— 这一取舍的理由见 §138.9-1）。
+
+### 142.6 落码清单与**三口径**（机器码 / 源码级 / 严格 1:1 分开报）
+
+| 落码的源码函数 | vaddr | 我方文件:行 |
+|---|---|---|
+| `GraphwarReplayPlayer::inject_events` | `0x3d61a0` | `src/graphwar_replay_player.rs:991` |
+| `GraphwarReplayPlayer::go_to_first_checkpoint` | `0x3d6a40` | `:1030` |
+| `GraphwarReplayPlayer::go_to_next_checkpoint` | `0x3d68b0` | `:1046` |
+| `GraphwarReplayPlayer::go_to_previous_checkpoint` | `0x3d6bb0` | `:1068` |
+| `GraphwarAudioControl::effect_info_event` | `0x4bf090` | `src/graphwar_audio_control.rs:379` |
+| `GraphwarAudioControl::game_state_event` | `0x4bef20` | `:435` |
+| `GraphwarBackend::resubscribe_to_events` | `0x514d80` | `src/graphwar_backend.rs:467` |
+| `GraphwarBackend::subscribe_to_event_with_id`（含其闭包体；**此函数本身不在 527 里**） | `0x515320`（hyb 预测，推断） | `:508` |
+| `GraphwarBackend::start_client_to_replay` | `0x514f20` | `:531` |
+| `GraphwarPlayScreenControl::add_player_victory_icon` | `0x3db3e0` | `src/graphwar_play_screen_control.rs:1657` |
+| `GraphwarPlayScreenControl::update_names_button_texture` | `0x3dc470` | `:1701` |
+| `GraphwarPlayScreenControl::update_view_function_button_texture` | `0x3dc630` | `:1722` |
+
+**三口径（`tools/function_coverage.py --stats` 前后对比）**
+⚠️ 本分支 rebase 到 master `ee001ce`（T92/T93/T94 已合入）后，**基线本身变了**（312→…→319），
+所以下表给**三列**：我起草时的基（`e1003cd`，`14c894e` 的父）／rebase 后的新基／本轮终点。
+**本轮自己的增量与基线无关，恒为 +13 行 / +12 源码函数 / R6 +12。**
+
+| | 起草基 `e1003cd` | **rebase 后基线 `ee001ce`** | 本轮终点 | 本轮增量 |
+|---|---|---|---|---|
+| **机器码**：F1 / 527 | 313 / 527 = 59.4 % | **319 / 527 = 60.5 %** | **332 / 527 = 63.0 %** | **+13 行** |
+| 口径 B（剔 `na:*`，分母 438，**招牌**） | 313 / 438 = 71.5 % | 319 / 438 = 72.8 % | **332 / 438 = 75.8 %** | +2.9 pp |
+| 口径 B′（只剔强 na，分母 445） | 313 / 445 = 70.3 % | 319 / 445 = 71.7 % | **332 / 445 = 74.6 %** | +3.0 pp |
+| **源码级**：新增**不同**源码函数 | — | — | **12 个**（上表 12 行；`{{closure}}` 的两条机器行只对应 1 个闭包体，已折进父函数） | +12 |
+| **严格 1:1**：`M1_1to1`（R6） | 242 / 527 = 45.9 % | 248 / 527 = 47.1 % | **260 / 527 = 49.3 %** | **+12** |
+| F2 / F3 | 71 / 143 | 71 / **137** | 71 / **124** | F3 −13 |
+| 子类 `register-only` / `named-miss` / `parent-missing` | 31 / 19 / 5 | 30 / 16 / 5 | **24 / 11 / 3** | 本轮 13 条正好是 6+5+2 条，**全部**退出该三组 |
+
+**四个模块的 F3 变化**（`--module` 逐条）：`replay_player` 4→**0**（5/5 全 F1）、`backend` 4→**0**（F1 5 + F2 1）、
+`audio_control` 4→**2**（剩的 2 条正是 `na:std-mono` 的 `0x3bfdd0` / `0x5238c0`）、
+`play_screen_control` 4→**1**（剩 `0x522070` = `na:std-mono`）。
+⇒ **按"确证缺函数边界（gap）"口径，四个模块从 15 条降到 0 条**（工具 `gap` 列把 `register-only` 一律算 gap，
+故它仍显示 `audio_control 1/7` 与 `play_screen_control 1/10` 各 1 条 —— 那两条其实是 `na:std-mono`，
+`fixtures/gap_f3misc.tsv` 的「类别」列写明；**gap 列不看 na 台账**这件事本身记在 §142.8）。
+
+### 142.7 门槛读数（全部自己跑，命令照抄 `fixtures/gap_f3misc_plan.txt` §7）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1620 / 0 / 1 ignored**（rebase 后基线 **1599**/0/1 → 本轮 **+21** 条单测：replay 10 / audio 2 / backend 4 / play_screen 5） |
+| `cargo test --offline --features gdext-bindings` | **1769 / 0 / 1 ignored**（基线 **1748**/0/1 → +21，同上） |
+| `cargo` / `gdext` 只增不减 | ✅ 两档都是净增 21（起草基 `e1003cd` 上是 1592 / 1741，与本轮无关） |
+| `tools/coverage_matrix.py --check` | **OK**（527 已实现 / 逐位 89 / 观测 435 / 推断 3；生成物 `docs/coverage-matrix.tsv` + `docs/149` 已按新 `src/` 重跑，`ours_funcs` 四模块 21→25 / 6→14 / 73→97 / 53→87） |
+| `python3 tools/check_doc_refs.py` | **rc=0**（无死链） |
+| `python3 tools/docsec.py check docs/06-verification.md` | **通过**（断号 43/89 是历史缺口；**139 留给同批的 T93 §139**，故本轮从 140 起 —— T93 于本轮期间 push 了 `fcd19b2` 占用 139） |
+| `tools/boundary_audit.py --check` | **match 441 / mismatch 0 / multi 86**（与改前一致：本轮没碰归属/边界表） |
+| 三轴 `fire` | 内容命中 **647**（结算批 1080）/ `bit_exact_attrib --check-baseline --axis fire` **全部一致** |
+| 三轴 `batch` | 内容命中 **647** / `--axis batch` **全部一致** |
+| 三轴 `batch_conv` | 内容命中 **637** · 种类序列 1075/1080 · 逐批 **变好 128 / 变差 0** |
+
+> 三轴读的是 `.reference/replays/gw2-replays-snapshot/replays`（**403 条目 = 401 份回放 + MANIFEST + SHA256SUMS**，
+> 冻结快照；本轮没往里加过任何样本）。本轮**没有动** `src/game.rs` / 收敛层 / 协议，三轴与 `batch_conv` 的
+> 逐批"变好 128"是**改前就有的**读数（`bit_exact_attrib --check-baseline` 只比基线、全部一致 ⇒ 无漂移）。
+
+### 142.8 遗留 / 未闭合的链 / 我写错了什么 / 建议下一步
+
+**还没闭合的链（4 条，都写明缺什么）**
+
+1. **`0x4bef20` / `0x4bf090` 本体的调用链**：`rel32=0 & slot=0`，`.text` 里也没有 `jmp rel32` 指向它们
+   （本轮扫过全 `.text` 的 `e8`/`e9`，正对照用 `0x4bed70 = EffectAudioData::new` 验过扫描器：6 个调用点全找到）。
+   已知的是它们有**被内联进订阅闭包 `call_mut` 的副本**（`0x4d2f70` / `0x4e2d50`，各是一个 vtable 项）。
+   缺：谁（或哪个间接跳转表）使用这两个**独立本体**。**建议**：查 gdext 的 `#[func]` 方法表是否用
+   **int32 相对偏移表**（本轮只查了绝对指针重定位槽）。
+2. **`GraphwarBackend +0x1d8` 那个容器的值类型**：`resubscribe_to_events` 里读出的是一对 `(ptr,len)`，
+   而闭包查表用的是 16 字节的 `dyn FnMut`（`ldp x0,x8`）。两处**不是同一张表**（或同一张表的不同 layout），
+   本轮没定。**建议**：按 hashbrown 元素步长（0x30 / 0x20）反推值类型。
+3. **`GraphwarBackend +0x00` 那个判别字 `== 2` 的来源**：`start_client_to_replay` 里两处比较
+   （`0x514fe8` 决定要不要析构旧播放器、`0x515041` 判 `==2` 走 panic 臂），但 `GraphwarReplayPlayer::new`
+   把 `+0x00` 写成 0（arm64 `0x3d9b00 str xzr,[x20]`）⇒ 2 由谁写、语义是什么**未知**。
+4. **`go_to_previous_checkpoint` 为什么把 `TickHandler.tick` 写成 `checkpoints[0]`**（`0x3d6c78`/`0x3d6c7a`）：
+   指令是硬的，语义**未知**（x86 与 arm64 一致，不是反汇编读错）。已按"只记指令、不编语义"落码。
+
+**⚠️ 我写错了 / 前提被证伪（3 条）**
+
+1. **预注册 §2.5 里我写"音频两条的调用链靠 `new` 里 4 个 `dyn FnMut` vtable 的 `call_mut` 项解出来"** ——
+   **方向对、地址错**：模块文档记的 vtable 地址（`0x85b0f8`/`0x85b120`/`0x85b148`/`0x85b170`）在
+   `.rela.dyn` 里**没有任何重定位**（全 0），照它们读出来的 `call_mut`（`0x4d5434`/`0x4d5f58`，模块文档原话）
+   **不是指令边界**。改用"扫 tag 常量的第二份副本"才定位到真正的 shim（`0x4d2f70`/`0x4e2d50`）。
+   ⇒ **模块文档里那张 vtable 表（`src/graphwar_audio_control.rs` §2）已经不可引用**，登记在此，本轮不改它（不在写范围）。
+2. **T62 对 `0x3db3e0` 的"三层嵌套循环"前提被证伪**（§142.3）：是三段顺序展开，不是嵌套循环。
+3. **`fixtures/function_coverage.tsv` 的 `gap` 列不看 na 台账**：`0x5238c0` / `0x522070` 判 `na:std-mono` 之后
+   仍被算成 gap（因为 pin 子类还是 `register-only`）。本轮**没有**改工具（不在写范围），只在本节点名：
+   **报"确证缺函数边界"时必须同时看 `na` 列**，否则这两个模块会永久显示 1 条假 gap。
+
+**建议下一步**：把 §142.2 的 13 条落码按 T95 预注册 §4.2 的口径做**逐位复核**（本轮全是 `观测` 档：
+注释能指到指令、单测期望值来自立即数/表项，但**没有**与真二进制逐字节对拍 —— 这四条模块的
+`coverage-matrix` 档位都是 `观测`，落码不会自动升级档位）。
+
+### 142.9 可复算的数（本节全部读数）
+
+16 条 F3 / 13 `real-missing` + 3 `na:std-mono` + 0 `unknown` /
+`0x3db3e0` = 0x108e = **4240 B** / vtable `0x961fa8` 的 5 项（`0x520ce0`/`0x10`/`0x8`/`0x520100`/`0x5153f0`）/
+tag 30 的两份副本 `0x4bef2b`+`0x4d2f7e`、tag 44 的两份 `0x4bf09d`+`0x4e2dd6` /
+Android 命中三条：`SpecFromIterNested::from_iter`(0x23c) · `Rc::new_cyclic_in`(0x2c4) · `Rc::new_cyclic_in`(0x3ec) /
+`313→319→332`（起草基→rebase 基→终点） · `59.4→60.5→63.0` · `71.5→72.8→75.8` · `70.3→71.7→74.6` ·
+`242→248→260` / cargo `1592→1599→1620` · gdext `1741→1748→1769` · 三轴 `647 / 647 / 637` · boundary `441/0/86`。
