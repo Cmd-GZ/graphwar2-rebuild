@@ -1,0 +1,252 @@
+# denom_outside_plan.txt —— T105 **预注册**：527 分母**之外**的真实源码函数（"分母外缺口"）全量量化
+#
+# **先提交、后跑**（本文件 commit 之后才跑 --denom-outside 全量；跑完只许在文件末尾追加 §9「勘误」，不改 §1–§8）。
+#
+# ## 为什么要做这件事（盲区，三处实证）
+#
+# 527 这个分母**是用 `panic::Location` 建的**：`fixtures/boundary_audit.tsv` 的一行 = 一个函数，
+# 进分母的条件是"体内引用了 `.data.rel.ro` 里某个 `src/*.rs` 的 Location 结构体"。
+# ⇒ **一个原版函数只要体内没有 Location，就永远进不了分母、也永远不出现在"缺口"里**——
+#   它既不进分母、也不进分子，"没实现"于是完全不可见。这不是判据错误，是**分母的系统性盲区**。
+#
+# 2026-11-28 三个 agent 各自独立撞上（同一堵墙的三个面）：
+#   · t97 `graphwar_root_node`：**3 条 real-missing 在 527 分母外**
+#     （`show_pop_up` android `0x3a5d60` / `print_help_and_exit_if_requested` `0x3ab19c` / `user_args` `0x3ab2bc`）；
+#   · t102 `graphwar_plane`：**3 条真缺口**（`on_resized` `0x4c3308` / `clear_state` `0x4c3408` /
+#     `update_entities` `0x4c378c`）体内 `panic::Location` = 0 ⇒ **M 口径永远看不到它们**；
+#   · t101 `graphwar_nodes`：Android 侧 **18 条全 `denom:no-loc`**（Linux 侧 `tools/addr_probe.py locs`
+#     对这 18 个地址全是 0 条 Location），而它们只对应 **2 个真实源码函数**。
+# ⇒ 本轮把这条盲区**全量量化**，并给第四个口径 D（分母变大 ⇒ 完成度会**下降**，这才是它的价值）。
+#
+# ## 口径（一律可复算）
+#
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#     **两份构建的地址互不可换算** —— Android 列与 Linux 列是两列，不许相减、不许平移。
+#   * **Android**（真名来源）：`.reference/steam/android-2.0.60/libgraphwarrust.so`
+#     （ELF64 aarch64，`.symtab` **未剥离**；sha256 `8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df`）。
+#     枚举口径 = **与 `tools/global_triage.py::_android_syms()` / `--android-census` 逐字同一段代码**
+#     （`.text` 内 FUNC、非 UND、按 `st_value` 去重、名字 = `.symtab` 原始 mangled 名）。
+#   * **Linux**（分母来源）：`.reference/steam/2026-08-28/libgraphwarrust.so`
+#     （ELF64 x86-64，stripped；sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`）。
+#   * 反汇编 = capstone 5.0.7（`.reference/venv`）；arm64 侧 `CS_ARCH_ARM64`。
+#   * Location 结构 = `{file: &'static str(16 B: ptr+len), line: u32, col: u32}` 共 24 B，
+#     指针由 `.rela.dyn` 重定位还原（x86 `R_X86_64_RELATIVE`=8 / arm64 `R_AARCH64_RELATIVE`=1027）；
+#     接受首址 / +8 / +16 三形态（`tools/naming_android.py::Side.describe_ref`，T87 已入库的实现，**直接复用不改**）。
+#
+# ## §1 四个集合（跑前固定）
+#
+# | 集合 | 定义 | 期望条数 / 自校验 |
+# |---|---|---|
+# | **G** | Android `.text` 内、任一 `.symtab` 名含 `graphwarrust` 的地址（按 `st_value` 去重） | **S0 = 1 244**，必须逐值等于 `fixtures/global_triage_android_census.tsv` 的 `total` 减非 game 族之和，也等于 `--android-census` 的 `game_module` 行合计 |
+# | **A** | G 中"最可能代表源码身份"的名字（见 §2.0 选名规则）demangle 后能解出游戏模块的地址 | 子集，允许有空 |
+# | **L527** | `fixtures/boundary_audit.tsv` 的 527 行（**M/S 口径的分母**） | **S0 = 527** |
+# | **KL(L)** | Linux 侧一行的 `panic::Location` 键集 `(file, line)`；来源 **`boundary_audit.tsv` 的 `loc_main_file` + `loc_main_lines`**（已入库、已被 T30/T82 判过），`loc_other_files` 只给文件与条数、**没有行号** | 每行 ≥1 个键 |
+# | **K(a)** | Android 侧地址 a 体内引用的**游戏模块** `panic::Location` 键集 `(basename(file), line)`；"游戏模块" = 路径以 `.rs` 结尾且**不含** `/rustc/`、`/.cargo/`、`cargo/registry` | 逐地址现算 |
+#
+# ### §1.1 两个连接（cross-build join，都只是**佐证**，不是主判据）
+#
+# * **K-join（观测档）**：`K(a) ∩ KL(L) ≠ ∅`（**同一个 (file, line)**；Location 键跨构建/跨 ISA 不变，
+#   这是 T87 §L 轴已发表的判据）⇒ 该 android 地址与该 Linux 行**同源**。
+# * **N-join（推断档）**：android 源码身份 `module::Type::method`（抹 `h<hash>`、抹泛型实参、抹 `.rs` 后缀）
+#   与 `boundary_audit.tsv` 的 `name` 列**逐字相等** ⇒ 候选同源。
+# * 三态列 `linux_pair`：`K-join:0x…` / `N-join:0x…` / `—(L空)`（无任何跨构建键）。
+#   **`—(L空)` 不是"没有对应函数"，是"无法用冻结夹具证到对应"**（Linux stripped + 该函数无 Location，
+#   T87 已登记跨构建键只有三条轴：Location / 顺序 / 结构指纹；本轮不做指纹配对，缺的那条轴写进 note）。
+#
+# ## §2 判据（**继承，不新立阈值**）
+#
+# ### §2.0 选名规则（一条地址上可能有多个别名）
+# 取该地址**全部** `.symtab` 名 demangle 后，按顺序尝试：①能解出游戏模块（`NA.parse_name` 非 None）的第一个；
+# ②否则取 `.symtab` 顺序里第一个（= T96 普查口径）。并在 TSV 里记 `n_sym`（该地址别名数）。
+# 理由：84 条地址的首名是 `core::ptr::drop_in_place<…>` / `<T as serde::de::Expected>::fmt` 这类**非游戏**名，
+# 它们因为**同址别名**含 `graphwarrust` 才落进 G（ICF 合并），不能拿首名当身份。
+#
+# ### §2.1 五类定义（T82 `fixtures/f3_triage_plan.txt` §1 **逐字继承**）
+#
+# | 类别 | 定义 | 进不进"分母外真实源码函数" |
+# |---|---|---|
+# | `real-missing` | 原版有我方没有的业务函数，函数体承载原版模块自己的语义 | **进** |
+# | `na:std-mono` | std/core/alloc 的单态化 | 不进 |
+# | `na:gdext-glue` | gdext 宏产物（类注册 / 属性访问器 / `#[func]` 分发壳 / 虚拟调用 shim） | 不进 |
+# | `na:other` | 其它不该手写的编译器生成物：drop glue / `#[derive]` 产物 / 闭包体 | 不进 |
+# | `unknown` | 判不了（**必须写明缺什么证据**） | 不进（**单独报数**，不塞进 X） |
+#
+# ### §2.2 机判形态 → 类别（**按名字形态，机械可复算**；优先级 = §2.5）
+#
+# | 形态代号 | 名字特征（demangle 后） | 类别 / 子类 |
+# |---|---|---|
+# | `drop-glue` | 含 `core::ptr::drop_in_place` | `na:other/drop-glue` |
+# | `reg-table` | 含 `__register_methods` / `__register_constants` | `na:gdext-glue/reg-table` |
+# | `call-shim` | 含 `ptrcall_fn` / `varcall_fn` | `na:gdext-glue/call-shim` |
+# | `ctor-shell` | 含 `__init` / `__inner_init` | `na:gdext-glue/ctor-shell` |
+# | `virtual-shim` | 含 `virtual_fn` / `virtual_call` / `__default_virtual_call` | `na:gdext-glue/virtual-shim` |
+# | `class-id` | 含 `class_id` | `na:gdext-glue/class-id` |
+# | `clap-derive` | 含 `clap_builder::derive` / `clap::derive`（如 `augment_args` / `from_arg_matches_mut`） | `na:other/clap-derive`（T97 已有先例：`0x3b2250` 判 `na:other/clap-derive`、`0x3b0bd8` 5752 B 判 `unknown/volcap:past-cap`） |
+| `macro-derive` | impl 头 ∈ {`serde::de::Visitor`, `serde::de::Expected`}（serde derive 生成的 `expecting`/`visit_*`/`fmt`），或 `<… as core::clone::Clone>::clone`（`#[derive(Clone)]`） | `na:other/macro-derive` |
+# | `closure` | 含 `::{{closure}}` | `na:other/closure-in-fn`（**并归并到父函数**，见 §2.4） |
+# | `business` | 其它（解出 `module::Type::method` 的业务名） | 进 §2.3 判 `denom:in` / `denom:no-loc` |
+#
+# ⚠️ **`macro-derive` 的边界**：`<X as serde::Serialize>::serialize` / `Deserialize::deserialize` **不算**
+# macro-derive（impl 头是 `serde::Serialize`，不是 `Visitor`/`Expected`）——T98 已证 `graphwar_event` 的
+# 手写 `serialize`/`deserialize` 是**真源码函数**。这条是 §5 C4c 的判别性对照。
+#
+# ### §2.3 `business` 的两分（**本节的核心判据**）
+#
+# * `K(a) ≠ ∅`（体内至少 1 个游戏 Location 键）⇒ **`denom:in`**：该源码函数有 panic 点
+#   ⇒ 它有资格进 527 分母（是否真被 `pick_main` 收进去由 boundary 决定，不影响"它不属分母外"）。
+# * `K(a) = ∅` ⇒ **`denom:no-loc`**：结构上进不了 527 分母。
+#
+# ### §2.4 源码级合并规则（**几条机器码 = 几个源码函数**，T80/T101 已发表规则的机械化）
+#
+# * **组键** = `(module, owner, method)`，其中 method **抹掉泛型实参**（`get_node_by_name_rec<X>` → `get_node_by_name_rec`）、
+#   **抹掉 `h<hash>`**、**`::{{closure}}` 及之后全部丢弃**（闭包体归父函数：源码层没有独立 `fn`）。
+# * 同一组内：**只要有一条**地址 `K ≠ ∅` ⇒ 整组 `denom:in`（源码函数有 panic 点 ⇒ 不是盲区）；
+#   全部 `K = ∅` ⇒ 整组 `denom:no-loc`。
+# * `denom:no-loc` 的组再分：
+#   * `implemented/denom:no-loc` —— 我方 `src/<module>.rs`（`docs/coverage-matrix.tsv` 的 `ours` 文件，
+#     缺则 `src/graphwar_<module>.rs`）里存在 `fn <method>`（词边界）；**必须在 TSV 记 `ours_src = 文件:行`**；
+#   * `real-missing/denom:no-loc` —— 没有 ⇒ 该写。
+#   * 只住在 `src/_scaffold/**` 的不算实现（`AGENTS.md` §4 / `function_coverage.py` R1）⇒ 记 `scaffold-only`。
+#
+# ### §2.5 体积闸 + 优先级（T82 E4 / T85 M4 **逐字继承**）
+#
+# * **`VOL_CAP = 0x800`**：`na:*` 要求 `st_size ≤ 0x800`（T85 §129.3：实测 na 全 ≤0x721，≥0x800 上全是假阳性）。
+#   **逐字继承，包括对宏形态生效**：宏形态但 `st_size > 0x800` 一律降 **`unknown/volume-gate`**
+#   （不判 na、也不进 X），并**逐条打印**。⚠️ 这条**有已发表先例**：T97 把 5752 B 的
+#   `<graphwar_root_node::Args as clap_builder::derive::Args>::augment_args` 判成 `unknown/volcap:past-cap`
+#   （`fixtures/gap_rootnode.tsv`），正是同一规则 ⇒ §5 C4d 用它做负对照。
+# * 另记 `real_span` = `min(st_size, 下一个 FUNC 符号地址 − 本地址)`（T101 §149 发现 `st_size` 会被重叠符号骗：
+#   薄壳 552 真实跨度只有 228/204）。`real_span` **只入表、不进任何判决**（继承口径，不新立闸）。
+# * 判决顺序（不许跳过）：`na:gdext-glue` → `na:other/drop-glue|macro-derive|closure-in-fn` →
+#   `unknown/volume-gate` → `denom:in` → `implemented|real-missing / denom:no-loc`。
+# * 调用形态闸（T89 §137.5）：逐条记 `rel32`（全 `.text` 里 `bl` 直呼该地址的调用点条数）与
+#   `slot`（`.rela.dyn` 里 `R_AARCH64_RELATIVE` 表项 addend == 本地址的条数）。**只入表，不改判决**
+#   （本轮不判 std-mono 单态化，所以不需要那条"不许据 slot 判 na"的约束，但照样记）。
+#
+# ## §3 产出
+#
+# `fixtures/denom_outside.tsv` —— **一行 = G 里的一条机器码**（1 244 行，逐条可审计）：
+#
+# ```
+# android_addr | st_size | real_span | module | owner | method | form | n_sym | game_loc_keys
+#   | rel32 | slot | linux_pair | verdict | subclass | src_fn_group | ours_src | evidence | note
+# ```
+#
+# 头部注释块给**全部计数**（六类 / 按模块的 X / X_impl / X_missing / 机器码 vs 源码函数），
+# 使 `docs/06` 与本表任何数字都能互相复算。
+#
+# **分母外真实源码函数 X** = `denom:no-loc` 且 form=`business` 的**源码组数**（= 源码函数数），
+# 同时报 `X_mc`（对应机器码条数）、`X_impl`（我方已有）、`X_missing`（真待写）。
+#
+# ## §4 第四个口径 D（**分母变大 ⇒ 完成度下降**）
+#
+# * **D（主口径，源码函数口径）** = `已实现 / (527 + X)`
+#   * `D_A = 336 / (527 + X)` —— 与口径 A（含 na，分母 527）同分子
+#   * `D_B = 336 / (438 + X)` —— 与招牌口径 B（剔 na，分母 438）同分子
+#   * 敏感度 `D_A+ = (336 + X_impl) / (527 + X)`：把"分母外**已落码**的那些"也计入分子（否则它们是白干）
+# * **任务书公式字面读法（`M 口径`）** = `390 / (964 + X_mc)`：**⚠️ 本表要写明它是重复计数**——
+#   M 口径的被减数 `964`（Android 游戏本 crate 非 drop-glue 机器码）**本来就包含这 X_mc 条**，
+#   再加一次是把同一批机器码算两遍。⇒ **只作对照，不作主口径**（这是对任务书前提的一处更正，§9 登记）。
+# * **证据档**：分子 `336` = 观测（`fixtures/function_coverage.tsv` 的 F1）；
+#   `X` = **混合档**：`K(a) = ∅` 是**观测**（直接读 Android 侧 Location 引用），
+#   "Linux 侧也没有 Location"、"该由我们写"是**推断**（缺的证据：逐函数 Linux 地址配不上 —— stripped +
+#   无 Location 就没有跨构建键；跨构建内联差异**无法排除**）。D 的每个数字都要标这两档各占多少。
+#
+# ## §5 正/负对照（**先做，全过才允许出全量数**）
+#
+# | 组 | 条数 | 对象 | 期望 |
+# |---|---|---|---|
+# | **C0** 口径自校验 | 2 | `|G|`；`|L527|` | 逐值 = **1244** / **527**（与 `global_triage_android_census.tsv`、`boundary_audit.tsv` 相等） |
+# | **C1** t101 正对照 | 18 | `fixtures/gap_nodes.tsv` 里 `real-missing/denom:no-loc` 的 18 条 android 地址 | 全部判 **`real-missing/denom:no-loc`**、`K = ∅`（只有 `string.rs:2916` 这类 std 键）；源码组数 = **2** |
+# | **C2** t102 正对照 | 3 | `fixtures/gap_plane.tsv` 的 3 条（`0x4c3308`/`0x4c3408`/`0x4c378c`） | 同上；源码组数 = **3** |
+# | **C3** t97 正对照 | 3 | `fixtures/gap_rootnode.tsv` 的 3 条（`0x3a5d60`/`0x3ab19c`/`0x3ab2bc`） | 同上；源码组数 = **3** |
+# | | **合计 24 条机器码 / 8 个源码函数** | | **必须一条不少地被扫出来**（少一条 = 判法坏了，停下报告） |
+# | **C4a** 负对照（有 Location 的必须判 in） | 1 | android `0x39a6f0`（`GraphwarRootNode::ready`，K=19） | `denom:in`（**不许**判 `denom:no-loc`） |
+# | **C4b** 负对照（宏产物必须仍判 na） | 27 | `fixtures/gap_rootnode.tsv` 里 45 行中的 **27 条 `na:*`**（call-shim 10 / drop-glue 6 / ctor-shell 4 / virtual-shim 3 / reg-table 2 / class-id 1 / clap-derive 1） | 类别与 t97 **逐条相同**，一条都不许变成 business（另 1 条 `unknown/volcap:past-cap` 见 C4d） |
+# | **C4c** 负对照（宏边界） | 3 | T98 已发表的 `graphwar_event` 手写 `serialize`/`deserialize`/`make_new_connection_request_event`（android 侧同源名） | **必须**判 `business`（不许被 `macro-derive` 吞掉） |
+# | **C4d** 负对照（体积闸） | 1 | 任一 `st_size > 0x800` 的宏形态行（如 `ready` 类） | 必须 `unknown/volume-gate` 或 `business`，**不许** `na:*` |
+# | **C5** 链路自校验（Linux 侧 LOC 复算 vs boundary_audit） | 527 | 用同一套 Location 解析对 **527 行**复算 `(主文件, 主文件行集)`，与 `boundary_audit.tsv` 的 `loc_main_file`/`loc_main_lines` 对照 | 逐行完全相同的比例 **≥95%**；其余**逐条写明差在哪**（FDE vs Ghidra funcstarts 起止不同）；**低于 95% 则本轮全部 LOC 结论只作"推断"** |
+#
+# ## §6 跑前的**预期**（跑完对不上要解释，不许悄悄改）
+#
+# * **P1**：G 的形态分布（跑前按 §2.2 规则粗测，观测）：`drop-glue 280 / business ~560（其中 st_size>0x800 约 67）
+#   / closure 125 / macro-derive ~180（serde `Visitor` 92 + `Expected` 85 + `Clone` 3）/ call-shim 50 /
+#   ctor-shell 48 / virtual-shim 42 / reg-table 24 / class-id 11 / clap-derive 约 2`。
+#   **精确数以 `fixtures/denom_outside.tsv` 头部为准**（粗测与正式跑差几条是允许的，但每个形态的数量级不许变）。
+# * **P2**：**X 落在几十到一百多之间**（源码函数口径）；`X_mc` 会是它的 1.2–2 倍（单态化副本）。
+#   若 X > 250 或 X < 10，先怀疑判法（前者=把宏产物放进来，后者=LOC 抽取把业务函数也认成有键）。
+# * **P3**：D_A 一定**明显低于**口径 A 的 63.8%（分母从 527 涨到 527+X）。
+# * **P4**：t101/t102/t97 那 8 个源码函数里，**t101 的 2 个已由 T101 落码、t102 的 3 个已落 1 个、
+#   t97 的 3 个未落** ⇒ X_impl 至少 3（`get_node_by_name_rec`/`get_node_by_type_rec`/`on_resized`），
+#   若 `ours_src` 判定给出 0 条 implemented，说明"我方源码里找 fn"那段有 bug。
+#
+# ## §7 交付物 / 门槛 / 复跑命令
+#
+# **交付物**
+# * 本文件（**先单独 commit**）；
+# * `fixtures/denom_outside.tsv`（1244 行 + 头部计数块）；
+# * `tools/global_triage.py` 新增 `--denom-outside` 模式（生成上表）+ `--android-census` 增列 **`lin_fns_noloc`**
+#   + 两处 `--no-noloc`（保留旧行为、旧输出逐字节相同）；
+# * `tools/function_coverage.py` 增列 **`lin_fns_noloc`**（该模块的分母外源码函数数）+ `--stats` 打 **D 口径**
+#   + `--no-noloc`（旧 15 列、旧统计逐字节相同）；
+# * `docs/06` **§150** + `docs/HANDOVER.md` 的缺口段改成**四口径**。
+#
+# **门槛（本机实跑，逐条写进 docs）**：`cargo test --offline` / `--features gdext-bindings`、
+# `tools/coverage_matrix.py --check`、`tools/check_doc_refs.py` rc=0、`tools/docsec.py check docs/06-verification.md`、
+# 三轴 `fire 647 / batch 647 / batch_conv 637`、`tools/boundary_audit.py --check` mismatch 0。
+# ⚠️ 本轮**不碰** `src/**`、`tests/**`、`client/**` ⇒ 上述门槛应当**一位不动**；动了就是污染，要查。
+#
+# **复跑命令**（`$WT` = 本工作树，`$PY` = `$WT/.reference/venv/bin/python`，需 capstone）
+#
+# ```bash
+# WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t105 ; cd $WT
+# PY=$WT/.reference/venv/bin/python
+# $PY tools/global_triage.py --denom-outside            # → fixtures/denom_outside.tsv（含 C0–C5，全过才写文件）
+# $PY tools/global_triage.py --denom-outside --control-only   # 只跑对照，不写文件
+# $PY tools/global_triage.py --android-census           # → fixtures/global_triage_modules.tsv（含 lin_fns_noloc 列）
+# $PY tools/function_coverage.py --stats                # → 四口径（A/B/B′/D）
+# python3 tools/function_coverage.py                    # → fixtures/function_coverage.tsv（16 列）
+# python3 tools/function_coverage.py --no-noloc         # 旧行为（15 列 + 只有三口径）
+# ```
+#
+# ## §8 本轮**明确不做**的事（避免被当成缺口）
+#
+# 1. **不做跨构建结构指纹配对**（`tools/callgraph_fingerprint.py` 那条 F 轴）：`linux_pair` 的 `—(L空)`
+#    就写 `—(L空)`，**不猜地址**。缺的轴登记在 note 里。
+# 2. **不补写任何 `src/**`**（写码不是本轮任务；本轮只量化）。
+# 3. **不改** `fixtures/boundary_audit.tsv` / `fixtures/f3_triage.tsv` / `fixtures/global_triage.tsv` 的任何判据与阈值。
+# 4. **不动** `docs/00-status.md` / `README.md` / `docs/coverage-matrix.*`。
+
+## §9 勘误（跑完只许在此追加；§1–§8 一字未改）
+
+**E1（形态表漏了一个 gdext 宏形态）** §2.2 的 `reg-table` 只列了 `__register_methods` /
+`__register_constants`，漏了 **`__register_exports`**。实测 `0x43f634` =
+`<graphwar_button::GraphwarButton as godot_core::obj::traits::cap::ImplementsGodotExports>::__register_exports`
+（540 B）按 §2.2 会落 `business` ⇒ 被误算进 X。
+**依据（已发表，不是我改判）**：T97 `fixtures/gap_button.tsv` 里同一个地址判 **`na:gdext-glue/reg-table`**
+（`ImplementsGodotExports` 是 gdext 的宏 trait，同族还有 4 个 `ptrcall_fn` + 4 个 `varcall_fn` 同款判 na）。
+⇒ 修法：`reg-table` 形态加 `__register_exports`，X 减 1 组。**这是"漏判形态"，不是"放宽判据"**（方向是让 na 更多、X 更小）。
+
+**E2（C1 的期望值写旧了）** §5 C1 写"18 条全部判 `real-missing/denom:no-loc`"。实测它们现在是
+**`implemented/denom:no-loc`** —— 因为 **T101 本轮之前已经把 `get_node_by_name_rec` / `get_node_by_type_rec`
+两条源码函数落码了**。控制要验的性质是「判进 `denom:no-loc` 且 gameLOC=0」，这一点 18/18 成立；
+`real-missing` 与 `implemented` 的差别只反映"我方写没写"，不是判法差异。⇒ C1 判据按**性质**过，不按字面过。
+
+**E3（C4c 的条数写少了）** §5 C4c 说 T98 的 3 条手写方法；实测在 G 里是 **5 条机器码**
+（`GraphwarEvent::{serialize, deserialize, make_new_connection_request_event}` 3 条
++ `<… as serde::Serialize/Deserialize>::{serialize,deserialize}` 2 条单态化），
+5/5 都判 `business` ⇒ 宏边界成立，只是条数写成 3 是"方法名个数"不是"机器码条数"。
+
+**E4（我方实现的判定从两级变三级）** §2.4 只写了 `implemented` / `real-missing` / `scaffold-only`。
+实测发现两条必须分开的事实：模块→我方文件要用 `docs/coverage-matrix.tsv` 的 `ours` 列
+（例如 `graphwar_event.rs` 的内容在 **`src/events.rs`**，§2.4 的"同名文件"会找不到）；
+且"只在**别的** src 文件里同名"（如 `FunctionDrawer::draw` 命中 `src/effect_drawer.rs`）是**弱证据**
+（同名 ≠ 同一个函数）⇒ 单列 `implemented-alt`。**X（分母）不受影响**，只有 `X_impl/X_missing` 的拆分受影响。
+本轮 `scaffold-only` 实测 0 组（`_scaffold` 里没有命中）。
+
+**E5（一条已发表结论被本轮证伪，登记给台账主人）** `docs/06` §139（T93）说
+`graphwar_module_container` 的 49 条代理缺口 =「48 条单态化副本 + 1 条 drop glue，源码级缺口 **0**」。
+本轮 Android 真名逐条显示：那 48 条 = **`add_module`×25 + `get_module`×23**，是**两条不同的源码函数**，
+而 527 里该模块的 20 行**全部**是 `get_module_wk` —— 三者是三个不同方法。
+⇒ 该模块的源码级缺口是 **2 个函数**（我方**都已实现**，只是没有 Location ⇒ 527 看不见），
+**不是 0**。详细证据见 `docs/06` §150。**本文件不改 §139，按 AGENTS.md §0.6 交台账主人裁决。**

@@ -3,86 +3,90 @@
 # lin527 = Linux 侧能按 panic::Location 硬归属到该模块的函数数；lin_F1F2 = 其中已实现
 # lin_F3 = **今天仍是** F3 的条数（口径 = 在 f3_triage.tsv 主表里且 function_coverage.tsv 现在 bucket=F3；T82 原判 153 条，到 2026-11-28 已有 11 条落码归档、1 条 T89 新登记；主表另留 6 条 T94 落码后待归档的陈旧行被本列过滤）；lin_F3_real = 其中 T82 判 real-missing
 # gap_proxy = android_fns − lin_F1F2（**代理估计**：Android 比 Linux 少 654 条函数，平台层差异未扣）
-module	android_fns	lin527	lin_F1F2	lin_F3	lin_F3_real	gap_proxy
-<none>.rs	84	0	0	0	0	84
-graphwar_module_container.rs	69	20	20	0	0	49
-graphwar_game_state_manager.rs	52	33	23	10	9	29
-graphwar_setup_control.rs	52	21	19	2	0	33
-graphwar_level_manager.rs	48	40	40	0	0	8
-graphwar_root_node.rs	45	23	15	8	1	30
-graphwar_function_input.rs	38	13	8	5	0	30
-weak_caller.rs	35	39	39	0	0	-4
-graphwar_button.rs	35	6	1	5	0	34
-graphwar_event.rs	31	0	0	0	0	31
-entity_drawer.rs	29	14	5	9	3	24
-graphwar_nodes.rs	29	11	4	7	0	25
-graphwar_plane.rs	27	10	4	6	0	23
-effect_drawer.rs	22	11	6	5	0	16
-graphwar_audio_control.rs	22	7	3	4	2	19
-graphwar_backend.rs	22	6	2	4	2	20
-graphwar_life_manager.rs	21	9	9	0	0	12
-graphwar_turn_manager.rs	20	14	12	2	2	8
-graphwar_game_recorder.rs	20	2	1	1	1	19
-graphwar_lan_vbox.rs	19	11	5	6	0	14
-graphwar_function_manager.rs	19	7	7	0	0	12
-player_showcase.rs	17	10	4	6	0	13
-graphwar_client_connection_handler.rs	17	8	8	0	0	9
-graphwar_obstacle_manager.rs	17	8	8	0	0	9
-graphwar_server_connection_handler.rs	17	6	6	0	0	11
-graphwar_computer_player_manager.rs	17	5	5	0	0	12
-graphwar_game_client.rs	16	36	33	3	0	-17
-graphwar_play_screen_control.rs	16	10	6	4	3	10
-graphwar_function_evolutionator.rs	15	16	3	13	1	12
-graphwar_mode_manager.rs	15	2	1	1	1	14
-graphwar_player_screen_control.rs	14	8	8	0	0	6
-graphwar_long_press_animation.rs	14	7	2	5	0	12
-axis_drawer.rs	14	6	0	6	0	14
-graphwar_plane_pos_manager.rs	14	6	6	0	0	8
-graphwar_game_server.rs	14	3	1	2	2	13
-graphwar_color_manager.rs	13	4	4	0	0	9
-graphwar_ad_switch.rs	12	6	1	5	0	11
-graphwar_graphics_manager.rs	12	6	6	0	0	6
-graphwar_team_manager.rs	11	7	7	0	0	4
-math_function.rs	11	7	2	5	1	9
-graphwar_replay_player.rs	11	5	1	4	4	10
-graphwar_shot_calculator.rs	10	1	0	1	1	10
-graphwar_player_config.rs	10	0	0	0	0	10
-graphwar_local_player_manager.rs	9	3	3	0	0	6
-graphwar_server_broker_handler.rs	9	3	3	0	0	6
-graphwar_level_generator.rs	8	4	1	3	3	7
-graphwar_rank_manager.rs	8	4	4	0	0	4
-graphwar_name_manager.rs	8	3	3	0	0	5
-function_history_recorder.rs	8	1	1	0	0	7
-graphwar_effect_manager.rs	8	1	1	0	0	7
-graphwar_lan_broadcaster_v6.rs	7	4	4	0	0	3
-graphwar_soldier_manager.rs	7	4	4	0	0	3
-graphwar_replay_control.rs	7	2	1	1	0	6
-graphwar_tick_handler.rs	7	2	2	0	0	5
-function_drawer.rs	7	1	1	0	0	6
-graphwar_lobby_control.rs	7	1	1	0	0	6
-graphwar_player_manager.rs	6	3	3	0	0	3
-graphwar_video_writer.rs	6	3	3	0	0	3
-graphwar_texture_loader.rs	6	1	0	1	1	6
-graphwar_target_manager.rs	5	3	3	0	0	2
-button_manager.rs	5	2	2	0	0	3
-function_button_manager.rs	5	2	2	0	0	3
-graphwar_event_handler.rs	5	2	2	0	0	3
-graphwar_logger.rs	5	2	1	1	0	4
-graphwar_crash_reporter.rs	5	0	0	0	0	5
-graphwar_event_queue.rs	5	0	0	0	0	5
-graphwar_game_info.rs	5	0	0	0	0	5
-graphwar_entity_effect_manager.rs	4	3	3	0	0	1
-obstacle_drawer.rs	4	2	2	0	0	2
-graphwar_campaign_control.rs	4	1	1	0	0	3
-graphwar_ban_list.rs	4	0	0	0	0	4
-time_probe.rs	4	0	0	0	0	4
-graphwar_remote_event_handler.rs	3	3	2	1	1	1
-backtracer.rs	3	0	0	0	0	3
-function_token.rs	3	0	0	0	0	3
-graphwar_replay_reader.rs	3	0	0	0	0	3
-polish_notation_converter.rs	2	1	1	0	0	1
-graphwar_stream_buffer.rs	2	0	0	0	0	2
-graphwar_draw_util.rs	1	1	1	0	0	0
-graphwar_path_calculator.rs	1	1	0	1	1	1
-graphwar_version.rs	1	0	0	0	0	1
-server_broker_request_connection.rs	1	0	0	0	0	1
+# lin_fns_noloc = **T105 新增**：该模块「有源码身份但**没有** `panic::Location`」的**原版源码函数**数
+#   （= `fixtures/denom_outside.tsv` 里 verdict 以 `/denom:no-loc` 结尾、且 form=business 的**源码组**数；
+#    源码组 = 同一条泛型 fn 的多条单态化机器码合并后的个数。判据预注册 fixtures/denom_outside_plan.txt）
+#   ⚠️ 这一列**不在** gap_proxy 里：gap_proxy 是机器码减法，本列是源码函数减法；两者**不可相加**。
+module	android_fns	lin527	lin_F1F2	lin_F3	lin_F3_real	gap_proxy	lin_fns_noloc
+<none>.rs	84	0	0	0	0	84	0
+graphwar_module_container.rs	69	20	20	0	0	49	2
+graphwar_game_state_manager.rs	52	33	23	10	9	29	2
+graphwar_setup_control.rs	52	21	19	2	0	33	3
+graphwar_level_manager.rs	48	40	40	0	0	8	2
+graphwar_root_node.rs	45	23	16	7	0	29	5
+graphwar_function_input.rs	38	13	8	5	0	30	7
+weak_caller.rs	35	39	39	0	0	-4	0
+graphwar_button.rs	35	6	1	5	0	34	6
+graphwar_event.rs	31	0	0	0	0	31	5
+entity_drawer.rs	29	14	8	6	0	21	3
+graphwar_nodes.rs	29	11	4	7	0	25	2
+graphwar_plane.rs	27	10	4	6	0	23	3
+effect_drawer.rs	22	11	6	5	0	16	2
+graphwar_audio_control.rs	22	7	5	2	0	17	4
+graphwar_backend.rs	22	6	6	0	0	16	10
+graphwar_life_manager.rs	21	9	9	0	0	12	0
+graphwar_turn_manager.rs	20	14	12	2	2	8	2
+graphwar_game_recorder.rs	20	2	1	1	1	19	1
+graphwar_lan_vbox.rs	19	11	5	6	0	14	1
+graphwar_function_manager.rs	19	7	7	0	0	12	3
+player_showcase.rs	17	10	4	6	0	13	0
+graphwar_client_connection_handler.rs	17	8	8	0	0	9	0
+graphwar_obstacle_manager.rs	17	8	8	0	0	9	1
+graphwar_server_connection_handler.rs	17	6	6	0	0	11	0
+graphwar_computer_player_manager.rs	17	5	5	0	0	12	1
+graphwar_game_client.rs	16	36	33	3	0	-17	0
+graphwar_play_screen_control.rs	16	10	9	1	0	7	3
+graphwar_function_evolutionator.rs	15	16	3	13	1	12	0
+graphwar_mode_manager.rs	15	2	1	1	1	14	3
+graphwar_player_screen_control.rs	14	8	8	0	0	6	2
+graphwar_long_press_animation.rs	14	7	2	5	0	12	0
+axis_drawer.rs	14	6	0	6	0	14	1
+graphwar_plane_pos_manager.rs	14	6	6	0	0	8	0
+graphwar_game_server.rs	14	3	1	2	2	13	4
+graphwar_color_manager.rs	13	4	4	0	0	9	2
+graphwar_ad_switch.rs	12	6	1	5	0	11	0
+graphwar_graphics_manager.rs	12	6	6	0	0	6	0
+graphwar_team_manager.rs	11	7	7	0	0	4	1
+math_function.rs	11	7	2	5	1	9	3
+graphwar_replay_player.rs	11	5	5	0	0	6	1
+graphwar_shot_calculator.rs	10	1	0	1	1	10	3
+graphwar_player_config.rs	10	0	0	0	0	10	8
+graphwar_local_player_manager.rs	9	3	3	0	0	6	0
+graphwar_server_broker_handler.rs	9	3	3	0	0	6	3
+graphwar_level_generator.rs	8	4	1	3	3	7	0
+graphwar_rank_manager.rs	8	4	4	0	0	4	0
+graphwar_name_manager.rs	8	3	3	0	0	5	1
+function_history_recorder.rs	8	1	1	0	0	7	1
+graphwar_effect_manager.rs	8	1	1	0	0	7	2
+graphwar_lan_broadcaster_v6.rs	7	4	4	0	0	3	1
+graphwar_soldier_manager.rs	7	4	4	0	0	3	1
+graphwar_replay_control.rs	7	2	1	1	0	6	2
+graphwar_tick_handler.rs	7	2	2	0	0	5	3
+function_drawer.rs	7	1	1	0	0	6	4
+graphwar_lobby_control.rs	7	1	1	0	0	6	2
+graphwar_player_manager.rs	6	3	3	0	0	3	0
+graphwar_video_writer.rs	6	3	3	0	0	3	0
+graphwar_texture_loader.rs	6	1	0	1	1	6	4
+graphwar_target_manager.rs	5	3	3	0	0	2	0
+button_manager.rs	5	2	2	0	0	3	1
+function_button_manager.rs	5	2	2	0	0	3	1
+graphwar_event_handler.rs	5	2	2	0	0	3	0
+graphwar_logger.rs	5	2	1	1	0	4	2
+graphwar_crash_reporter.rs	5	0	0	0	0	5	3
+graphwar_event_queue.rs	5	0	0	0	0	5	2
+graphwar_game_info.rs	5	0	0	0	0	5	1
+graphwar_entity_effect_manager.rs	4	3	3	0	0	1	0
+obstacle_drawer.rs	4	2	2	0	0	2	0
+graphwar_campaign_control.rs	4	1	1	0	0	3	3
+graphwar_ban_list.rs	4	0	0	0	0	4	2
+time_probe.rs	4	0	0	0	0	4	0
+graphwar_remote_event_handler.rs	3	3	2	1	1	1	0
+backtracer.rs	3	0	0	0	0	3	1
+function_token.rs	3	0	0	0	0	3	1
+graphwar_replay_reader.rs	3	0	0	0	0	3	2
+polish_notation_converter.rs	2	1	1	0	0	1	0
+graphwar_stream_buffer.rs	2	0	0	0	0	2	2
+graphwar_draw_util.rs	1	1	1	0	0	0	0
+graphwar_path_calculator.rs	1	1	0	1	1	1	0
+graphwar_version.rs	1	0	0	0	0	1	1
+server_broker_request_connection.rs	1	0	0	0	0	1	1
