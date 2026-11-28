@@ -479,6 +479,13 @@ pub enum ReplayStartStep {
     GoToNextCheckpoint,
 }
 
+/// 订阅 id 的全局分配器 —— 原版是 `.data`/`.bss` 里 `0x8b4378` 那个原子计数器
+/// （arm64 `0x406e84 adrp 0x8b4000` + `0x406eb8 add #0x378` + `0x406ebc ldxr` / `0x406ec4 stxr`）。
+///
+/// ⚠️ **初值未知**：没有查到它在哪初始化（是否由某个构造器写 0）⇒ 只保证"每次调用 +1"，
+/// 不保证第一个 id 是 0。单测因此只断言**相对**关系。
+static NEXT_SUBSCRIPTION_ID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 内联 `GraphwarGameServer` 槽（`BackendField::STATE` = `+0x60`，0x80 字节）里**我方建模**的那部分。
 ///
 /// 只有 `GraphwarGameServer::new` 的实参与"`start()` 是否已调用"两件事有指令证据：
@@ -545,6 +552,53 @@ impl GraphwarBackend {
     /// 空后端。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// `subscribe_to_event` —— **原版 arm64 `0x406e80` / 488 字节**（x86 **`0x514b40`** / FDE `0x1d7`）。
+    ///
+    /// 逐指令（arm64 `0x406e80..0x407000` 主路径；`0x407000` 之后是 panic/cleanup 垫片）：
+    ///
+    /// ```text
+    /// 0x406e84  adrp x8,0x8b4000 / 0x406eb8 add x8,x8,#0x378   ; x8 = 0x8b4378：**全局原子计数器**
+    /// 0x406ebc  ldxr w22,[x8] / 0x406ec0 add w9,w22,#1 / 0x406ec4 stxr
+    ///                                                          ; **返回旧值**（fetch_add）⇒ 本次订阅 id
+    /// 0x406ecc  ldr x19,[x23,#0x1d8]                            ; 订阅登记表 = Rc<RefCell<HashMap<…>>>
+    /// 0x406ed0  ldr x8,[x19,#0x10] / 0x406ed4 cbnz 0x406ff4     ; RefCell 借用标记 ≠ 0 ⇒ 走
+    ///                                                            ;   panic_already_borrowed（0x406ffc，Location 0x8526f8）
+    /// 0x406edc  str x8(=-1),[x19,#0x10]                          ; borrow_mut
+    /// 0x406ee0  tbz x20,#0x3f  / 0x406f0c bl __rust_alloc        ; Box<[u8]>：alloc(len, align 1)
+    /// 0x406f20  bl memcpy                                        ;   把 &str 拷进去
+    /// 0x406f2c  stp x20,x26,[sp,#0x28] / a903e7f4 / f90027f8     ; 表项 = (name len, name ptr, x25, x24)
+    /// 0x406f48  bl HashMap::insert(table+0x18, id, &entry)       ; 键 = 上面那个 id
+    /// 0x406f4c..0x406f90  drop 旧值（含一次经 vtable 的 `blr x8` + `__rust_dealloc`）
+    /// 0x406f94..0x406fac  恢复 borrow
+    /// 0x406fb0  ldr x8,[x23,#0x1e0] / 0x406fcc csel x1,xzr,x9,eq  ; x1 = Option<&mut client>（槽空则 null）
+    /// 0x406fc4  mov w4,w22                                       ; 第 5 个实参 = id
+    /// 0x406fd0  bl 0x407580                                      ; **subscribe_to_event_with_id**(self, client, name, id)
+    /// 0x406fd0 之后直接 epilogue ⇒ **返回值就是被调者的返回值**
+    /// ```
+    ///
+    /// ⇒ 语义：**给这条事件分配 id（全局计数器自增）→ 登记进 `+0x1d8` 的表 → 转给
+    /// [`Self::subscribe_to_event_with_id`] 去真正订到 handler 上**。
+    /// 三个不显然的点（本轮新证据）：
+    /// 1. **id 不是线上 tag**：它由 `0x8b4378` 的全局原子计数器**分配**（`fetch_add`），
+    ///    与 `Event::wire_tag()` 无关 —— T95 把 `+0x1d8` 的键当"事件 id"是对的，但它是**分配来的**；
+    /// 2. **表项是 4 个字**（`x2/x3/x4` 三个实参 + name）：`0x406f2c`–`0x406f38` 连续存
+    ///    `(name_len, name_ptr, x25=arg3, x24=arg4)` ⇒ 值与"只有名字"不同，本轮**没有**读出
+    ///    arg3/arg4 的类型（落在 vtable 里的可能性最大：`0x406f90` 那次 `blr x8` 是 drop 旧值）；
+    /// 3. 借用冲突走的是 `panic_already_borrowed`（`0x406ffc` + Location `0x8526f8`）⇒ 整段在
+    ///    一个 `borrow_mut` 里，**不是**逐条 `RefCell` 操作。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）；`+0x1d8` 的值类型本轮只建模成 `String`（沿用 T95 的简化），
+    /// **不是**结论。计数器的**初值未知**（是否在别处初始化没查）⇒ 单测只断言"每次 +1"的相对关系，
+    /// 不断言绝对 id。
+    pub fn subscribe_to_event(&mut self, name: &str) -> bool {
+        // 0x406ebc..0x406ec4：全局原子计数器，返回旧值 = 本次订阅 id
+        let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        // 0x406f48：登记进 +0x1d8 的表（键 = id）
+        self.subscriptions.insert(id, name.to_string());
+        // 0x406fd0：转给 subscribe_to_event_with_id（返回值原样透出）
+        self.subscribe_to_event_with_id(name, id)
     }
 
     /// `setup_level` —— **原版 arm64 `0x406b4c` / 88 字节**（x86 侧**无 Location 锚**，527 外）。
@@ -932,6 +986,48 @@ mod lifecycle_tests {
             "顺序证据：0x406c94(start) < 0x406c9c(读旧判别字) < 0x406cc8(drop 旧)"
         );
         assert_eq!(b.server.unwrap().arg0, 35246, "新对象覆盖旧槽");
+    }
+
+    /// `subscribe_to_event`（arm64 0x406e80 / x86 0x514b40）：**全局计数器分配 id → 登记 → 转给
+    /// `subscribe_to_event_with_id`**。期望值全部来自指令（`0x406ebc`–`0x406ec4` 的 fetch_add、
+    /// `0x406f48` 的 insert、`0x406fd0` 的调用点）。
+    #[test]
+    fn subscribe_to_event_allocates_an_id_then_delegates() {
+        let mut b = GraphwarBackend::new();
+        // 没有客户端 ⇒ 被调者 subscribe_to_event_with_id 早退返回 false（0x515334 / 0x4075xx 的判据）
+        assert!(!b.subscribe_to_event("tick_event"), "client 槽空 ⇒ 返回 false");
+        // 但**登记已经发生**（insert 在调用之前：0x406f48 < 0x406fd0）
+        assert_eq!(b.subscriptions.len(), 1, "表项在转调之前就插进去了");
+
+        // 有客户端 ⇒ true，且客户端的按 id 注册表收到 (id, name)
+        b.client = Some(ReplayClientSlot::default());
+        assert!(b.subscribe_to_event("pos_info_event"));
+        let reg = &b.client.as_ref().unwrap().registered;
+        assert_eq!(reg.len(), 1);
+        assert_eq!(reg[0].1, "pos_info_event");
+        assert!(b.subscribe_to_event("name_info_event"), "被调者那一步成功 ⇒ 返回 true");
+        assert_eq!(b.subscriptions.len(), 3);
+    }
+
+    /// 计数器语义 = **单调 +1、不重复**（`0x406ec0 add w9,w22,#1`）。
+    /// 用 200 次连续调用钉住，而不是断言绝对 id —— 初值未知、且测试并行会推进同一个全局计数器。
+    #[test]
+    fn subscription_ids_are_strictly_increasing_and_unique() {
+        let mut b = GraphwarBackend::new();
+        b.client = Some(ReplayClientSlot::default());
+        for i in 0..200u32 {
+            let name = format!("ev{}", i);
+            assert!(b.subscribe_to_event(&name), "{}", name);
+        }
+        let ids: Vec<u32> = b.client.as_ref().unwrap().registered.iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids.len(), 200);
+        for w in ids.windows(2) {
+            assert!(w[1] > w[0], "id 必须严格递增：{:?} → {:?}", w[0], w[1]);
+        }
+        // 登记表（+0x1d8）与客户端按 id 注册（+0x08）用的是**同一个** id
+        for (id, name) in b.client.as_ref().unwrap().registered.iter() {
+            assert_eq!(b.subscriptions.get(id), Some(name), "两处 id 必须一致");
+        }
     }
 
     /// 四条函数都不碰 `+0x1d8` 订阅表与 `+0x1d0` 共享计数（反汇编里 0 条相关指令）——
