@@ -561,7 +561,7 @@ fn ev(tokens: &[Token], i: &mut usize, x: f64, y: f64, dy: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// T108（docs/06 §153）：`math_function::FunctionRandomizer` —— **分母外**源码函数
+// T108（docs/06 §156）：`math_function::FunctionRandomizer` —— **分母外**源码函数
 // ---------------------------------------------------------------------------
 //
 // 归属/地址（预注册 fixtures/denom_drawers_math_plan.txt §1；linux 地址见 sym_match.tsv +

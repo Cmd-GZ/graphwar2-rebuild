@@ -525,7 +525,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// T108（docs/06 §153）：`EffectDrawer` 的状态内核 + `step_effect` 真名边界
+// T108（docs/06 §156）：`EffectDrawer` 的状态内核 + `step_effect` 真名边界
 // ---------------------------------------------------------------------------
 //
 // | 原版函数 | Android 2.0.60 arm64 `.symtab` | Linux x86-64 `.eh_frame`（addr_probe fde 现取） |
@@ -552,7 +552,7 @@ where
 // ⚠️ **未解**（K3，不编）：`0x4eb511 cmp dword ptr [rdi+0x28], ebp` + `0x4eb514 jae 0x4eb687`
 //   ⇒ `self+0x28` 是另一个 u32 字段，慢路径按 `now_tick <= self[+0x28]` 分成**两份结构相同、
 //   跳表不同**的循环（`0x1c3bec` vs `0x1c3bb8`）。两份循环的语义差异本轮**没解出来**，
-//   所以下面的结构体**不编**这个字段，[`step_effects`] 只实现其中一份（登记在 docs/06 §153.6）。
+//   所以下面的结构体**不编**这个字段，[`step_effects`] 只实现其中一份（登记在 docs/06 §156.6）。
 pub struct EffectDrawer {
     /// `self+0x08`/`+0x10`/`+0x18`：特效元素表。原版 `Vec<EffectData>`（元素 0x30 字节）。
     pub effects: Vec<EffectData>,

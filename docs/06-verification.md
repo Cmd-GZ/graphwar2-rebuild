@@ -30628,3 +30628,289 @@ cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive 
 cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
 cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
 ```
+
+## 156. T108 **分母外「绘制/数学/弹道」11 条源码函数**逐条取证落码：**7 条落成**（含 3 条**值级对拍**）、4 条写清缺什么；分母外真缺（**本分支基点** T105 口径）**57 → 50** 条机器码 / **55 → 48** 个源码函数，**rebase 到当前 master 后 = 43 → 36 组 / 43 → 36 条**；顺带修掉 **2 处真实差异**（`calculate_corrected_function` 不补未闭合括号、箭头半张角 6°→12°）（2026-11-28，任务 `task-101` / 分支 `agent/denom-drawers-math`）
+
+> 预注册：[`fixtures/denom_drawers_math_plan.txt`](../fixtures/denom_drawers_math_plan.txt)（commit `e86d035`，**先单独提交、后跑**；跑完 §1–§3 的判据与输入集**一字未改**，只在 §3.2 追加了 V3 一节的**新发现用例**，见 §156.2.4）。
+> 逐条台账：[`fixtures/denom_drawers_math_anchors.tsv`](../fixtures/denom_drawers_math_anchors.tsv)（11 行 × 14 列：android/linux 地址+FDE 范围、配对判据、Location、调用者、落点、档位、缺什么）。
+> 值级真值：[`fixtures/denom_drawers_math_truth.tsv`](../fixtures/denom_drawers_math_truth.tsv)（64 条，生成器 `tools/denom_drawers_truth.py`，执行体 = 真 Linux **机器码**在 unicorn 下直跑）。
+
+### 156.0 一句话结论
+
+T105（§152）量化出「527 分母之外真缺 55 个源码函数」；本任务负责其中**绘制/数学/弹道**这条线的 **11 条**。
+结果：**7 条落成源码级函数（真名 + vaddr + 指令注释 + 单测）**，其中 **3 条做到值级对拍（逐位）**；**4 条没落**，
+每一条都写清了**缺什么**（不是"没时间"这种理由）。
+
+⚠️ **口径说明（rebase 后必须一起读）**：本节的**分母外计数有两套基点**。
+① 任务下发时（分支基 `9887989`）分母外真缺 = T105 的 **57 条机器码 / 55 个源码函数** ⇒ 本批 7 条落成后是
+**50 / 48**（这是 §156.9 的算术，也是本分支单独看时的读数）。
+② 但在本分支开发期间，master 已被 **T106（§154，落 8 条：57→46 / 55→44）**、**T107（§155，13 条 serde
+改判 na ⇒ 43 组 / 43 条，X 143→132，`D_A` 336/670→336/659 = 51.0 %）**、**T109（§153，落 14 条）** 推进；
+本分支 rebase 到 master 后，本批 7 条**与它们模块不相交、无重复落码** ⇒ 叠加后分母外真缺 =
+**43 → 36 组 / 43 → 36 条**（组数与条数此时相等：T107 把 serde 那批挪出后，剩下的每组都是 1 条机器码）。
+③ 本节正文里凡是写「57 → 50 / 55 → 48」的地方，都是**基点①**的数；引用时请连这句一起引。
+
+| 模块 | 目标 | 落了 | 档位 |
+|---|---|---|---|
+| `graphwar_shot_calculator` | 3 | **3** | **逐位**（S1 20/20 点数组逐位；S2/S3 44/44 文本逐字节） |
+| `math_function`（`FunctionRandomizer`） | 3 | **1** | 观测（M1；随机源不可复现） |
+| `entity_drawer` | 2 | **2** | 观测（真名方法边界 + 常量逐位） |
+| `effect_drawer` | 1 | **1** | 观测（ABI/分支逐条 + 3 条分支单测） |
+| `graphwar_plane` | 2 | **0** | 未知（体内是 gdext `Gd` 借用管线，我方架构无对应字段） |
+
+**三个数分开报（本任务一处都没动它们，实测确认）**：
+`A` 函数级 **336/527 = 63.8 %**｜`B` **336/438 = 76.7 %**｜`D_A` **336/670 = 50.1 %**。
+本批落的 7 条**全在分母外**（`X` 内），**不进 A/B/D_A 的分子**；它们影响的是 `X` 内部分档
+（T105 分档下 `X` 内 implemented 88 → 95）与**分母外真缺**（基点①：57→50 条机器码 / 55→48 个源码函数；
+rebase 后：43→36 组 / 43→36 条，见 §156.6）。
+
+### 156.1 逐条结果（vaddr → 真名 → 落点 → 档位 → 一句话语义）
+
+地址口径：`arm64` = Android 2.0.60 未 strip `.symtab`；`x86` = Linux 2026-08-28，FDE 范围本轮
+`python tools/addr_probe.py fde <addr>` **现取**（不信 `.symtab` 的 `st_size` —— T101 §149 的坑）。
+
+| # | 原版函数（arm64 符号原文） | arm64 | x86（vaddr / FDE 跨度） | 落点 | 档位 | 语义（一句话） |
+|---|---|---|---|---|---|---|
+| S1 | `GraphwarShotCalculator::calculate_function` | `0x3b5374` / 1020 | `0x3c2530` / 0x689 | `src/graphwar_shot_calculator.rs:288` | **逐位** | 弹道点序列采样器（等弦长二分追赶），返回 `Vec<{x,y}>` |
+| S2 | `…::calculate_corrected_function` | `0x3b79a8` / 712 | `0x3c5c50` / 0x318 | `src/graphwar_shot_calculator.rs:346` | **逐位** | 原文逐字 + **补未闭合 `(`** + 修正常数文本 |
+| S3 | `…::calculate_function_offset_str` | `0x3b7c70` / 744 | `0x3c5f70` / 0x337 | `src/graphwar_shot_calculator.rs:315` | **逐位** | `" + 0.591"` / `" - 1.000"` / `" + NaN"`（`{:.3}`） |
+| M1 | `FunctionRandomizer::adjust_tokens` | `0x447390` / 620 | `0x4ee0e0` / 0x2b3 | `src/math_function.rs:635` | 观测 | 按 `1+Σarity` 随机补全缺操作数的 token 流 |
+| M2 | `FunctionRandomizer::mutate_function` | `0x4475fc` / 704 | `0x4ee3a0` / 0x372 | **未落**（§156.4.1） | 观测 | 随机变异编排（调 create_random_region + mutate_fine_tune） |
+| M3 | `FunctionRandomizer::create_random_region` | `0x448160` / 784 | `0x4ef020` / 0x370 | **未落**（§156.4.1） | 观测 | 随机生成一段 token 区间 |
+| E1 | `EntityDrawer::update_name_label` | `0x4bf690` / 496 | `0x4b9810` / 0x25f | `src/entity_drawer.rs:1986` | 观测 | 名字标签居中/越顶下翻/不透明度 |
+| E2 | `EntityDrawer::draw_offset_triangle` | `0x4bf880` / 816 | `0x4b9a70` / 0x3f3 | `src/entity_drawer.rs:2015` | 观测 | 一次 `draw_polygon`：3 顶点 + 同色 ×3 |
+| P1 | `GraphwarPlane::clear_state` | `0x4c3408` / 900 | `0x4bded0` / 0x3a0 | **未落**（§156.4.2） | 未知 | RootNode 重置时清空实体/特效/子节点表 |
+| P2 | `GraphwarPlane::update_entities` | `0x4c378c` / 332 | `0x4be270` / 0x161 | **未落**（§156.4.2） | 未知 | 同型的小号版本（只有 1 个 `queue_free`） |
+| F1 | `EffectDrawer::step_effect` | `0x444d2c` / 992 | `0x4eb450` / 0x3db | `src/effect_drawer.rs:575` | 观测 | 每 tick 推进特效：1/600 子步积分 + 相位推进 600 |
+
+**跨构建配对**不靠名字投票（预注册 §2.1 三条链）：11 条里 9 条有**相邻性**（同一 crate 内链接序一致，
+上一条 `addr+span` 正好等于下一条的起始，且两侧都对得上）或 `sym_match`/`hybrid_names` 的既有配对，
+再加上**值级对拍**当最终裁决（地址取错不可能全同）；`panic::Location` 这批**全部为 0**（T105 观测），
+所以 Location 这条链**用不上** —— 这正是它们进不了 527 分母的原因。
+
+### 156.2 值级对拍（**逐位**档的唯一来源）
+
+方法（预注册 §3 写死，**跑完没改判据**）：真值 = **Linux x86-64 `libgraphwarrust.so` 的真机器码**
+在 unicorn 下执行（`tools/crossarch_emu.py::X86` → `.reference/analysis-repo/analysis/gwemu.py`，
+真 glibc libm）—— **和 `docs/06` 那 88 条「逐位」结论是同一个执行体**，不是 `cargo test` 自证。
+我方实现喂**同一组输入**，判据：点数组**逐位** / 返回的 `String` **逐字节**。
+
+#### 156.2.1 正/负对照（先跑完才写夹具）
+
+| 对照 | 内容 | 结果 |
+|---|---|---|
+| C1 正对照 | 复现既有 `fixtures/test_expectation_truth.tsv` 的 `shot/B01`（`sin(x)` 从 `(5,2)`、`step=0.01`） | **PASS**：`n=2471` + 整条点数组 `sha256 = 9640807e…` 与 T46 那份夹具**逐位相同** |
+| C2 负对照（预注册原文） | `step` 改 **1 ulp** | **FAIL（如实记）**：点数与末点都不变 —— 1 ulp 步长差被**弦长二分容差**吸收。判据不改，见下面两条补充 |
+| C2′ 补充负对照 | `x0` 改 1 ulp | PASS：首点变 `(5.000000000000001, 2.0)` |
+| C2″ 补充负对照 | 修正常数改 1 ulp | PASS：末点变 |
+| C3 负对照 | 文本 `x` → `y` | PASS：输出 `'x - 5.000'` vs `'y + 0.000'` |
+| C5 正对照 | 空 token 流 + ODE（`mode=1`）必须**非空** | PASS：`n=2667` |
+
+> C2 的 FAIL 值得单独记一笔：`step` 的 1 ulp 扰动**不是**一个有效负对照（采样器对步长不敏感），
+> 以后写这类对照时别再用它当"比较器不是空判"的证据。
+
+#### 156.2.2 S1 采样器（`0x3c2530`）：20 组 **20/20 全同**
+
+输入集 = 预注册 §3.1 的 V1 20 组（8 种 token 流 × `x0 ∈ {0,-0,5,-24.5,1e308,NaN}` × `(flip,mode)`，
+含**空 token 流**与 **ODE/RK4**）。判据 = 点数 + 整条点数组 FNV-1a64 + 首/末点逐位。
+**逐位全同 ⇒ `calculate_function` 从「文档级归属」升到「逐位」。**
+
+顺带一条**观测**：空 token 流在**真采样器**里**不是**"没有弹道"，而是一条水平线
+（`V1-06`/`V1-07`/`V1-08` 与常量 0 的 `V1-01` **同一条 sha**）。⇒ 我方 `shot_points()` 里
+"空文本在 Normal 局早退"是**组合方式**的推断（`docs/06` §26 那条），不是采样器语义 —— 两者不矛盾，
+但**别把早退当成采样器的性质**。
+
+#### 156.2.3 S2/S3 修正量外壳（`0x3c5c50` / `0x3c5f70`）：44 组 **44/44 逐字节相同**
+
+输入集 = 预注册 §3.2 的 V2 33 组（19 种文本 × 边界值，`y ≠ 0` 6 组）+ §156.2.4 的 V3 11 组。
+判据 = 两条函数各自返回的 `String` 长度 + 内容**逐字节**。
+
+顺带把 ABI 钉死一条：**第 4 个参数是 `bool`（`r8b`），不是 mode**。
+`flag = 0x100`（低字节 0）时真二进制**不反向**、`flag = 2` 时反向 ⇒ 取值是 `r8 & 0xff != 0`。
+（`fixtures/crossarch_plan.txt` 的 `c_mode2` 那条把 `flag=2` 当 mode 用了，**结论不受影响**
+（当时只比两构建是否相同），但**语义标注**要按本条更正。）
+
+#### 156.2.4 本轮**新发现**的行为：`calculate_corrected_function` 会**补未闭合括号**（V3）
+
+读 `0x3c5c50` 反汇编时发现：它先扫 UTF-8 字符算**净未闭合 `(` 数**
+（`0x4ee…`/`0x3c5c80 inc ebp`；`0x3c5d20 cmp edx,0x29` + `0x3c5d2b test ebp,ebp` + `0x3c5d2d setg dl`
++ `0x3c5d30 sub ebp,edx` ⇒ 遇 `)` **只在计数 >0 时减**，永不为负），然后复制原文
+（`0x3c5e1c..0x3c5e58`）、用 `0x3c5e97 mov byte ptr [r13+rsi],0x29` 把缺的 `)` 补上，
+最后仍按**原文**算修正常数（`0x3c5d9a call *[0x9bacf0] -> 0x3c5f70`）。
+
+真值（本轮 unicorn 实测，**不在**预注册 V2 输入集内 ⇒ 单列 `S2S3-extra` 一节，不与 V2 混算）：
+
+| 原文 | 真二进制 `calculate_corrected_function` |
+|---|---|
+| `"(x"` | `"(x) + 1.000"` |
+| `"((x"` | `"((x)) + 1.000"` |
+| `"(()"` | `"(()) + 2.000"` |
+| `"x("` | `"x() + 2.000"` |
+| `"))x(("` | `"))x(()) + 2.000"`（前导 `)` 不抵，尾随 `((` 补两个） |
+| `"x)"` / `")"` | `"x) + 1.000"` / `") + 2.000"`（多余的 `)` 原样留着） |
+
+⇒ **我方旧实现 `format!("{}{}", text, offset)` 不会补括号 = 真实差异**，本轮修掉
+（`corrected_text` 已改为委托 `calculate_corrected_function`，单一实现）。
+
+### 156.3 顺带修掉的第二处真实差异：箭头**半张角 6° → 12°**
+
+`arrow_head` 的旧注释写 `cos(θ∓6°)`、同段末尾又写"张 12°"，**两处都错**。
+证据是**常量位模式**：槽 `0x19fb68` 的 8 字节原文 `d5 eb 7b f3 e9 ce ca 3f`
+= `0x3FCA_CEE9_F37B_EBD5` = `0.20943951023931953` = **12°**
+（另一个独立槽 `0x19fc80` 是它的相反数，`addsd` @ `0x4b9b74`）。
+⇒ **半张角 12°、总张角 24°**（与 `docs/16` §12 的"±12°"一致）。
+新增逐位断言钉住 `ARROW_HALF_SPREAD_RAD` 与 `ARROW_RADIUS_DELTA`（槽 `0x19f6d0` = `0.5`）
+在 `tests/entity_drawer.rs::arrow_head_is_the_three_points_from_0x4b9a70`。
+
+> 记账：我第一次按十进制 `12.0.to_radians()` **反推**位模式，写错了（差 1 ulp 且高位错），
+> 被自己刚加的那条断言当场抓住 —— 这就是"期望值必须从二进制抄、不许按十进制反推"的活例子。
+> 顺带发现 `0.20943951023931953` 与 `12.0f64.to_radians()` 差 **1 ulp**
+> （`…EBD5` vs `…EBD6`）⇒ 原版源码里多半是**字面量**，不是 `to_radians()`。
+
+### 156.4 没落的 4 条：缺什么（**逐条写清，不许含糊**）
+
+#### 156.4.1 `FunctionRandomizer::{mutate_function, create_random_region}`（M2/M3）
+
+**已读到的**（`addr_probe dis`）：
+* `mutate_function`（`0x4ee3a0`，0x372）：调用清单 = `rand` 五个 GOT 槽
+  （`0x750180`/`0x750700`/`0x751610`/`0x750270`/`0x750710`）+ **`0x4ef020`（create_random_region）**
+  + **`0x4ee720`（mutate_fine_tune）** + `0x502b20`×2 + `0x3be7d0`。
+* `create_random_region`（`0x4ef020`，0x370）：`rand` + `0x4625b0`（f64 随机 helper，与 `adjust_tokens` 同一个）
+  + `0x460c20`（Vec 分配）+ 两张跳表（`0x1c3b…`）。
+
+**缺什么（两条，都不是"时间不够"）**：
+1. **随机源不可复现**：三条全走 `rand` 的 `thread_rng`（槽 `0x9bb290` → `0x750180`）。
+   同输入两次运行输出不同 ⇒ **值级对拍在原理上做不到**；能做的只有"控制流 + 常量表"。
+   `adjust_tokens` 已经按这个思路落了（随机注入 + 常量逐位），M2/M3 的编排**分支顺序**
+   依赖随机值，落下去只能猜"第 k 个随机数决定哪个分支"。
+2. **`create_random_region` 的区间几何式没解完**：读出的是"几个 f64 随机量 + 跳表分发"，
+   但**区间端点怎么组合**（哪两个随机量相减/缩放、边界怎么夹）还没有逐指令读通。
+   ⇒ 落一个"看起来合理"的区间生成器 = 编语义，按 `AGENTS.md` §0.3 **不做**。
+
+#### 156.4.2 `GraphwarPlane::{clear_state, update_entities}`（P1/P2）
+
+**本轮新读到的**（比 §148 多三条硬证据）：
+1. **调用者 = `GraphwarRootNode` 的重置路径**（**观测**）：`addr_probe callers 0x4bded0` 三个点
+   （`0x3a89e7` 在 `0x3a5760` 体内；`0x3b0b37`/`0x3b3cc6` 在 `0x3b0830` 体内），
+   `0x4be270` 两个点都在 `0x3b0830` 体内；而 `0x3b0830` 的 `panic::Location` 落
+   **`src/graphwar_root_node.rs:623`**（`0x3a5760` 落 `:635`）⇒ 它们**不是**平面自己 draw/process 的
+   内部助手，而是"开新局/清场"时被 RootNode 调的。
+2. **体内是 gdext `Gd` 借用/降级管线**（**观测**）：`update_entities`（`0x4be270`）332 B 里绝大多数是
+   panic 臂 —— `0x4be2d2` 的类名串 `0x1c1b2e`（长 `0x29` = **41** = `graphwarrust::entity_drawer::EntityDrawer`）
+   + `0x4be348 call *[0x9ba868] -> 0x91e8d3`（串 `";attempted to access a non-current mutable borrow of type: `"）
+   + `0x4be383 call *[0x9ba678] -> 0x925430`（`"called \`Result::unwrap()\` on an \`Err\` value"`）+ `0x4be389 ud2`。
+   成功路径只有：`0x4be2a3 mov byte ptr [rax+0x108],1`（**置标志**）+ 对 `self+0xe0` 那张表逐个 `bind_mut`。
+3. **`clear_state` 清的是三张表**（**观测**）：`self+0xe0`（实体表，元素是 `Gd<EntityDrawer>`）、
+   `self+0xf8`（另一张表，每项调 `0x4eb2c0` —— `effect_drawer` 侧 388 B 的函数，**无 Location**）、
+   `self+0x80`（子节点表，逐个 `queue_free`：槽 `0x9bad70` → `0x8aea80`），最后同样置 `self+0x108=1`。
+
+**缺什么（三条）**：
+1. **三张表的键值类型未定**：只知道 `+0xe0` 里装着 `EntityDrawer`、`+0xf8` 每项要过一个
+   effect_drawer 函数；键是什么（`u32` id？`Gd` 句柄？）没有读到。
+2. **我方架构里没有这些字段**：`src/graphwar_plane.rs` 的 `GraphwarPlane` 只持
+   `functions: BTreeMap` + 3 个 `FunctionDrawer` 的 `NodeRef` + `ObstacleDrawer` 句柄；
+   `EntityDrawer`/`EffectDrawer` 在**我们的**架构里是**独立的 Godot 节点**（`_scaffold/*_class.rs`），
+   平面**不持有**它们的表 ⇒ 就算把反汇编读全，也**没有对应字段可清**。要落这两条，得先决定
+   "平面要不要持有实体/特效表"（那是架构决策，超出本任务写范围）。
+3. **`0x4eb2c0` 的语义未定**：`clear_state` 对 `+0xf8` 的每一项都调它，但它是 `effect_drawer` 侧
+   388 B 的函数、体内无 `panic::Location`、也没进 527 分母 ⇒ 名字未知。
+
+⇒ 这 2 条**登记为未知**（不进"落了"），并写进 §156.6 的遗留清单。
+
+### 156.5 其余顺带结论（都已写进代码注释，这里只索引）
+
+1. **采样器 `0x3c2530` 的模块归属**：arm64 `0x3b5374 + 1020 = 0x3b5770` = `calculate_shot_results` 的起始；
+   Linux `0x3c2530 + 0x689` 补齐到 `0x3c2bc0`（同一个 `calculate_shot_results`，T81 用它做过隔离对拍）
+   ⇒ **`0x3c2530` 属于 `graphwar_shot_calculator`**，而 `docs/02` §20.5 一直把它记成
+   「`graphwar_path_calculator` 的文档级归属」。**本轮把这条从"文档级"抬到"相邻性观测 + 值级对拍"**。
+   ⚠️ 但**没有搬文件**：本体仍在 `src/graphwar_path_calculator.rs`（该文件不在本任务写范围）⇒ 见 §156.6 遗留 1。
+2. **`EntityDrawer` 两条是 `&self` 方法**（原版）：`update_name_label` 序言 `mov rsi,rdi` 后
+   `0x4b1800` 是 `Gd::upcast`、再对 upcast 的 Control 调 `0x8925f0` = `Control::get_size`；
+   `draw_offset_triangle` 末尾 `0x4b9c84 mov rsi,rbx` + `0x4b1800` 再 upcast 供
+   `Object::call("draw_polygon")`。⇒ 我方也写成 `&self` 方法，并**接线**：
+   `relayout()` 调 `self.update_name_label(...)`、`draw()` 按**三个调用点**逐次调 `self.draw_offset_triangle(...)`。
+3. **`EffectDrawer::step_effect` 的 ABI**：`rdi=&mut self`、`rsi=障碍管理器`、`edx=now_tick`、`xmm0=delta`；
+   `self+0x08` = 元素表 ptr、`self+0x10` = len；相位推进 `0x258`、终态位图 `0x5b`（= `{0,1,3,4,6}`）、
+   `δ>0` 才积分（`0x4eb4b3 ucomisd/ja`）、一帧 `1/60` = **10 个 `1/600` 子步**、
+   障碍判定是**外部**方法（`0x4eb585 call 0x3f15b0`）。
+4. **`FunctionRandomizer` 属于 `math_function`**：三条 arm64 真名钉死了 `docs/02` §17 那条
+   "AI 的 token 级随机化归 `math_function`"（此前只有 `mutate_fine_tune` 一条 Location 锚）。
+
+### 156.6 遗留 / 建议的下一步（**合并前必读**）
+
+| # | 遗留 | 缺什么 / 下一步 |
+|---|---|---|
+| 1 | **采样器本体归属未搬** | `calculate_function` 的语义本体仍在 `src/graphwar_path_calculator.rs::calculate`（该文件不在本任务写范围）。搬运需要动那个文件 + `docs/02` §17/§20.5 的归属说明；建议**单独一轮**做，同时把 `graphwar_path_calculator` 的 `calculate_paths`（`0x467530`）与采样器分开 |
+| 2 | **M2/M3 未落** | 见 §156.4.1：随机源不可复现 + `create_random_region` 几何式没解完。下一步：先把 `create_random_region` 的两个跳表（`0x1c3b…`）展开成"随机值 → 区间端点"的映射表（纯静态、不需要跑） |
+| 3 | **P1/P2 未落** | 见 §156.4.2：需要**架构决策**（平面是否持有实体/特效表）+ 把 `0x4eb2c0` 命名。**不建议下一任直接改** |
+| 4 | **`EffectDrawer::step_effect` 的第二份循环** | `0x4eb511 cmp [rdi+0x28],ebp` 把慢路径分成两份跳表不同（`0x1c3bec` vs `0x1c3bb8`）的循环，差异未解；我方只实现其中一份 |
+| 5 | **`adjust_tokens` 的尾部截断** | `0x4ee2f7..0x4ee2ff` 的 `Vec::truncate(new_len)` 形状里 `new_len` 来源未解 ⇒ 本实现**不做**截断（补全是完整的） |
+| 6 | **`corrected_text` 的行为变了** | 补未闭合括号是**真值**，但它会让"函数文本不合法时"的网络报文文本与旧版不同（三轴实测未动，见 §156.7）。若下游有对旧形态的断言，按真值改 |
+| 7 | **`crossarch_plan.txt` 的 `c_mode2` 语义标注** | 那条把 `flag=2` 当 mode（§156.2.3）；结论（两构建相同）不受影响，但 `fixtures/crossarch_plan.txt` 的**注释**该更正 —— 不在本任务写范围，登记 |
+
+### 156.7 门槛读数（本分支实测）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1684 passed / 0 failed / 0 ignored**（基线 1674 + 本批 10 条新测试；与任务书的 1666/0/1 不同 —— 那是别的基线的数，本分支 `9887989` 实测基线是 **1674/0/0**） |
+| `cargo test --offline --features gdext-bindings` | 见 §156.7 补充（本节末尾） |
+| `python3 tools/coverage_matrix.py --check`（`COVERAGE_MATRIX_UPSTREAM=.reference/upstream`，venv python） | **OK**（生成物已重跑：`docs/coverage-matrix.tsv` 的 `src_fns` 4187→4218、`src_tree_sha256` 变更；`graphwar_shot_calculator` 的 `ours_funcs` 36→52。**A/B/D 三个数一位未动**） |
+| `python3 tools/check_doc_refs.py` | `rc=0` |
+| `python3 tools/docsec.py check docs/06-verification.md` | 通过（本节 = **§156**，无重复号/空心节） |
+| 三轴 `fire` / `batch` / `batch_conv`（冻结快照 401 份回放） | **647 / 647 / 637，一位未退** |
+| `python3 tools/boundary_audit.py --check` | `mismatch 0`（match 441） |
+
+### 156.8 复跑命令（**不给命令的数字一律当未验证**）
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.cargo-target
+
+# ① 值级真值（真 Linux 机器码 unicorn 直跑；--controls 只跑正/负对照）
+.reference/venv/bin/python tools/denom_drawers_truth.py            # 写 fixtures/denom_drawers_math_truth.tsv
+.reference/venv/bin/python tools/denom_drawers_truth.py --check    # 只比对
+.reference/venv/bin/python tools/denom_drawers_truth.py --controls # C1/C2/C2'/C2''/C3/C5
+
+# ② 三条函数的逐位/逐字节对拍（Rust 侧）
+cargo test --offline --lib denom_truth_tests
+cargo test --offline --lib denom_step_effect
+cargo test --offline --lib denom_randomizer
+cargo test --offline --test entity_drawer
+
+# ③ 地址/边界取证（例）
+.reference/venv/bin/python tools/addr_probe.py fde     0x3c2530
+.reference/venv/bin/python tools/addr_probe.py dis     0x3c5c50
+.reference/venv/bin/python tools/addr_probe.py callers 0x4b9a70
+.reference/venv/bin/python tools/addr_probe.py callers 0x4bded0
+.reference/venv/bin/python tools/addr_probe.py str     0x19fb68   # 箭头常量 8 字节原文
+
+# ④ 门槛
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream .reference/venv/bin/python tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py && python3 tools/docsec.py check docs/06-verification.md
+python3 tools/boundary_audit.py --check
+cargo run --release --offline -q --example replay_attrib -- --dir .reference/replays/gw2-replays-snapshot/replays --drive fire  --policy default --json /tmp/fire.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir .reference/replays/gw2-replays-snapshot/replays --drive batch --policy default --json /tmp/batch.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir .reference/replays/gw2-replays-snapshot/replays --policy strict
+```
+
+### 156.9 三个数为什么一位没动（防止下一个人误读）
+
+**在 master 上的当前值**（rebase 后）：`A = 336/527 = 63.8 %`、`B = 336/438 = 76.7 %`、
+`D_A = 336/659 = 51.0 %`（`D_A` 的分母跟着 T107 §155 从 670 变 659，**不是本轮改的**）。
+三者的**分子**只认 **527 分母内**的函数（有 `panic::Location` 锚且判成 F1 的那些）；
+本批 11 条**全部 gameLOC = 0**（T105 观测）⇒ 它们**按结构进不了分母**，也**没有一条**因为本轮落码而进 336。
+⇒ 想知道本批效果，**只能看分母外的分档**：
+* 基点①（T105 口径）：`X` 内 implemented **88 → 95**、real-missing **55 → 48**（源码函数）/ **57 → 50**（机器码行数）。
+* rebase 到 master 后（T106/T107/T109 已把分母外真缺推到 **43 组 / 43 条**、`X` 143 → 132）：
+  本批 7 条叠加 ⇒ **43 → 36 组 / 43 → 36 条**。
+
+⚠️ 两组数**都没有**重跑 `fixtures/denom_outside.tsv` 落库（那是 T105 的生成物、不在本任务写范围）：
+它们是按"7 条已落函数名现在能在对应模块文件里找到"推的**算术**。复算方式（**给下一任**）：
+```bash
+.reference/venv/bin/python tools/global_triage.py --denom-outside   # 重跑后看 real-missing 行是否变 implemented
+```
+⚠️ 更严的口径要求：`global_triage` 的 `implemented` 判据只是"同名 fn + 模块级文件映射"，
+**不是**逐位证据 —— 本批 7 条里 3 条有值级对拍（S1/S2/S3）、4 条是"指令级 + 单测"（M1/E1/E2/F1），
+这与 §156.1 的档位列一致，别把整批都当成逐位。

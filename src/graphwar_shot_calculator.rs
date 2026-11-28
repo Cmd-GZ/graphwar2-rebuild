@@ -242,7 +242,7 @@ pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
 // 原版 `GraphwarShotCalculator` 的三条关联函数（**真名**，arm64 `.symtab` 原文）
 // ---------------------------------------------------------------------------
 //
-// 这是 T108（`docs/06` §153）把「527 分母之外真缺」的 3 条落成源码级函数边界的产物。
+// 这是 T108（`docs/06` §156）把「527 分母之外真缺」的 3 条落成源码级函数边界的产物。
 // 判据/输入集 = 预注册件 `fixtures/denom_drawers_math_plan.txt`；逐条台账 =
 // `fixtures/denom_drawers_math_anchors.tsv`。
 //
@@ -272,7 +272,7 @@ pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
 // ⚠️ **为什么不把本体搬进来**（预注册 §2.5 K1）：`calculate_function` 的本体是
 // `src/graphwar_path_calculator.rs::calculate` —— 那个文件不在本任务的写范围，且采样器
 // `0x3c2530` 的**模块归属**按本文的相邻性证据其实属于 `graphwar_shot_calculator`（`docs/02` §20.5
-// 记的是"文档级归属"）。搬迁登记为遗留（`docs/06` §153.6），不在这条 commit 里做。
+// 记的是"文档级归属"）。搬迁登记为遗留（`docs/06` §156.6），不在这条 commit 里做。
 pub struct GraphwarShotCalculator;
 
 impl GraphwarShotCalculator {
@@ -594,7 +594,7 @@ mod denom_truth_tests {
     /// 关键点：空 token 流在**真采样器**里不是"没有弹道"，而是一条水平线
     /// （`V1-06`/`V1-07`/`V1-08` 与常量 0 的 `V1-01` **同一条 sha**）。
     /// ⇒ 我方 `shot_points()` 里"空文本在 Normal 局早退"是**组合方式**的推断
-    /// （`docs/06` §153.5），不是采样器语义；这里测的是采样器本身。
+    /// （`docs/06` §156.5），不是采样器语义；这里测的是采样器本身。
     #[test]
     fn calculate_function_matches_real_machine_code() {
         let (cols, rows) = table();
