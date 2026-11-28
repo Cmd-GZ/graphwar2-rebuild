@@ -255,6 +255,14 @@ var _flow := GwShotFlow.new()
 var _turn_clock := GwTurnClock.new()
 ## `TickRequest` 的节奏时钟（Rust：`GraphwarTickHandler`，`0x519840` / `0x519630`）。
 var _flow_clock := GwFlowClock.new()
+## **本回合已过 tick**（同时回合收集阶段的 deadline 轴，`docs/06` §150 P1-3）。
+##
+## 原版判"什么时候该结算"用的是**同一根 60Hz 轴上的两个数**：
+## `Match::handle_tick`（**`0x470840`**）`0x4709dc cmp ebp,edx` / `0x4709de jb` ⇒
+## **`now_tick >= end_of_turn_tick`**（`jb` 是无符号"<"⇒ 跳过）。本地局没有服务端
+## `EndOfTurnInfo`，所以两边都换成"本回合内"的量：`now` = 这个累加器、
+## `end` = `GwTurnClock.duration_ticks()`（两者同减回合起点 ⇒ 比较结果逐位等价）。
+var _round_ticks := 0
 ## **对局状态机本体**（8 个 `GameState`，原版是 `[self+0x120]` 那一个字节）。
 ##
 ## 迁移表在 Rust（`GwTurnState` → `src/turnstate.rs::next_state`），本屏只**发事件、问状态**。
@@ -784,6 +792,7 @@ func begin_match() -> void:
 	_set_replay_input_enabled(true)
 	_functions.clear()
 	_shot_queue.clear()
+	_round_ticks = 0
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
@@ -1811,16 +1820,15 @@ func _commit_shot(shot: Dictionary) -> void:
 		# 一回合 N 发一个事务，按公告顺序收）。本屏只递"这一发是谁打的"。
 		# ⚠️ 这一支**没有**接逐 tick 时序（见 `docs/143` §9 "未做"）：整批一落地就算完。
 		if _shot_queue.is_empty():
-			_turn_driver.round_open(_simultaneous_announced())
+			_open_simultaneous_round()
 		_shot_queue.append(shot)
 		var collected := _turn_driver.round_submit(_active)
-		if bool(collected.get("complete", false)):
-			_resolve_shots(_shot_queue)
-			_shot_queue.clear()
-			_turn_driver.round_reset()
-			_next_turn(true)
-			_settle_round()
-			_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
+		# **"该不该结算" = 攒齐 ∨ 到点**（Rust 的 `RoundCollection::should_resolve`，
+		# `docs/06` §150）：`complete` 只覆盖"攒齐"那一半。改前只问 `complete`，
+		# 而 `round_open()` 传的 deadline 是 `None` ⇒ 公告里只要有人不交，
+		# 这一轮**永远**结算不了（P25 把公告改成"全部玩家"就会踩到）。
+		if _turn_driver.round_should_resolve(_round_ticks):
+			_resolve_simultaneous_round()
 		else:
 			_next_turn(false)
 		return
@@ -2180,6 +2188,31 @@ func _simultaneous_announced() -> Array:
 				break
 	return out
 
+## 开一轮同时回合的收集（`RoundCollection`，`docs/141` §1）。
+##
+## **deadline 必须给**（`docs/06` §150 P1-*）：改前这里调的是 `round_open(announced)`，
+## 也就是 `deadline = None` ⇒ `expired()` 恒假 ⇒ 只要公告里有一个人不交，
+## 这一轮就永远结算不了（P25 的"全部玩家"公告集合一搬过来就会死锁）。
+## 截止 = `GwTurnClock.duration_ticks()`（`TimeMode::seconds()` × 60；`TimerInf` ⇒ `-1` = 不计时）。
+func _open_simultaneous_round() -> void:
+	_round_ticks = 0
+	_turn_driver.round_open_with_deadline(_simultaneous_announced(),
+		int(_turn_clock.duration_ticks()))
+
+## 结算这一批同时回合的弹道，然后换手 + 结算 + 回状态机。
+##
+## 两个进入点共用这一条路径（**只有一份**）：①攒齐了（`_commit_shot` 里最后一次 `submit` 之后）；
+## ②到点了（`_process` 每帧查 `round_should_resolve`）。原版到点是
+## `0x4709ec call 0x470eb0 fire_functions` —— 把**已提交的**打出去，也就是按现有内容结算。
+func _resolve_simultaneous_round() -> void:
+	_resolve_shots(_shot_queue)
+	_shot_queue.clear()
+	_turn_driver.round_reset()
+	_round_ticks = 0
+	_next_turn(true)
+	_settle_round()
+	_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
+
 ## 命中表（= 原版 **`SynchronizingResults`** 那一步的结果：服务端在开火那一刻就把谁死算完）。
 ##
 ## **判定本体在 Rust**：`GwShotFlow.judge()` → `src/graphwar_shot_calculator/settle.rs::resolve_points_owned`
@@ -2485,6 +2518,7 @@ func _begin_replay(path: String) -> void:
 	_replay_shot_status = ""
 	_functions.clear()
 	_shot_queue.clear()
+	_round_ticks = 0
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
@@ -2910,6 +2944,7 @@ func _begin_online(app_node) -> void:
 
 	_functions.clear()
 	_shot_queue.clear()
+	_round_ticks = 0
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
@@ -3525,7 +3560,16 @@ func _process(delta: float) -> void:
 	if not _turn_clock.has_deadline():
 		_update_timer_label()      # `TimerInf`：没有截止时刻（战役关 21/21 都是这一档）
 		return
-	_turn_clock.advance(delta)
+	var ticks := int(_turn_clock.advance(delta))
+	# 同时回合的收集阶段：本帧推进的 tick 记进 `_round_ticks`（deadline 的 now 轴），
+	# 再问一次"该不该结算"—— 这就是"有人不交"的兜底（`docs/06` §150 P1-4）。
+	# 原版这条兜底在 `0x4709dc`/`0x4709de`（`now_tick >= end_of_turn_tick` ⇒ `fire_functions`）。
+	if _turn_driver.round_is_open():
+		_round_ticks += ticks
+		if _turn_driver.round_should_resolve(_round_ticks):
+			_resolve_simultaneous_round()
+			_update_timer_label()
+			return
 	if String(_turn_clock.decide(_shot_in_flight, _running)) == "auto_fire":
 		# 原版到点做的**不是**换手，而是 `call fire_functions`（`0x4709ec`）：
 		# 把已提交的那个函数打出去。这里照做；万一打不出去（输入框空 / 轮到 AI），

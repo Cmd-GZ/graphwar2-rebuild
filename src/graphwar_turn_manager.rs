@@ -1060,8 +1060,19 @@ impl<T> RoundCollection<T> {
     }
 
     /// 到点了吗。
+    ///
+    /// 判据出处（**逐位**，`docs/06` §148 P1-1/P1-2）：`Match::handle_tick`（x86 **`0x470840`**）
+    /// 的 ②段 `0x4709dc cmp ebp,edx` + `0x4709de jb`（**无符号**"<"⇒ 跳过）⇒
+    /// 触发条件是 **`now_tick >= end_of_turn_tick`**，不是 `>`。
+    /// `timer_inf` 那档（原版 `get_end_of_turn_tick` 返回 `None`，线上 `end_of_turn_tick = 0`）
+    /// 在这里就是 `deadline = None` ⇒ 恒 `false`。
     pub fn expired(&self, now_tick: i64) -> bool {
         matches!(self.deadline, Some(d) if now_tick >= d)
+    }
+
+    /// 本轮的截止 tick（`None` = 不计时）。给接线层读，判据仍只在 [`Self::expired`] 里。
+    pub fn deadline(&self) -> Option<i64> {
+        self.deadline
     }
 
     /// 现在该不该结算：**攒齐**或**超时**，二者之一。
@@ -1103,6 +1114,95 @@ impl<T> RoundCollection<T> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    // ===================================================================
+    // `RoundCollection` 的**超时兜底**（`docs/06` §150，P1-1…P1-6）
+    //
+    // 判据出处（逐位）：`Match::handle_tick`（x86 **0x470840**）第二段
+    //   0x4709ce  call 0x462ec0              ; TurnManager::get_end_of_turn_tick → Option<u32>
+    //   0x4709d7  cmp  eax, 1 / jne          ; None（TimerInf）⇒ 不结算
+    //   0x4709dc  cmp  ebp, edx              ; now_tick vs end_of_turn_tick
+    //   0x4709de  jb   0x4709f1              ; now < end ⇒ 跳过 ⇒ **continue ⇔ now >= end**
+    //   0x4709e0  cmp  byte [rbx+0x11c], 0 / je   ; "有人在等"
+    //   0x4709ec  call 0x470eb0              ; fire_functions ⇒ 按**已提交的**结算
+    // ⇒ `expired` 的边界必须是 `now_tick >= deadline`（**不是** `>`）；
+    //   `None`（TimerInf 档）恒不超时 —— 这也是原版"无限时档没有倒计时"的另一面。
+    // ===================================================================
+
+    /// `P1-2`：边界是 `>=`，不是 `>`。到点的那一 tick 就为真。
+    #[test]
+    fn expired_fires_exactly_on_the_deadline_tick() {
+        let rc: RoundCollection<i64> = RoundCollection::new(vec![1, 2], Some(100));
+        assert!(!rc.expired(99), "未到点（end-1）⇒ false");
+        assert!(rc.expired(100), "到点（== end，0x4709de 的 jb 不跳）⇒ true");
+        assert!(rc.expired(101), "过点 ⇒ true");
+        assert_eq!(rc.deadline(), Some(100));
+    }
+
+    /// `P4-2`/`P1-1` 的 `None` 支：`TimerInf` 档（原版 `get_end_of_turn_tick` 给 `None`）
+    /// ⇒ 永远不超时（`0x4709d7 cmp eax,1 / jne` 跳过）。
+    #[test]
+    fn no_deadline_never_expires() {
+        let rc: RoundCollection<i64> = RoundCollection::new(vec![1, 2], None);
+        assert!(!rc.expired(0));
+        assert!(!rc.expired(i64::MAX), "没有截止 ⇒ 任何 now_tick 都不超时");
+        assert_eq!(rc.deadline(), None);
+    }
+
+    /// `P1-5` 第 3 条（**反面对照**）：`deadline = None` 且有人不交 ⇒ **永远等下去**。
+    ///
+    /// 这就是 `docs/06` §144.6 #1 说的"死锁"：我方 `round_open()` 改前传 `deadline = None`，
+    /// 所以一旦把 P25 的公告集合（玩家表**全部键**，含全灭者）搬过来，这一轮就再也结算不了。
+    /// 这个测试**故意**把死锁钉成可复现的事实，不是测"正确行为"。
+    #[test]
+    fn without_a_deadline_a_silent_player_deadlocks_the_round() {
+        let mut rc: RoundCollection<i64> = RoundCollection::new(vec![1, 2], None);
+        assert_eq!(rc.submit(1, 10), SubmitResult::Accepted);
+        // 2 号玩家（全灭 / 掉线 / P25 搬过来之后的死者）一直不交：
+        for now in [0i64, 59, 60, 3_600, 86_400, i64::MAX / 2] {
+            assert!(
+                !rc.should_resolve(now),
+                "没有 deadline ⇒ now={now} 时仍不能结算（这就是死锁）"
+            );
+            assert_eq!(rc.waiting_on(), vec![2]);
+        }
+    }
+
+    /// `P1-5` 第 4 条（**修好**）：同一个场景给了 deadline ⇒ 到点结算，且只交出实际提交的那一发。
+    ///
+    /// 与真回放同口径：`TurnInfo` 公告了 3 个人、结算批只有 2 发（`docs/141` §4 的 9 个反例
+    /// 全由"公告了但没交"造成）⇒ `resolve()` **不补**没交的人。
+    #[test]
+    fn a_deadline_resolves_the_round_with_only_what_was_submitted() {
+        let mut rc: RoundCollection<i64> = RoundCollection::new(vec![1, 2], Some(100));
+        assert_eq!(rc.submit(1, 10), SubmitResult::Accepted);
+        assert!(!rc.should_resolve(99), "还没到点、也没攒齐 ⇒ 继续等");
+        assert!(rc.should_resolve(100), "到点 ⇒ 该结算（0x4709de 的 jb 不跳）");
+        assert!(!rc.is_complete(), "不齐（2 号从没交）");
+        let resolved = rc.resolve();
+        assert_eq!(resolved, vec![(1, 10)], "只交出实际提交的；没交的人不补");
+    }
+
+    /// 攒齐仍然**立刻**结算（deadline 与否无关）：这是与改动前行为等价的保证。
+    #[test]
+    fn a_complete_round_resolves_before_the_deadline() {
+        let mut rc: RoundCollection<i64> = RoundCollection::new(vec![1, 2], Some(100));
+        rc.submit(1, 10);
+        rc.submit(2, 20);
+        assert!(rc.should_resolve(0), "攒齐 ⇒ 立刻结算，与 deadline 无关");
+        assert_eq!(rc.resolve(), vec![(1, 10), (2, 20)], "顺序 = 公告顺序，不是到达顺序");
+    }
+
+    /// `P1-1` ④（`0x4709e0 cmp byte [rbx+0x11c],0 / je`）在收集阶段的对偶：
+    /// 关掉（结算过 / 换局）的轮次**不再要求结算**，即使 now 早已过点。
+    #[test]
+    fn a_closed_round_never_asks_to_resolve() {
+        let mut rc: RoundCollection<i64> = RoundCollection::new(vec![1], Some(1));
+        rc.close();
+        assert!(!rc.should_resolve(1_000_000));
+        assert!(rc.expired(1_000_000), "closed 只管 should_resolve；expired 仍是纯时钟判据");
+        assert_eq!(rc.submit(1, 1), SubmitResult::Closed);
+    }
 
     // ===================================================================
     // T73 真值表：`fixtures/test_expectation_truth4.tsv` 的 `T/*` 段
