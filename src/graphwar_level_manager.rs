@@ -1640,3 +1640,83 @@ mod tests {
         assert!(!is_unlocked(20, 21));
     }
 }
+
+// ---------------------------------------------------------------------------
+// 6. `get_level_data`（2026-11-28 T109 落码；此前该模块 40 条里有它一条是真缺）
+//
+// 体内**没有** `panic::Location` ⇒ 527 分母看不见（`fixtures/denom_outside.tsv`
+// 的 `0x3fc6d4` 行）。语义是**一张哈希表的查表**，不是"生成关卡"。
+// ---------------------------------------------------------------------------
+
+/// `get_level_data` 表里**值**的机器宽度：**72 字节**（`0x58` 槽位 − 16 字节键）。
+///
+/// 档位：**观测**（`0x3fc770 mov w24,#0x58` 是槽位步长、`0x3fc7a0 mneg x8,x8,x24` 用它算偏移；
+/// 返回时 `0x3fc830 sub x8,x27,#0x40` 把"槽位基址 − 0x40"当 `Some(&值)` 的指针 ⇒
+/// 值从槽位 `+0x10` 起 ⇒ `0x58 − 0x10 = 0x48 = 72`）。
+pub const LEVEL_DATA_SIZE: usize = 0x48;
+
+/// 表里那张表的值类型：**内容未知的 72 字节**。
+///
+/// 档位：宽度**观测**（见 [`LEVEL_DATA_SIZE`]）；**字段语义未知** ——
+/// 本轮没有找到任何消费者读它的字段（`get_level_data` 的调用者都只判 `Option` 是否为空）。
+/// 因此这里**不编字段**，只保留机器宽度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelData(pub [u8; LEVEL_DATA_SIZE]);
+
+impl Default for LevelData {
+    fn default() -> Self {
+        Self([0u8; LEVEL_DATA_SIZE])
+    }
+}
+
+/// 关卡数据表的**键**：`Box<[u8]>`（16 字节胖指针 = `ptr@+0`、`len@+0x8`）。
+///
+/// 档位：**观测** —— `0x3fc740 memcpy` 把入参字节拷进 `alloc(len,1)`（= `to_vec().into_boxed_slice()`），
+/// 探测时 `0x3fc7a8 ldur x8,[x27,#-0x48]; cmp x19,x8` 比**长度**、
+/// `0x3fc7c0 bl memcmp` 比**内容** ⇒ 键是"按内容相等"的字节串。
+pub type LevelDataKey = Box<[u8]>;
+
+/// 原版 `GraphwarLevelManager` 的 **`+0x00` 字段**：`HashMap<Box<[u8]>, LevelData>`。
+///
+/// 字段偏移（**观测**，与 `graphwar_ban_list` 同一套 hashbrown 形状）：
+/// ctrl `+0x00`、bucket_mask `+0x08`、`items`（空判）`+0x18`、hasher `+0x20`。
+///
+/// ⚠️ 原版这个表是 `GraphwarLevelManager` **自己的第一个字段**；我方
+/// `GraphwarLevelManager` 是零尺寸的函数边界载体（字段集未知，不建模），
+/// 所以把这张表单独建模 —— 语义等价、承载不同，函数名仍是原版真名。
+#[derive(Debug, Default)]
+pub struct LevelDataTable {
+    map: std::collections::HashMap<LevelDataKey, LevelData>,
+}
+
+impl LevelDataTable {
+    /// `0x3fc718`/`0x3fc728` 那两次 alloc 的等价物：插入一条（键按内容拥有）。
+    ///
+    /// ⚠️ 原版的**写入点未定位**（谁 `insert` 这张表本轮没解），这个方法是给测试造状态用的；
+    /// 它不是"原版函数"。
+    pub fn insert(&mut self, key: &[u8], data: LevelData) {
+        self.map.insert(key.to_vec().into_boxed_slice(), data);
+    }
+
+    /// `GraphwarLevelManager::get_level_data`（arm64 **`0x3fc6d4`** / **452** B）：
+    /// 按字节内容查这张表。
+    ///
+    /// 逐条证据：
+    /// * `0x3fc718..0x3fc740`：`alloc(len,1)` + `memcpy` ⇒ 先**复制入参字节**当键；
+    /// * `0x3fc744 ldr x8,[x21,#0x18]; cbz x8 → 0x3fc820`：表空 ⇒ `None`；
+    /// * `0x3fc754..`：`hash_one`（hasher 在 `+0x20`）+ 探测循环，先比长度（`0x3fc7ac cmp x19,x8`）
+    ///   再 `memcmp`（`0x3fc7c0`）；
+    /// * `0x3fc7e4 tbnz w8,#0 → 0x3fc82c`：没命中 ⇒ `x27 = 0` ⇒ `csel` 出 `None`；
+    /// * `0x3fc830 sub x8,x27,#0x40` + `csel x21, xzr, x8, eq`：命中 ⇒ 返回 `Some(&值)`
+    ///   （值 = 槽位 `+0x10`，见 [`LEVEL_DATA_SIZE`]）。
+    ///
+    /// ⇒ 签名 `fn get_level_data(&self, data: &[u8]) -> Option<&LevelData>`（返回裸指针 + 0 表示 `None`
+    /// = `Option<&T>` 的 niche 优化，**观测**）。
+    pub fn get_level_data(&self, data: &[u8]) -> Option<&LevelData> {
+        // 0x3fc744 的空表短路
+        if self.map.is_empty() {
+            return None;
+        }
+        self.map.get(data)
+    }
+}
