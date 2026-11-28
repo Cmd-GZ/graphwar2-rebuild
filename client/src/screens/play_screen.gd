@@ -3245,8 +3245,12 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 			_apply_online_turn(_online_room())
 			_status(_online_status_text())
 		"EndOfTurnInfo":
-			# 本客户端还没发 `TickRequest`（`room.current_tick` 恒 0），所以只记下来，
-			# 倒计时仍按墙钟走（`docs/139` §7 记为未做）。
+			# ⚠️ T99 更正：这里原来写着"本客户端还没发 `TickRequest`（`room.current_tick` 恒 0）"
+			# —— **那句从 T88 起就不成立了**：`_online_poll_tick()` 按 `0x519840` 的 `tick%60`
+			# 发 `TickRequest`，`TickReply` 在 `session.gd::_apply` 里写 `room.current_tick`。
+			# 所以下面这行打印的"当前 tick"是真的。
+			# **仍未做**：倒计时改用服务端 tick 轴（`end_of_turn_tick − current_tick`）；
+			# 现在走 Rust `TurnClock` 的"本回合已过 tick"轴（两者只差一个常量偏移，`docs/144` 遗留）。
 			_status("联机：本回合截止 tick %d（%s）／当前 tick %d" % [
 				GwNetFrame.body_int(body, "end_of_turn_tick", 0),
 				GwNetFrame.body_str(body, "time_mode"),
