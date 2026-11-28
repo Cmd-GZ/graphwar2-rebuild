@@ -188,3 +188,40 @@ S7 `implemented` 行在 `src/` 里重扫同名 fn（独立脚本，全 `src/` �
 门槛：`python3 tools/check_doc_refs.py` rc=0 ｜ `python3 tools/docsec.py check docs/06-verification.md` 通过
      ｜ `cargo test --offline` 全绿（基线 1765 passed / 0 failed / 1 ignored）｜
      `python3 tools/coverage_matrix.py --check` OK ｜三轴 fire 647 / batch 647 / batch_conv 637（不动 `src/`，不应变）
+
+--------------------------------------------------------------------------------
+§9 勘误（**追加式**：§1–§8 一字未改；跑完才发现的偏差都记在这里）
+--------------------------------------------------------------------------------
+E1 **C-IMPL-3 的「vaddr 注释 ±8 行内有函数体」过严（实测 +86 行）。**
+   对象：`0x4becec backtracer::Backtracer::install_panic_log_hook`（T106 §154 落码）。
+   实测：`src/backtracer.rs:100` 是**模块级横幅注释**（含 `0x4becec / 876 B`），
+   其下 86 行是逐指令说明 + 预注册 P1/P2 的落地理由，第一个函数体在 **:186**
+   （`install_panic_log_hook_steps`），另有 `:206 panic_log_line` / `:224 version_line` /
+   `:248 merged_panic_log` + 5 条单测。⇒ ±8 行判据落空（差 78 行）。
+   原因：±8 当初是为了排除「地址表里一行 `arm64: 0x…`」（C-MISS(a)）这种假证据；
+   而**分层落码**按定义就是把一条原版函数拆成若干纯逻辑函数 + 一段模块级说明，
+   vaddr 注释与函数体天然不同段落。
+   处理（**两种读数都报**，不藏）：
+     · 严格按 §1 原文 ⇒ `0x4becec` 维持 `real-missing` ⇒ real-missing = **11**；
+     · 按本条勘误的放宽判据（同文件内有该 vaddr 标记 + 其后有承接该语义的函数体）⇒ **10**。
+   本轮台账取 **10**（把 0x4becec 放进 `T110_MANUAL_IMPL`，subclass=`no-loc:layered`），
+   理由：台账的用途是「还剩什么要干」，把它留在缺口里会让下一个人重做 T106 已完成的工作。
+   自校验也改成 subclass 感知：`no-loc:layered` 只验「锚点行含 vaddr 标记 + 同文件其后有 fn」，
+   `no-loc:module-file-split` 才验「锚点行是 `fn <method>` 定义行」。**没有**放宽其它任何判据。
+E2 **`ADDR_MANUAL` 有两条永不生效的人工裁决（§3 N5 的实测细化）。**
+   `tools/function_coverage.py` 的闸门是 `if pin == "addr" and row["addr"] in ADDR_MANUAL`，
+   而 `0x4f44c0` / `0x4f4a60` 的实际 pin 是 `name-soft`（同模块里同名 fn 的 impl 类型不一致）
+   ⇒ 两条裁决**从不触发**，两者都按 `name-soft + 观测` 落 **F1**。
+   实测：这两条原版函数在 `src/graphwar_function_input.rs:965/:979` 有**同名 fn + vaddr 注释 + 函数体**
+   （`impl Buffer { /// 0x4f44c0 GraphwarFunctionInput::delete_token_at_caret … }`），
+   所以 F1=336 这个**结果**是对的；错的是 ADDR_MANUAL 里那两条的理由（「该原版函数体不存在」= 与源码矛盾）
+   与死代码状态。本轮**不改** `function_coverage.py`（不在写范围），只登记；
+   若日后有人「修好闸门」让两条生效，F1 会掉到 334、A/B/B′/D 的分子一起变 —— 必须同时复算这四行。
+E3 **`fixtures/f3_triage.tsv` 的「主表 vs F2-scan 分节」陷阱（复算陷阱，判据不变）。**
+   该文件 `# ---- F2-scan` 横幅之后还有 14 行数据（表头是 `category_machine`，**不是** `category`），
+   文件自身写明「不进上面 153 的算术」。天真地整文件读会得到 na:*=102 / 强 na=95
+   ⇒ B 分母 425、B=**80.2 %**（假的）。生成器与 §5 的独立复算都按横幅截断 ⇒ 89/82、分母 438 才是真值。
+E4 **`--no-manual` 是既有开关（原属 T93），本轮让它同时控制 T107/T110 两张表。**
+   实测 `--denom-outside --no-manual` 逐字节复现「无 MANUAL」算式：
+   real-missing 25 条 / X=143 组 / implemented 174 条；而默认（含 MANUAL）是 real-missing 10 / X=132 / 176 条。
+   两条命令的差 = 13（serde →na）+ 2（落码核对）⇒ **MANUAL 层的影响面恰好 15 行**，没有副作用。
