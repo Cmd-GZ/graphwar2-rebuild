@@ -258,6 +258,12 @@ GIT_SSH_COMMAND="ssh -F /dev/null" git push origin master   # 主线分支名是
 
 4. **`/tmp` 是逐命令 tmpfs**，跨命令的文件会凭空消失；临时产物一律放 `.agent-work/`。
 
+## 两个工作树别共用 `CARGO_TARGET_DIR`（2026-11-28 实测）
+
+共用 target 的树上量到 `cargo 1636` —— **既不是基线 1634、也不是正确值 1640**；
+`touch src/lib.rs` 强制重建后才是 1640。⇒ 每个 worktree 必须用自己的 `.cargo-target`
+（本仓库的建树脚本就是这么做的），否则**测试计数会漂**，还会让人误以为别的分支改动影响了条数。
+
 ## `.agent-work/` 是可丢弃的，别把它写进证据链
 
 子 agent 的工作区在 `/home/user/MyProject/gw2/.agent-work/<topic>/`，**用完就删**（2026-11 一次性回收了 9.6 GB）。
