@@ -521,6 +521,15 @@ pub enum StopClientStep {
     DropPlayer,
 }
 
+/// `stop_server`（arm64 `0x406c0c` / 88 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopServerStep {
+    /// `GraphwarGameServer::stop`（`0x406c2c bl 0x482e74`，实参 `self+0x60`）。
+    StopServer,
+    /// `drop_in_place<GraphwarGameServer>`（`0x406c40 bl 0x4178dc`）。
+    DropServer,
+}
+
 impl GraphwarBackend {
     /// 空后端。
     pub fn new() -> Self {
@@ -603,6 +612,43 @@ impl GraphwarBackend {
             self.replay = None;
         }
         self.replay_slot_tag = PLAYER_SLOT_EMPTY; // 0x406be8
+        steps
+    }
+
+    /// `stop_server` —— **原版 arm64 `0x406c0c` / 88 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `0x406c0c..0x406c58`）：
+    ///
+    /// ```text
+    /// 0x406c1c  ldr  x8,[x19,#0x60]!     ; x19 += 0x60；x8 = server 槽判别字
+    /// 0x406c20  cmp  x8,#0x4
+    /// 0x406c24  b.eq 0x406c44            ; 已经是空的（4）⇒ 只写一次 4 就 ret
+    /// 0x406c2c  bl   0x482e74            ; GraphwarGameServer::stop(&self.server)
+    /// 0x406c34  ldr  x8,[x19]            ; **stop 之后重读**判别字（stop 可能自己把它写成 4）
+    /// 0x406c38  cmp  x8,#0x4
+    /// 0x406c3c  b.eq 0x406c44            ; 变成 4 了 ⇒ 不再 drop_in_place（避免二次析构）
+    /// 0x406c40  bl   0x4178dc            ; drop_in_place<GraphwarGameServer>(self+0x60)
+    /// 0x406c48  str  x8(=4),[x19]        ; 判别字写 4 = 空
+    /// ```
+    ///
+    /// ⇒ 语义：**有 server 才停；stop 之后按"新判别字"决定要不要 drop**（这条二次判据是本函数的
+    /// 不显然之处，`stop` 自己可能把槽清空 ⇒ 不允许重复 drop）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。"`stop` 会不会自己清空"本轮**没有**读 `0x482e74` 的体
+    /// ⇒ 双判据的**必要性**是观测，**怎么发生**的未知。
+    pub fn stop_server(&mut self) -> Vec<StopServerStep> {
+        let mut steps = Vec::new();
+        // 0x406c20：空槽直接返回（`0x406c48` 的写入是幂等的，这里不重复推步骤）
+        if self.server.is_none() {
+            self.server = None; // 幂等：相当于 0x406c48 写 4
+            return steps;
+        }
+        steps.push(StopServerStep::StopServer); // 0x406c2c
+        // 0x406c34：stop 之后**重读**判别字
+        if self.server.is_some() {
+            steps.push(StopServerStep::DropServer); // 0x406c40
+        }
+        self.server = None; // 0x406c48
         steps
     }
 
@@ -785,6 +831,27 @@ mod lifecycle_tests {
         b.replay_slot_tag = PLAYER_SLOT_EMPTY;
         assert!(b.stop_client().is_empty(), "0x406bb8 cbz + 0x406bd8 b.eq 两条都命中");
         assert_eq!(b.replay_slot_tag, PLAYER_SLOT_EMPTY);
+    }
+
+    /// `stop_server`：**stop 之后要重读判别字**（`0x406c34`）⇒ 二次判据。
+    #[test]
+    fn stop_server_stops_then_drops_only_if_still_present() {
+        // ① 空槽：一步都不做（0x406c24 b.eq 直接跳 0x406c44 写 4）
+        let mut b = GraphwarBackend::new();
+        assert!(b.stop_server().is_empty());
+        assert!(b.server.is_none());
+
+        // ② 有 server：stop → drop → 清空
+        let mut b = GraphwarBackend::new();
+        b.server = Some(ServerSlot { arg0: 7, arg1: 9, started: true });
+        assert_eq!(
+            b.stop_server(),
+            vec![StopServerStep::StopServer, StopServerStep::DropServer],
+            "0x406c2c → 0x406c40"
+        );
+        assert!(b.server.is_none(), "0x406c48 str w8(=4)");
+        // `stop` 自己把槽清空那条岔路（0x406c38 b.eq）我方建模不出来：
+        // 需要 `GraphwarGameServer::stop` 的函数体，本轮**未读** ⇒ 不写断言（plan L3）。
     }
 
 }
