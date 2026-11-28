@@ -793,8 +793,11 @@ pub struct LoadItemsReport {
 ///    （`update_buttons_background`）里有**两条** `call 0x4f8330`（`0x4f820f` / `0x4f8287`，
 ///    `FacesVbox` / `HatsVbox` 各一条）⇒ **这两个 per-vbox 助手的 x86 入口已定**
 ///    （`0x4f7bb0` 体 `0x49d`、`0x4f8330` 体 `0x438`）。
-///    **仍未定**的是"哪个 arm64 名字对哪个 x86 入口"（两者都遍历子节点 + 碰
-///    `Button::set_button_icon`，静态形状分不开）—— 不替人选（`AGENTS.md` §0.3）。
+///    **T113 解决**（2026-11-28）：「哪个 arm64 名字对哪个 x86 入口」已经钉住 ——
+///    x86 `0x4f8330` 与 arm64 `update_buttons_background_in_vbox` 引用**同一个**
+///    `"SkinBackgroundButton"` 串（x86 `.rodata 0x1c45d2`）⇒ 观测级配对；
+///    `0x4f7bb0` = `insert_button_in_vbox` 是**推断**（结构指纹 top-1 + 两侧都恰好
+///    **3 条**调用点）。详见 §9。
 /// 2. **`+0x10` / `+0x18` 那个两字宽句柄的确切类型**——只知道两半各自做非零检查、
 ///    并被当作 `get_node_by_name` 的查找起点。`Gd<T>` 在 gdext 里是 1 个字宽，
 ///    所以 2 个字宽**不是**单个 `Gd`；缺的证据：`Base<Node>` 之外还有一个字段
@@ -817,7 +820,8 @@ pub struct LoadItemsReport {
 ///    仍缺：条目名表里**每条**的长度立即数（[`VBOXES`] 的 `items` 是 `推断`）。
 pub fn unknowns() -> &'static [&'static str] {
     &[
-        "insert_button_in_vbox / update_buttons_background_in_vbox 的 x86 地址（只有歧义候选）",
+        // T113：x86 入口已配对上（0x4f8330 观测 / 0x4f7bb0 推断），不再算未知
+        "insert_button_in_vbox 的**分支布局**：3 条 add_child 各属哪条路径（类名/append 语义/>=3 判据都已证）",
         "+0x10/+0x18 两字宽句柄的确切类型",
         "三个 setter 为什么走间接调用（语义不受影响）",
         "0x9bb7c0（addend 0x8cac40）是什么",
@@ -1168,5 +1172,232 @@ mod tests {
         assert!(SKIN_ITEMS.contains(&"yellow"));
         assert!(FACE_ITEMS.contains(&"regular_eyes"));
         assert!(HAT_ITEMS.contains(&"soldier_helmet"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9. 两条 `*_in_vbox`（2026-11-28 T113）
+// ---------------------------------------------------------------------------
+//
+// 这两条是 T105/T109 挂在「分母外真缺」里的（`fixtures/denom_outside.tsv` 的
+// `0x44fa48` / `0x450020` 两行），T109 的登记是「缺节点模板 + 名字表」。
+// 本轮把**能证的部分**落地：
+//
+// * `update_buttons_background_in_vbox`（arm64 **`0x450020`** / 1180 B）**整条落码**：
+//   它的"名字表"只有**一个**名字（`SkinBackgroundButton`），图标是**入参**；
+// * `insert_button_in_vbox`（arm64 **`0x44fa48`** / 1012 B）**没有落函数体**，但把三件原本
+//   记成"缺"的事证死了：① 新建的节点类是 **`HBoxContainer`**（不是"未知"）；
+//   ② `Node::add_child_full` 的实参是 `(force_readable_name=false, internal=0)` ——
+//   **没有插入下标**（原版就是 append）；③ 命中判据是"某子节点的子节点数 **>= 3**"。
+//   仍缺的是**分支布局**（3 条 `add_child` 各属哪条路径）⇒ 按 §0.3 不编函数体。
+//
+// # 名字 → 图标映射：T109 记的"缺映射表"其实是**张冠李戴**
+//
+// `update_buttons_background_in_vbox` 体内**只有** `SkinBackgroundButton` 一个名字，
+// 图标由第 2 个参数传进来；"哪张图配哪个 vbox"在**调用方** `update_buttons_background`
+// （arm64 `0x44fe3c` / 484 B）里：
+//
+// ```text
+// 0x44fe64  bl GraphwarTextureLoader::get_skin_texture      ; 取当前皮肤贴图（Option）
+// 0x44fe90  check_rtti 标签 "clone"                          ; 取 clone 诊断名
+// 0x44fec8  bl GraphwarNodes::get_node_by_name("FacesVbox", 9)   ; 槽 0x19de28 / w3=9
+// 0x44fee0  bl RawGd::clone                                   ; 贴图句柄
+// 0x44fef4  bl update_buttons_background_in_vbox(FacesVbox, 皮肤贴图)
+// 0x44ff40  bl GraphwarNodes::get_node_by_name("HatsVbox", 8)    ; 槽 0x1790f8 / w3=8
+// 0x44ff6c  bl update_buttons_background_in_vbox(HatsVbox, **同一个**皮肤贴图)
+// ```
+//
+// ⇒ 映射 = **`FacesVbox` 与 `HatsVbox` 都用 `get_skin_texture` 的那张图**，落到各自子树里
+// 名为 `SkinBackgroundButton` 的节点上。（`SkinsVbox` 走的是 `load_items`，不在这一对里。）
+//
+// # x86 侧配对（T45 只定到"两个入口"，本轮定到"哪个对哪个"）
+//
+// * x86 **`0x4f8330`**（`0x438` B）引用了**同一个** `SkinBackgroundButton` 串
+//   （x86 `.rodata 0x1c45d2`）⇒ 它就是 `update_buttons_background_in_vbox` —— **观测**；
+// * x86 **`0x4f7bb0`**（`0x49d` B）= `insert_button_in_vbox`：**推断**，两条独立证据同向
+//   （`fixtures/hybrid_names.tsv` 的结构指纹 top-1，score 0.7647；且 T45 在 x86
+//   `load_items` 里数到 **3 条** `call 0x4f7bb0`，与 arm64 侧 `insert_button_in_vbox`
+//   的 **3 个** `bl` 调用点同数）。
+
+/// 被刷图标的节点名：**`"SkinBackgroundButton"`**（20 字节）。
+///
+/// 档位：**观测**。arm64 槽 **`0x19df3f`**（`0x450090 adrp 0x19d000` + `0x450094 add #0xf3f`，
+/// 长度在 `0x4501dc mov w3,#0x14` = 20）；x86 槽 **`0x1c45d2`**（`0x4f8549 lea rcx,...`）。
+/// 同池后面紧跟 `SkinBlock` / `PendingBlock` / `no_hat` / `soldier_helmet` / `mohawk` / `cowboy`
+/// —— 那些属于 `load_items` 等其他函数，**不在**本条函数体里。
+pub const SKIN_BACKGROUND_BUTTON: &str = "SkinBackgroundButton";
+
+/// `insert_button_in_vbox` 新建节点的类：**`HBoxContainer`**（一行按钮的容器）。
+///
+/// 档位：**观测**，证据链是三级的：
+/// 1. `0x44fb70 bl godot_core::classes::class_runtime::construct_engine_object::hda9be1bf82a23c18`；
+/// 2. 该单态化函数体里 `0x4b89b8 bl <HBoxContainer as GodotClass>::class_id`（符号名直接写着类）；
+/// 3. 之后 `0x7ef13c bl godot_ffi::classdb_construct_object` 用这个 `ClassId` 造对象。
+/// ⇒ 新建的是 **HBoxContainer**，不是 Button/TextureButton。
+pub const INSERT_ROW_CLASS: &str = "HBoxContainer";
+
+/// `insert_button_in_vbox` 里"这一行还能再放一个"的判据：现有子节点数 **< 3**。
+///
+/// 档位：**观测**（`0x44fb20 bl AnyArray::len` + `0x44fb24 cmp x0,#3` + `0x44fb28 b.lo 0x44fc34`）。
+///
+/// 语义（**推断**，缺分支布局审计）：`b.lo` 之后是"往这一行里再塞一个"的路径，
+/// `>= 3` 落到"新建一行"。这条推断与 [`INSERT_ROW_CLASS`] = HBoxContainer 自洽，
+/// 但没有逐条走完 3 条 `add_child` 的归属。
+pub const INSERT_ROW_CAPACITY: usize = 3;
+
+/// `insert_button_in_vbox` 里 3 条 `Node::add_child_full` 的调用点。
+///
+/// 档位：**观测**（`0x44fbf4` / `0x44fcd0` / `0x44fd48`，都带 `mov w2,wzr` + `mov w3,wzr`）。
+///
+/// ⇒ `add_child(node, force_readable_name=false, internal=0)` = **追加到末尾**，
+/// **不存在"插入下标"这个东西**（T109 记的"插在哪个下标"是前提错误）。
+pub const INSERT_ADD_CHILD_SITES: [u64; 3] = [0x44_fbf4, 0x44_fcd0, 0x44_fd48];
+
+/// `add_child` 的两个附加实参：`force_readable_name` / `internal`，两侧都是 0。
+///
+/// 档位：**观测**（3 个调用点前的 `mov w2,wzr` / `mov w3,wzr`）。
+pub const INSERT_ADD_CHILD_FLAGS: (bool, u8) = (false, 0);
+
+/// `update_buttons_background_in_vbox` 需要的宿主能力（引擎侧一律走 trait）。
+pub trait ButtonIconSink {
+    /// 节点句柄（原版是 `Gd<Node>` / `Gd<Button>` / `Gd<Texture2D>`）。
+    type Node: Copy;
+    /// 贴图句柄（原版是 `Gd<Texture2D>`）。
+    type Texture: Copy;
+
+    /// `Node::get_children_full()`（`0x450068` / `0x450104` / `0x450130`）。
+    fn children(&mut self, node: Self::Node) -> Vec<Self::Node>;
+
+    /// `GraphwarNodes::get_node_by_name_rec(node, name)`（`0x4501e0`）。
+    fn node_by_name_rec(&mut self, node: Self::Node, name: &str) -> Option<Self::Node>;
+
+    /// `Button::set_button_icon(icon)`（`0x450124`）。
+    fn set_button_icon(&mut self, button: Self::Node, icon: Self::Texture);
+}
+
+/// `GraphwarPlayerScreenControl::update_buttons_background_in_vbox`
+/// （arm64 **`0x450020`** / **1180** B；x86 **`0x4f8330`** / `0x438` B）：
+/// 把一个图标刷到 `parent` 子树里所有 `SkinBackgroundButton` 上。
+///
+/// 逐条指令：
+///
+/// ```text
+/// 0x450040  stp x0, x1, [sp, #0x10]              ; arg1 = 父节点（Gd，两字宽）
+/// 0x450044  stp x2, x3, [sp, #0x20]              ; arg2 = 贴图（Gd）
+/// 0x450054  mov w2, #0xa  "upcast_ref"
+/// 0x450068  bl Node::get_children_full(parent)   ; 外层 AnyArray
+/// 0x45009c  bl AnyArray::len
+/// 0x4500a4  cmp  x8, x0 ; b.hs → 0x450290        ; 外层循环
+/// 0x450104  bl Node::get_children_full(child)    ; 内层 AnyArray（孙节点）
+/// 0x450130  bl AnyArray::len（内层）
+/// 0x4501dc  mov  w3, #0x14                       ; 名字长度 20
+/// 0x4501e0  bl GraphwarNodes::get_node_by_name_rec(grandchild, "SkinBackgroundButton")
+/// 0x4501ec  cmp  x8, #1 ; b.ne → 下一个孙节点     ; 仅在命中时往下走
+/// 0x450124  bl Button::set_button_icon(命中节点, arg2)
+/// ```
+///
+/// 档位：**观测**（上面每条都指到指令；x86 同函数引用同一个 `SkinBackgroundButton` 串）。
+/// 返回值：本层返回"刷了几个"，方便断言；原版无返回值。
+pub fn update_buttons_background_in_vbox<S>(
+    sink: &mut S,
+    parent: S::Node,
+    icon: S::Texture,
+) -> usize
+where
+    S: ButtonIconSink + ?Sized,
+{
+    // 0x450068：外层 = parent 的子节点
+    let children = sink.children(parent);
+    let mut painted = 0;
+    for child in children {
+        // 0x450104：内层 = 每个子节点的子节点（孙节点）
+        for grandchild in sink.children(child) {
+            // 0x4501e0：按名字递归找 SkinBackgroundButton
+            if let Some(button) = sink.node_by_name_rec(grandchild, SKIN_BACKGROUND_BUTTON) {
+                // 0x450124
+                sink.set_button_icon(button, icon);
+                painted += 1;
+            }
+        }
+    }
+    painted
+}
+
+#[cfg(test)]
+mod vbox_tests {
+    use super::*;
+
+    /// 节点 = (名字, 子节点下标)；贴图 = u32。
+    struct FakeTree {
+        nodes: Vec<(&'static str, Vec<usize>)>,
+        icon: u32,
+        painted: Vec<(usize, u32)>,
+    }
+
+    impl ButtonIconSink for FakeTree {
+        type Node = usize;
+        type Texture = u32;
+
+        fn children(&mut self, node: usize) -> Vec<usize> {
+            self.nodes[node].1.clone()
+        }
+
+        fn node_by_name_rec(&mut self, node: usize, name: &str) -> Option<usize> {
+            // 只在本节点自己身上找（够测本层的调用规约）
+            if self.nodes[node].0 == name {
+                Some(node)
+            } else {
+                None
+            }
+        }
+
+        fn set_button_icon(&mut self, button: usize, icon: u32) {
+            self.painted.push((button, icon));
+        }
+    }
+
+    /// 只刷"孙节点里叫 SkinBackgroundButton"的那几个；父 → 行 → 按钮 三层。
+    #[test]
+    fn paints_only_the_named_grandchildren() {
+        // 0 = parent, 1..=2 = 两行, 3..=4 = 行1 的两个按钮, 5 = 行2 的按钮
+        let mut tree = FakeTree {
+            nodes: vec![
+                ("vbox", vec![1, 2]),
+                ("row1", vec![3, 4]),
+                ("row2", vec![5]),
+                (SKIN_BACKGROUND_BUTTON, vec![]),
+                ("SkinBlock", vec![]),
+                ("SkinBackgroundButton2", vec![]),
+            ],
+            icon: 7,
+            painted: vec![],
+        };
+        let n = update_buttons_background_in_vbox(&mut tree, 0, 7);
+        assert_eq!(n, 1);
+        assert_eq!(tree.painted, vec![(3, 7)]);
+    }
+
+    /// 名字、容量、类名与 `.rodata`/立即数读出来的一致。
+    #[test]
+    fn constants_are_the_binary_ones() {
+        assert_eq!(SKIN_BACKGROUND_BUTTON, "SkinBackgroundButton");
+        assert_eq!(SKIN_BACKGROUND_BUTTON.len(), 20); // 0x4501dc mov w3,#0x14
+        assert_eq!(INSERT_ROW_CLASS, "HBoxContainer");
+        assert_eq!(INSERT_ROW_CAPACITY, 3); // 0x44fb24 cmp x0,#3
+        assert_eq!(INSERT_ADD_CHILD_SITES.len(), 3); // 3 条 bl add_child_full
+        assert_eq!(INSERT_ADD_CHILD_FLAGS, (false, 0)); // mov w2,wzr / mov w3,wzr
+        for w in INSERT_ADD_CHILD_SITES.windows(2) {
+            assert!(w[0] < w[1], "调用点必须按地址升序");
+        }
+    }
+
+    /// 调用方 `update_buttons_background` 的两个 vbox 名与长度（9 / 8）。
+    #[test]
+    fn caller_vbox_names_and_lengths() {
+        let names = [("FacesVbox", 9usize, 0x19_de28u64), ("HatsVbox", 8, 0x17_90f8)];
+        for (n, len, slot) in names {
+            assert_eq!(n.len(), len, "{} 的长度必须等于 mov w3 的立即数", n);
+            assert!(slot != 0);
+        }
     }
 }
