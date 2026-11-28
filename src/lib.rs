@@ -124,6 +124,10 @@ pub mod events;
 /// 原版 `graphwar_event_handler.rs`：事件名 → **判别值**的分派层
 /// （`0x3d3630` `process_events` / `0x3d38f0` `subscribe_to_event` 的 `panic::Location`
 /// 就落在这个文件上 —— `fixtures/boundary_audit.tsv`；2026-11-26 T30 从 `events.rs` 切出）。
+/// 事件类型与线格式（`graphwar_event.rs`，原版模块）。T107 落 `make_new_connection_request_event`
+/// 与 `serialize`/`deserialize` 的固有方法；13 条 `<impl Serialize/Deserialize>` 是 `#[derive]` 展开体
+/// ⇒ 按 `na:other/serde-derive` 记账（`docs/06` §155）。
+pub mod graphwar_event;
 pub mod graphwar_event_handler;
 /// 原版 `graphwar_remote_event_handler.rs`：远端事件处理器
 /// （`0x3dee00` `handle_client_remote_event` / `0x3e5910` `is_leader` 的 `panic::Location`

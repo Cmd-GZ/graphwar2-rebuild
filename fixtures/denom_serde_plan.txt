@@ -1,0 +1,250 @@
+# denom_serde_plan.txt —— T107 预注册：分母外 15/16 条 serde 类行的裁决判据
+#
+# 任务：T107（任务板 task-99）
+# 工作树：.agent-work/cg/wt-t107    分支：agent/denom-modemisc（任务书写作 agent/denom-serde）
+# 前置：T105 = docs/06 §152 + fixtures/denom_outside.tsv（1244 行全量台账）
+# 本文件**先提交、后判决**（判据与输出格式写死在跑之前）；跑完只允许在 §8 追加勘误，
+# §1–§7 一字不改（T98/T105 同款纪律）。
+#
+# ============================================================================
+# §0 范围：哪 16 条机器码 / 14 个源码函数组
+# ============================================================================
+# 台账 `fixtures/denom_outside.tsv` 里 `real-missing/denom:no-loc` 且有 serde 实现/serde 包装
+# 形态的行，**全部** 16 条（按地址升序）。按台账的源码组合并规则
+# （(module, owner, method) 抹泛型实参 / 抹 h<hash>）⇒ **14 个源码函数组**：
+#
+#   组 | 机器码 | android vaddr | st_size | 台账里的 source_fn_group
+#  ----+--------+---------------+---------+---------------------------------------
+#    G1 |  1 条  | 0x4691a4      |   540   | graphwar_event::GraphwarEvent::deserialize
+#    G2 |  1 条  | 0x4693c0      |   188   | graphwar_event::GraphwarEvent::make_new_connection_request_event
+#    G3 |  1 条  | 0x46947c      |   304   | graphwar_event::GraphwarEvent::serialize
+#    G4 |  1 条  | 0x4695ac      |  1704   | graphwar_event::_::serialize
+#    G5 |  1 条  | 0x469c54      |  5564   | graphwar_event::_::deserialize
+#    G6 |  1 条  | 0x40b834      |   748   | graphwar_effect_manager::_::deserialize
+#    G7 |  1 条  | 0x46b210      |  1264   | graphwar_game_info::_::serialize
+#    G8 |  3 条  | 0x4981c8      |   724   | graphwar_mode_manager::_::deserialize   (FunctionMode)
+#       |        | 0x498574      |   748   |  同上                                    (AxisMode)
+#       |        | 0x498860      |   764   |  同上                                    (TimeMode)
+#    G9 |  1 条  | 0x49849c      |   216   | graphwar_mode_manager::_::serialize
+#   G10 |  1 条  | 0x4999a0      |   724   | graphwar_team_manager::_::deserialize
+#   G11 |  1 条  | 0x49be14      |   724   | graphwar_turn_manager::_::deserialize
+#   G12 |  1 条  | 0x49c0e8      |   348   | graphwar_color_manager::_::serialize
+#   G13 |  1 条  | 0x4a52f4      |   244   | graphwar_game_state_manager::_::serialize
+#   G14 |  1 条  | 0x4a53e8      |   796   | graphwar_game_state_manager::_::deserialize
+#
+# 任务书写的是「15 条」；**逐条数下来是 16 条机器码 / 14 个源码组**（任务书表里
+# `game_state_manager::_::serialize` 与 `::deserialize` 被合成一行 1 条，实际是 2 条机器码）。
+# 本文件按 **16 条机器码**做，报告里两个数都给（16 条 / 14 组）。
+#
+# 只裁决这 16 条。台账里 `graphwar_event` 还有 2 条别的行（0x46b9f8 `unknown/volume-gate`、
+# 以及 §ALIAS 类同址别名）**不在本轮范围内**，只当对照引用。
+#
+# ============================================================================
+# §1 判据：怎么区分「原版手写的 impl」与「serde derive 的展开产物」
+# ============================================================================
+# 背景：`_::serialize` / `_::deserialize` 这种名字是 **trait impl 的匿名模块段**（`_` = impl 块
+# 的占位段），**手写 `impl Serialize for X` 与 `#[derive(Serialize)]` 产生的符号名逐字相同**
+# ⇒ 光看名字（T105 §152.2 判据 1 用的就是名字 + 体积闸）**分不开**。必须换判据。
+#
+# 下面 P1–P5 是**全部**判据。判决规则写在 §1.6。
+#
+# ---- P1 名字形态：固有方法 vs trait impl（决定性之一）------------------------
+#   `graphwarrust::<module>::<Type>::<method>`            = **固有方法**（inherent impl）
+#   `graphwarrust::<module>::_::_<impl serde::.. for <Type>>::<method>` = **trait impl**
+#
+#   依据（语言事实，不是观察）：**`#[derive(X)]` 只生成 `impl X for T` 这一个 trait 实现，
+#   永远不生成固有方法**。反过来，固有方法是人手写的（derive 没有任何机制生成它）。
+#   ⇒ **固有方法 ⇒ 手写**（P1 单向可判，无例外）。
+#   ⇒ trait impl ⇒ **候选** derive，但**不能只凭名字定案**（手写 trait impl 也长这样）。
+#
+# ---- P2 家族闭包：derive(Deserialize) 的私有辅助类型（决定性之二）----------
+#   `#[derive(Deserialize)]` 除 `impl Deserialize for T` 外**必然**再生成三个私有类型及其
+#   `Visitor` 实现，名字由 serde_derive **硬编码**、人手写不会用：
+#       …<impl Deserialize for T>::deserialize::__Visitor
+#       …<impl Deserialize for T>::deserialize::__Field
+#       …<impl Deserialize for T>::deserialize::__FieldVisitor
+#   以及它们的 `expecting` / `visit_str` / `visit_map` 方法。
+#   判据：在 `.symtab` 里按 **(module, Type)** 查上面三个名字（任一命中即算）。
+#       命中 ⇒ derive（**观测档**：这套私有命名只由 serde_derive 发出）
+#       全无 ⇒ 不是 derive（⇒ 手写 trait impl，或 unknown）
+#   注意：**P2 必须与 P1 联合使用**。同一 (module, Type) 上可以同时存在
+#   「手写的固有方法」和「derive 的 trait impl」（`graphwar_event` 就是，见 §3-C3）
+#   ⇒ 家族存在**不能**用来判固有方法那一侧。
+#
+# ---- P3 调用配位：手写包装 `bl` 到 trait impl（决定性之三，只对固有方法用）----
+#   若固有方法 `<Type>::<method>` 体内 `bl` 的**唯一** crate 自有目标就是
+#   `_<impl serde::.. for <Type>>::<method>`（且没别的手写 trait impl 可供它调），
+#   则「固有 = 手写包装 / trait impl = derive 本体」这一对成立（T98 §147.3.2② 的形态）。
+#
+# ---- P4 体内模板：只有 serde 的调用，没有一条游戏逻辑调用 ------------------
+#   对候选体逐条 `bl` 分类，目标名首段属于
+#       {serde, serde_json, core, std, alloc, chrono, hashbrown, memchr, itoa, ryu,
+#        gimli, addr2line, __rustc, _Unwind, _R…(v0 mangling)}
+#   记 `external`；**其余记 `own`**（= crate 自己的业务函数）。
+#   判据：`own = 0` 且 `bl` 总数 ≥ 3 ⇒ 模板体，符合 derive 展开形态。
+#       任何一个 `own` 目标 ⇒ **不是**纯 derive 模板（判 unknown 或 手写）。
+#   ⚠️ 单看 P4 **不能**判 derive：纯构造函数（只有 `__rust_alloc`）也是 own=0 ——
+#      见 §3-C3 自我证伪点。
+#
+# ---- P5 体积：**明确不作判据** ---------------------------------------------
+#   `VOL_CAP = 0x800` 在这个语族里**不适用**：derive 展开体随字段/变体数线性长大，
+#   0x800 以上的 derive 体完全正常（本轮 16 条里 5 条 > 0x800，最大 5564 B）。
+#   T105 让 `business` 绕过体积闸是**对的做法**；本轮**不**改体积闸，也不拿体积判 derive。
+#   ⇒ 体积只入表，不进判决（与 T105 §152.2 判据 2 的「只入表不进判决」同款处理）。
+#
+# ---- P6 不采信的三条（写清为什么不用，防止事后挑判据）----------------------
+#   ① **"impl 头是不是 Visitor/Expected"**（T105 §152.2 判据 1 的 macro-derive 规则）：
+#      它是**按名字**判宏产物的规则，只覆盖 Visitor/Expected 那一族；
+#      `<X as serde::Serialize>::serialize` 的 impl 头天然不是 Visitor
+#      ——这条规则**结构上不可能**判出 derive 的 Serialize/Deserialize impl。
+#      （T105 §152 的 C4c 拿它当负对照，方向反了：它放行的是 derive 本体，不是手写体。见 §8-E1）
+#   ② **"有没有 `panic::Location`"**：T105 已证这 16 条全是 `gameLOC=0`，对区分无信息量。
+#   ③ **"名字里有没有 `_::<impl`"**：手写与 derive 都长这样（见 §1 开头），无信息量。
+#
+# ---- §1.6 判决规则（先定死，跑完不许改）------------------------------------
+#   if P1 = 固有方法:
+#        手写 ⇒ verdict = real-missing（真缺，本任务落码）
+#        附加 P3 检查：若 P3 命中，记 "手写包装 + derive 本体"（不改变 verdict）
+#   elif P1 = trait impl:
+#        if P2 命中 and P4 own=0  ⇒ verdict = na:other/serde-derive（**改判**）
+#        elif P2 缺失          ⇒ verdict = unknown（手写 trait impl 与 derive 分不开）
+#        else (P2 命中但 own>0) ⇒ verdict = unknown（derive 家族里有手写逻辑 ⇒ 人工读）
+#   else（名字解析不出固有/trait impl）⇒ unknown
+#
+# ============================================================================
+# §2 诚实声明：本判据**不是盲测**
+# ============================================================================
+# 写 §1 之前，我已经用 `tools/arm64_sym.py at` 看过这 16 条地址的符号名，也反汇编过其中几条
+# （要知道"判据该长什么样"必须先看一眼数据长什么样）。所以 §1 是**事后构造**的判据，
+# 不是"先写判据再看数据"。这一点必须写在明面上，否则就是假预注册。
+#
+# 事后构造的判据要能站住，只能靠**能被数据证伪的对照**。§3 的五组对照就是干这个的：
+# 其中 C3（自我证伪点）与 C5（去掉某条判据重跑）**允许推翻 §1**。若它们不过，
+# 本轮全部结论降级为 unknown，一个都不改判。
+#
+# ============================================================================
+# §3 对照：先做、必须全过（结果在 §8 之前就写进 fixtures/denom_serde_evidence.tsv 头）
+# ============================================================================
+#  C1  正对照（手写侧）：G1/G2/G3 三条**固有方法**必须被判 `手写`。
+#      C1b：G3（0x46947c）体内必须 `bl` 到 G4（0x4695ac），即 P3 命中。
+#  C2  同族一致性（用 T105 自己的台账当独立裁判）：
+#      13 条 trait impl 的 `__FieldVisitor`/`__Visitor` 兄弟符号，在
+#      `fixtures/denom_outside.tsv` 里**已经是** `na:other/macro-derive`
+#      （或 `unknown/volume-gate` + form=macro-derive）。要求 **13/13 全部命中**。
+#      ——这条最有力：说明 T105 的工具**已经把同一族的辅助函数判成宏产物**，
+#      只有父 impl 被名字规则放行成 business ⇒ 是**口径内部矛盾**，不是新观点。
+#  C3  自我证伪点（判据不许只靠 P2/P4）：G2（`make_new_connection_request_event`）
+#      是**固有方法**，但它 ① 同 (module,Type) 也有 `__Visitor` 家族（P2 命中）
+#      ② 体内 own=0（P4 命中）。⇒ 若判据写成 `P2 or P4 ⇒ derive`，G2 会被误判。
+#      只有 P1 参与才不会。**这条必须报"误判会发生几次"**（预期 3 条：G1/G2/G3）。
+#  C4  全量无遗漏：`.text` 里名字匹配 `<impl serde::ser::Serialize for …>` 或
+#      `<impl serde::de::Deserialize for …>` 的地址，去重后必须**恰好 13 条**，
+#      且与本轮 13 条 trait impl **逐条相同**（⇒ 全二进制不存在第 14 条
+#      serde trait impl，也就不存在"被漏掉的手写 impl"）。
+#  C5  反面对照（判据的必要性）：
+#      C5a 去掉 P1 重跑 §1.6 ⇒ 预期把 G1/G2/G3 误判成 derive（**必须 > 0 才算 P1 必要**）；
+#      C5b 去掉 P2 重跑 ⇒ 13 条里判 unknown 的条数必须 > 0（**必须 > 0 才算 P2 有效**）。
+#  C6  （附加）`__FieldVisitor::visit_str` 的字段名串 vs 反汇编里 `serialize_struct`
+#      立即数：不要求全对上，只作补充证据。
+#
+# ============================================================================
+# §4 输出（格式先定死）
+# ============================================================================
+# ① `fixtures/denom_serde_evidence.tsv`（**逐条**，16 行 + 头）：
+#    列 = android_addr | st_size | module | owner_type | method | kind(inherent|trait-impl)
+#       | trait | P2_family(hit/miss + 兄弟符号地址) | n_bl | n_bl_own | bl_own_list
+#       | rodata_immediates | verdict | criterion | note
+# ② `fixtures/denom_outside.tsv` 的**改判留痕**（见 §5）
+# ③ `src/graphwar_event.rs`（新建）+ 测试：真缺的那几条落码
+# ④ `docs/06` 追加 **§153**（先跑 `tools/docsec.py check docs/06-verification.md` 取下一个空号）
+#
+# ============================================================================
+# §5 台账（`fixtures/denom_outside.tsv`）的改判规则
+# ============================================================================
+# 这份台账是 T105 的**生成物**（`tools/global_triage.py --denom-outside` 写，头部写 "do not edit"）。
+# 本任务经 **lead 授权**改它，规则：
+#   a) 11 个改判行的 `verdict` 列 `real-missing/denom:no-loc` → `na:other/serde-derive`；
+#      `subclass` 列 `denom:no-loc` → `serde-derive`；`evidence`/`note` 里写依据（指向本文件 §1 + 证据 tsv）；
+#   b) 文件尾追加 `# §MANUAL-T107 改判留痕` 块：**行号 | android_addr | 原值 | 新值 | 依据**，逐行；
+#   c) 头部计数块（`real-missing/denom:no-loc 57`、`na:other 491`、`X = 143 组` 等）
+#      按改判后重算并**注明"本轮人工改判，非工具重算"**；
+#   d) 明确登记一条**工具缺陷**：`global_triage.py --denom-outside` 没有 MANUAL 层
+#      （对比 T93 的 `T93_MANUAL_NA`），**重跑会把这 11 行冲回 real-missing**
+#      ⇒ 下一位要么给工具加 MANUAL 表，要么以本文件的 §MANUAL-T107 块为准。
+#   e) 单独一个 commit，message 写明"经 lead 授权、逐行留痕"。
+#
+# ============================================================================
+# §6 本任务**不做**的事（防止越界）
+# ============================================================================
+#  * **不引入任何新依赖**（serde / serde_json / chrono）。本 crate 现在
+#    `cargo tree` 只有自己一行（`Cargo.toml` 的 `godot` 是可选的、默认关闭）；
+#    加依赖要改 Cargo.toml/lock + 离线 registry，**不是本任务能定的**。
+#  * **不改 `src/lib.rs`**（AGENTS.md「合并纪律」列的禁区）。新建的
+#    `src/graphwar_event.rs` 因此**暂不进 crate 编译**，只通过 `tests/` 的 `#[path]`
+#    包含编译 + 跑单测（先例：`tests/graphwar_computer_player_manager.rs`）；
+#    要真正进 crate 需要 lib.rs 加一行 `pub mod graphwar_event;` —— **登记为遗留、交 lead 决定**。
+#  * **不改 `tools/`**（`global_triage.py` 的 MANUAL 层、`coverage_matrix.py` 的 ours 映射
+#    都登记为遗留）。
+#  * **不动**别的模块的文件、`client/**`、门槛/护栏、既有断言。
+#
+# ============================================================================
+# §7 复跑命令（$WT = 本工作树；$AND = Android 未 strip 版）
+# ============================================================================
+#   export GW2_ARM64_SO=$WT/.reference/steam/android-2.0.60/libgraphwarrust.so
+#   $PY tools/arm64_sym.py at 0x4695ac            # 符号名（固有 / trait impl）
+#   llvm-objdump -d --arch-name=aarch64 --start-address=0x4695ac \
+#        --stop-address=0x469c54 $AND              # 体内 bl 目标
+#   逐条证据 = fixtures/denom_serde_evidence.tsv（生成脚本的等价命令写在 docs/06 §153.8）
+#
+# ============================================================================
+# §8 勘误（跑完再追加；§1–§7 不动）
+# ============================================================================
+# 跑完之后追加（§1–§7 一字未改）。每条都是"我写错了 / 我没想到"，不是给判据打补丁。
+#
+# ---- E1（判据**实现**层细化，P4 的语义没变）-----------------------------------
+# P4 写的是"体内没有一条**游戏逻辑**调用"。实现上第一版把 `graphwarrust::…` 开头的一律算 own，
+# 于是把 crate 内**另一个 serde impl**（`GraphwarGameState::serialize` 被 `GameInfo::serialize` 调用，
+# 0x4a52f4）和运行时函数 `_Unwind_Resume`（0x840bf4）也算了进去 ⇒ 10 条误判 unknown。
+# 细化：own_game = crate 自有 **且不是 `_<impl serde::…>`**（serde impl 是 derive 族内部调用）；
+# `_Unwind*` / `__rust_alloc|dealloc` 归 external（运行时，不是游戏逻辑）。
+# **这次细化在跑出结果之前就写进生成器**（`fixtures/denom_serde_collect.py` 的 own_game），
+# 并保留原口径列 `n_bl_crate_own` 供复核 —— 两列都在 TSV 里，谁都能看出来改了哪一档。
+# 结果：16 条 own_game 全 = 0 ⇒ **P4 在这批样本上没有区分力**（如实写在 §8-E2 / docs §153）。
+#
+# ---- E2（预注册的对照设计错了：C5b 是 vacuous）------------------------------
+# §3 的 C5b 要求"去掉 P2 重跑 ⇒ 13 条里判 unknown 的 > 0"，我当时的假设是会有"家族缺失"的行。
+# 实测 **13/13 全部命中家族** ⇒ C5b 恒 = 0，**它证明不了 P2 有效**。按 §2 的纪律这条只能
+# 如实记为"对照失败"，不许拿结果去改判据。补两组**同样目的**的替代对照（结果进 TSV 头）：
+#   C5b′-①  已知**手写**的 trait impl：`<impl core::fmt::Debug for bytes::…>` 2 条
+#           ⇒ `__Visitor`/`__FieldVisitor` 家族**命中 0/2**（期望 0）
+#   C5b′-②  `.symtab` 里 20 个**没有 serde 实现**的 crate 类型
+#           ⇒ 家族**命中 0/20**（期望 0，即 20/20 miss）
+# ⇒ P2 的**特异性**（不乱开火）成立；**区分力**在本题样本里不存在，如实写。
+# 承重的判据是 **P1**：C5a（去掉 P1 重跑）把 **16/16** 全判成 derive，而正确答案是 3 手写。
+# 也就是说：本轮的裁决**只靠 P1 一条就能站住**，P2/P3/P4 是**加强/互不矛盾**，不是必要条件。
+# 这是本判据的真实强度，不拔高。
+#
+# ---- E3（任务书的条数：15 vs 16）-------------------------------------------
+# 任务表把 `game_state_manager::_::serialize` 与 `::deserialize` 写在同一行（记 1 条），
+# 实际是 **2 条机器码**。逐台账数 = **16 条机器码 / 14 个源码组**。本轮按 16 条做。
+#
+# ---- E4（T105 §152.2 判据 1 的边界用错了对象 —— 这是本轮最要紧的发现）------
+# T105 写着「⚠️ `<X as serde::Serialize>::serialize` **不算** macro-derive（impl 头不是
+# Visitor/Expected）——T98 已证 graphwar_event 的手写 serialize/deserialize 是真源码函数」。
+# 这句话把 T98 的结论**套错了对象**：T98 证的是**固有方法** `GraphwarEvent::serialize`
+# (`0x46947c`) / `::deserialize` (`0x4691a4`)；而 `<X as serde::Serialize>::serialize`
+# 是**另一个地址**（`0x4695ac`）——那是 derive 本体，T98 §147.3.2② 的原话就是
+# "`serialize` 体内 `bl 0x4695ac`（= 直接调 derive 的 `<impl Serialize>::serialize`）"。
+# T105 的 C4c 把 5 条机器码全判 business，其中 3 条（固有）**判对了**，
+# 另 2 条（derive 本体）被同一个"名字规则"顺手放行 ⇒ 后续 11 条同病。
+# ⇒ 不是 T105 数错，是**按名字分类的天花板**：那条规则结构上不可能判出 Serialize/Deserialize
+#   的 derive。本轮把天花板往下压：13 条改判 `na:other/serde-derive`。
+#
+# ---- E5（本轮新增的事实，T98/T105 都没有的）--------------------------------
+# ① `deserialize` 两个失败臂的**行号归属**：`:1149` = serde_json 失败、`:1154` = UTF-8 失败
+#    （`0x4692f0`→`.rodata 0x18cc2c`；`0x469220`→`0x17c634`）；输出走 **stdout**
+#    (`std::io::stdio::_print`)，不是 stderr。
+# ② `GraphwarEvent` 的 **INVALID 哨兵 = 0x8000_0000_0000_004a**（`0x4a` = 74 = 变体数，越界一格）。
+# ③ `GraphwarEvent` 的**机器宽度 = 72 字节**（`0x469334..0x469350` 逐字拷 `0x48`）。
+# ④ `serialize` 体内 `Vec::with_capacity(128)`（`0x469498 mov w0,#0x80`）= `serde_json::to_vec`
+#    的字面量 ⇒ "固有 `serialize` 就是 `serde_json::to_vec(self)`" 的判据之一（**观测**）。
