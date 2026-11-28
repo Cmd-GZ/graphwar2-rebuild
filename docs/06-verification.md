@@ -27219,3 +27219,266 @@ PY
 **逐行改判台账的 7 类计数**（`fixtures/global_triage_refresh_diff.tsv`，共 **190 行**）：
 `manual-t93` **49** / `ledger-lost` **34** / `ledger-gain` **15** / `sub-refresh` **28** / `t82-label` **5** / `cascade` **19** / `name-refresh` **40**。
 （`name` 列另有 18 行的名字也变了，但它们同时改了类/子类，按"主因"归到上面 6 类里，不重复计数；全表 58 行名字变化可用 `old_name` 列逐行比。）
+
+## 144. T99 客户端**流程/时序**层迁回 Rust：三份仿制品 **76 段**逐段过账（move 4 / partial 13 / keep 59），搬了 3 处（联机 `TickRequest` 节奏 / 联机倒计时 / 握手那批的名单与版本串）+ 顺手挖出 **6 条我方与真值不符**（2026-11-28，任务 T99 / `task-92` / 分支 `agent/client-flow`）
+
+> 台账：[`fixtures/client_flow_ledger.tsv`](../fixtures/client_flow_ledger.tsv)（**76 行**，commit `a257eb4`，**先单独提交、后动手**）。
+> 口径沿用 T58/§105 与 T67/§118：**只有「Rust 侧已有复原实现且能指到地址」的才搬**。
+> 地址一律 **ELF vaddr**（Ghidra/REA 地址 = 本表 + 0x100000）。本节读数都能用 §144.7 的命令复跑。
+> 三份文件按**实测**行数记账（任务书里的 3502 / 984 / 881 是更早的读数）：`play_screen.gd` **3595** /
+> `app.gd` **984** / `session.gd` **886**。
+
+### 144.0 一页结论
+
+| # | 交付 | 结果 |
+|---|---|---|
+| ① | 台账 | `fixtures/client_flow_ledger.tsv`：**76 段**（play_screen 44 / app 16 / session 16）= **move 4 / partial 13 / keep 59**。move 落在 **3 处代码改动**上（S06 与 S13 是同一个新出口） |
+| ② | 搬了什么 | ① **P15** 联机 `TickRequest` 节奏 → `GraphwarTickHandler::tick`（**0x519840**）+ `handle_connected_to_server_event`（**0x519630**）；② **P39** 联机倒计时 → `TurnClock`（`graphwar_play_screen_control`）；③ **S06+S13** 7 条状态同步的名单/顺序（`on_new_connection`，逐字节）+ `NewConnectionRequest` 版本串（`0x4693c0` 的立即数） |
+| ③ | `.gd` 行数 | `play_screen.gd` **3595 → 3597**（P15 +7、P39 −9、注释更正 +4）；`session.gd` **886 → 895**（+9，换掉两份手抄真值） |
+| ④ | 顺手挖出的语义错 | **6 条**（§144.3）：P15 节奏判据不同相、P39 联机倒计时是与 `TurnClock` 平行的**第二份时钟**且 `_turn_clock` 在联机分支**从没被配过**、S13 同一批真值散在**三处**、P25 我方按 alive 过滤而真值不按、P38 `is_on_turn` 被我方当成"我能开火"、P41 一条**从 T88 起就不成立**的注释。①②③ 本轮改掉，④⑤⑥ 登记 |
+| ⑤ | 门槛 | cargo **1620/0/1ignored**、gdext **1769/0/1ignored**、selftest **757/0/1skip（missing=0 degraded=0 silent=0）**、headless 14 脚本 **1979/0**、三轴 **fire 647 / batch 647 / batch_conv 637**、`coverage_matrix --check` OK、`check_doc_refs` rc=0、`docsec check` 无重复/空心节 |
+| ⑥ | 像素 | 见 §144.5（menu / replay_lobby / player_skins **0 px**、replay 两屏 **856 px**、`match_ready` 在 [0.070,0.100] % 带内、`match_play` ≤0.450 %） |
+
+**这一轮的判据没动过一次**：`fixtures/frame_diff_thresholds.txt` 与 `fixtures/frame_capture_freeze_plan.txt`
+**一个字节都没改**（§144.7 有 `git diff --exit-code` 自证）。
+
+### 144.1 为什么"剩的最大一块是流程/时序"、又为什么 `keep` 占 59/76
+
+`AGENTS.md` §0.4 点名的四项 —— **回合推进、准备态、弹道生命周期、胜负时机** —— 在 T31/T42/T58/T67
+四轮之后，**判据本体**已经几乎全部在 Rust 里了：
+
+| 判据 | Rust 落点 | 档位 |
+|---|---|---|
+| 对局状态机（8 态 + 迁移表） | `turnstate::next_state` / `GameState` | 逐位（变体表 `.data.rel.ro 0x9586d0`、写点 `0x4780cc`） |
+| 射手轮转 | `graphwar_turn_manager::PlayerTurns::next_shooter`（**0x463da0**，`0x463f40`–`0x463fca`） | 逐位 |
+| 胜负判定（按关卡类型） | `graphwar_play_screen_control::LevelRules::evaluate` + `0x473520` get_alive_teams | 逐位 |
+| 弹道生命周期（何时落哪条命中） | `graphwar_game_state_manager::ShotLifecycle` | 观测（`docs/65` §1 的点序号语义） |
+| 命中/结算 | `graphwar_shot_calculator::settle::resolve_points_owned` | 逐位（`docs/120` 等价性测试） |
+| 回合时钟（超时三合取项） | `TurnClock::decide`（`0x470989`–`0x4709ec`） | 观测+逐位折法 |
+
+**所以剩下的不是"判据没搬"，而是"编排"**：谁先调谁、什么时候调。这一层在原版是
+`GraphwarGameClient::process`（`0x515dc0` / `0x516fd0`）那条**主循环**——我方**没有它的函数边界**
+（`docs/02` §17 的待拆表里没有它），搬过去只能是把同一段顺序换个语言再写一遍，**不会增加任何证据**。
+⇒ 台账里 P05 / P11 / P34 / P43 / A06 / A07 / A08 这些"编排"行全判 `keep`，理由逐行写在
+`missing_if_kept` 列。**这是结论，不是偷懒**：`keep` 的意思恰好是"这条还没有真值"。
+
+### 144.2 三处搬迁：证据、改法、行为不变的理由
+
+#### 144.2.1 P15：联机 `TickRequest` 的节奏（**0x519840** / **0x519630**）
+
+**改前**（`play_screen.gd::_online_poll_tick`）：
+
+```gdscript
+const TICK_REQUEST_PERIOD := 1.0
+var _tick_request_acc := 0.0
+...
+_tick_request_acc += delta
+if _tick_request_acc >= TICK_REQUEST_PERIOD:
+    _tick_request_acc = fmod(_tick_request_acc, TICK_REQUEST_PERIOD)
+    _online_session.send_tick_request()
+```
+
+那是**墙钟累加器**：满 1.0 s 发一条。**真值**是 tick 计数判据：
+
+```text
+0x51986c  add eax, 0xfe502a        ; accum += 16_666_666 ns（= 1/60 s，截断不是四舍五入）
+0x51987d  inc dword [rbx+0x40]     ; current_tick += 1
+          imul 0xeeeeeeef / ror 2 / cmp 0x4444444   ; 判 current_tick % 60 == 0
+```
+
+⇒ 每 60 **个 tick** 再发一条（`graphwar_tick_handler.rs:407` 的 `tick()` 已按此建模，
+`TICKS_PER_REQUEST = 60`）。两者在稳定帧率下同为 1 Hz，但**相位基准不同**：墙钟累加器与 tick
+计数**没有相位关系**，掉帧/长帧之后两条曲线会错开（一次长帧可能连发 2 条，也可能一条都不发）。
+落点：新 scaffold 出口 `GwFlowClock`（`src/_scaffold/flow_clock_class.rs`），
+`drive(delta)` → `fold_dt_into_ticks` 折整数 tick 后逐个调 `tick()`，数发件箱里的 `TickRequest`。
+
+**"连上就发一条"那半句**原来是 `_reset_shot_state()` 里的 `_tick_request_acc = TICK_REQUEST_PERIOD`
+（把累加器推到门槛上当替身）。真值是 `handle_connected_to_server_event`（**0x519630**：
+**不看**事件载荷，直接 `outbox.push(TickRequest)`）⇒ 改调 `GwFlowClock.connected()`。
+
+**行为为什么不变**：正常帧率下"每 60 tick = 1 s"与"每 1.0 s"同频；selftest 757/0/1skip 一位未变
+（`play_online_real_server` 40 条 / `play_online_lifeinfo_fake_server` 11 条照旧全绿）。
+
+#### 144.2.2 P39：联机倒计时（`TurnClock`，`0x470989`–`0x4709ec`）
+
+**改前**：`begin_match()` 的**联机分支提前 return**（`_begin_online()`），所以
+`_turn_clock.set_time_mode(...)` 那句**在联机局里从来没执行过** —— 联机倒计时是另一套：
+`_time_left = GwModes.turn_seconds(...)`，每帧 `_time_left -= delta`（**墙钟**），标签读 `_time_left`。
+而同一屏的"到点自动开火"判据走的是**另一台**时钟（`_turn_clock.decide()`）—— 联机分支又不调它。
+⇒ 一段代码里**两套时间**，都没有 tick 轴。
+
+**真值**：`TurnClock::advance()` 按 `TICKS_PER_SECOND` 把秒折成 tick、`seconds_left()` = 时长 − 已过 tick；
+时长来自 `graphwar_mode_manager::TimeMode::seconds()`（30/60/120/180/300，`docs/42` 抓包实证）。
+落点：沿用既有 `GwTurnClock`（不新增类）：`_begin_online()` 补 `set_time_mode(state.time_mode)`、
+新回合 `restart()`、每帧 `advance(delta)`、标签统一读 `seconds_left()`（联机分支删掉）。
+删掉变量 `_time_left` 与它的 3 处读写。
+
+**行为为什么不变**：两边都是"时长 − 已过时间"、都以 60 Hz 为基准；差别只有 (a) 改后按整数 tick 累积
+（改前浮点秒累减会漂）、(b) 无限时档由 `TimeMode::seconds() == None` 判（改前是
+`GwModes.TIME_SECONDS` 里的 0）。selftest 一位未变。
+
+#### 144.2.3 S06+S13：握手那批的**名单/顺序**与**版本串**
+
+* 7 条状态同步的名单与顺序：**改前三处**（`session.gd::STATE_SYNC_KINDS`、
+  `wire_samples.gd::STATE_SYNC` 抓包原文、`fixtures/protocol_match.jsonl` 原始报文）。
+  真值在 `graphwar_server_connection_handler::on_new_connection()` 的**输出本身** ——
+  那个函数被单测 `state_sync_matches_captured_bytes` 与抓包**逐字节**钉住。
+* 版本串 `"2.0"`/`"60"`：**改前两处**（`.gd` 字面量 + `graphwar_client_connection_handler.rs:304-305`
+  的两个常量）。真值是 arm64 **`0x4693c0`** 的立即数（`mov w9,#0x2e32` = `"2."`、
+  `mov w8,#0x30` = `'0'`、`mov w9,#0x3036` = `"60"`）。
+
+落点：`GwFlowClock.state_sync_kinds()` / `new_connection_request_body()`（同一新文件）。
+**行为为什么不变**：名单逐项相同、顺序相同（新单测 `state_sync_names_come_from_the_captured_batch`
+把 7 项与顺序钉住）、版本串逐字节相同（`new_connection_body_is_the_two_constants` 钉住整条 JSON）。
+selftest 一位未变 —— 而"7 条到齐才进屏"那条门正是靠这张名单（`net_real_server` 36 条全绿）。
+
+### 144.3 顺手挖出的**我方与真值不符**（逐条，含本轮改了哪条）
+
+| # | 位置 | 改前是什么 | 真值/证据 | 本轮 |
+|---|---|---|---|---|
+| ① | `play_screen.gd::_online_poll_tick` | 墙钟累加器满 1.0 s 发一条 `TickRequest` | `0x519840` 的 `current_tick % 60`（逐位）⇒ 与 tick 计数锁相，与墙钟无相位关系 | **已改**（P15） |
+| ② | `play_screen.gd::_online_tick` / `_update_timer_label` | 联机倒计时是 `_time_left -= delta`（墙钟），与 `TurnClock` **平行**的第二份实现；而且 `_turn_clock` 在联机分支**一次都没配过** | `TurnClock`（`advance` 折 tick、时长 `TimeMode::seconds()`）+ `0x470989`–`0x4709ec` 三合取项 | **已改**（P39） |
+| ③ | `session.gd::STATE_SYNC_KINDS` + `send_new_connection_request` | 同一批真值散在**三处**（.gd 名单 / 抓包原文 / Rust 常量） | `on_new_connection`（逐字节）+ `0x4693c0`（逐位） | **已改**（S06+S13） |
+| ④ | `play_screen.gd::_simultaneous_announced` | 公告集合 = **每个还有活士兵的玩家** | `graphwar_turn_manager.rs:840` `get_current_turn_players`（**0x4627c0**）：同时回合支 = 玩家表**全部键**（`0x46282c` collect），**不按 alive 过滤**；顺序支 = 单元素 | **只登记**：见下 |
+| ⑤ | `play_screen.gd::_online_can_fire` | 被当成"原版那条回合判据"的来源 | `is_on_turn`（**0x462b50**）的唯一调用点是 `EntityDrawer::draw`（`0x4b31ac`），语义是"这个实体在回合上"（准备圈那类），**不是**"我能发 Fire"；**原版 Fire 的可用判据未知** | **只登记**（本行改标 `自造`） |
+| ⑥ | `play_screen.gd::_on_online_message`（`"EndOfTurnInfo"` 分支） | 注释写"本客户端还没发 `TickRequest`（`room.current_tick` 恒 0）" | **两句都假**：`_online_poll_tick()` 在发（`0x519840`）、`TickReply` 在 `session.gd::_apply` 里写 `room.current_tick` ⇒ 下面那行打印的当前 tick 是真值 | **已改注释**（`723cad3`） |
+
+**④ 为什么只登记不改**：把恢复的那条规则（全部玩家）搬过来会**死锁**。`RoundCollection` 等满
+`announced` 才结算，而 `_commit_shot()` 只为自己那一发调 `round_submit()`；原版靠
+`RoundCollection::expired/should_resolve(now_tick)` 兜住"有人不交"，**我方 `round_open()` 传的是
+`deadline = None`、也从不查 `expired()`**。⇒ 同时回合制里一旦有玩家全灭，改后永远凑不齐。
+先接 deadline（要一条可用的 tick 轴）再搬判据，是本条的前置条件，已写进 §144.6 #1。
+
+**⑤ 为什么重要**：这条容易在文档里被写成"已复原"（因为 `is_on_turn` 确实解出来了）。实际上
+两者的**消费者不同**：一个是绘制谓词、一个是输入许可。把它当证据用会得出"原版只有当前回合方能按
+Fire"这种没有观测支撑的结论。台账里 P38 因此判 `keep` 并标 `自造`。
+
+### 144.4 台账怎么判的（可复算）
+
+列：`id / file / lines_pre / segment / rust_side / evidence / verdict / moved_to / missing_if_kept`。
+复算统计：
+
+```bash
+awk -F'\t' 'NR>1 && $1 !~ /^#/ && NF>1 {print $7}' fixtures/client_flow_ledger.tsv | sort | uniq -c
+#      59 keep
+#       4 move
+#      13 partial
+```
+
+`partial` 13 条分两类：
+1. **判据已在 Rust、只剩编排/接线**（P05 开局编排、P09 时长档、P14 三条时钟路径、P16 清状态、
+   P20 收尾顺序、P31 回放装载、P34 联机开局编排、P37 `set_turn` 写入点、P43 帧序、P44 倒计时标签）；
+2. **搬了一半、另一半是推断**（P25 公告集合、S04 会话 8 态里只有连接层 4 态有 Rust、S08 收场幂等闩）。
+
+### 144.5 门槛与像素（本轮实测，自己跑）
+
+| 门槛 | 读数（本轮自己跑） | 与任务书 |
+|---|---|---|
+| `cargo test --offline` | **1620 passed / 0 failed / 1 ignored** | 一致 |
+| `cargo test --offline --features gdext-bindings` | **1774 passed / 0 failed / 1 ignored** | 任务书 1769 **+5** = 本轮新增的 5 条单测（`flow_clock_class` 的模块在 `gdext-bindings` 下才编译） |
+| `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)` | 一致 |
+| headless 14 脚本 | **1979 passed / 0 failed**（逐脚本：assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 378 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 97 / play_flow 234 / process_loop 67 / recovered_view 57 / signal_classes 155 / spike 27） | 一致 |
+| 三轴（**轴名分开报**） | `fire` **647**（结算批 1080、内容命中 647）｜`batch` **647**（同 1080 批）｜`batch_conv` **637**（`种类序列命中 1075/1080`、`变好 128 批 / 变差 0 批`） | 一致（一位未退） |
+| `coverage_matrix.py --check` | **OK**（`src/` 树 119→**120** 个文件、4077→**4097** 条 `fn` ⇒ 两张生成物重跑，见下） | — |
+| `check_doc_refs.py` | **rc=0** | — |
+| `docsec.py check docs/06` | 无重复号 / 无冲突标记 / 无空心节（节数 142，范围 1..144，断号仍是历史的那两个 43/89） | — |
+| 预注册文件 | `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）与 `fixtures/frame_capture_freeze_plan.txt` **一个字节没改**（`git diff --exit-code` 为空） | 一致 |
+
+> **`coverage_matrix` 的两张生成物**是本轮唯一的"范围外"文件对，且它们是**重跑生成物、不是手改**
+> （`docs/coverage-matrix.tsv` 6 行 + `docs/149-coverage-matrix.md` 1 行：`src/` 树指纹与
+> `_scaffold` 计数）。不重跑 `--check` 会红（先例：T52/T63/T67 同样处理）。
+
+#### 像素（`--stop-plan fixtures/frame_capture_freeze_plan.txt` 口径，两侧串行、各用私有 Xvfb）
+
+| 屏 | 读数 | 判据 | 结论 |
+|---|---|---|---|
+| `menu` | **0 px**（max|Δ|=0） | 不许变差 | ✓ |
+| `replay_lobby` | **0 px**（max|Δ|=0） | 不许变差 | ✓ |
+| `player_skins` | **0 px**（max|Δ|=0） | 不许变差 | ✓ |
+| `replay_play` | **856 px** / 0.0384 %（L2 0 块；原始 1126 px，排除光标列 270 px） | 856 px 基线 | ✓ 一位未变 |
+| `replay_end` | **856 px** / 0.0384 %（同上） | 856 px 基线 | ✓ 一位未变 |
+| `match_ready` | **2 098 px** / **0.094 %**（L2 0 块；排除框 0 px 被吃掉） | L3 ∈ [0.070, 0.100] % 且 L2 0 块 | ✓ 在带内 |
+| `match_play` | **1 390 px** / **0.062 %**（L2 0 块） | L3 ≤ 0.450 % | ✓（远超） |
+
+**`match_ready` 那 +52 px 的归因**（对 T76 冻结口径的 2 046–2 048 px，§130.8）：逐像素热点分解 =
+士兵/名字那一层 **2 054 px**（y 760–880、x 720–880，= 已知稳定残差）+ 两条 8×92 的**竖条**
+（x 265–272 与 x 1731–1738，各 22 px，= 底栏两个容器的左/右边线）。**底栏文字区（倒计时/修正值）
+一个差异像素都没有** ⇒ 本轮 P39 换掉倒计时的取数来源**没有改变渲染**（两侧显示的字一致），
+这 +52 px 落在士兵层，属采集间波动，不指向本轮改动。
+
+**另外两条与本轮无关、但顺手量到的**：`player_faces` / `player_hats` 各 **0.053 %**
+（L3 bbox `17,215,933,1146`、max|Δ|=61），**不在本任务验收清单里**（清单只要求 `player_skins` 0 px），
+且本轮没碰 `player_screen.gd`；登记在这里备查。
+
+### 144.6 遗留 / 未做（下一任直接接）
+
+1. **P25 公告集合**（`_simultaneous_announced`）：前置 = 给 `GwTurnDriver.round_open()` 接
+   `RoundCollection::expired/should_resolve(now_tick)`；`now_tick` 的来源可以用 §144.2.1 那台
+   `GwFlowClock`（它就是 `GraphwarTickHandler` 的 tick 计数）。**接上之后**再把"全部玩家"
+   那条恢复规则搬进来。⚠️ 别只搬规则 —— 会死锁（§144.3 ④）。
+2. **P37 `TurnManager::set_turn`（0x4638f0）未接**：联机侧没有 `TurnManager` 实例，
+   我方回合表是 `GwTurnDriver` 的 `PlayerTurns`（形状不同：前者是"玩家→士兵表+游标"的 HashMap，
+   后者是 Vec）。要接得先决定"联机局是否也装一台 `TurnManager`"——那会动 `_apply_online_turn`
+   与 `_active_soldier()` 两条路径，**必须先有像素/自检的对照**再动。
+3. **两台同源时钟**（P15 的遗留）：`GraphwarPlane::drive_frame` 里那台 `GraphwarTickHandler`
+   把发件箱丢掉（`graphwar_plane.rs` 的 `drive_frame` 尾部 `self.tick_source.outbox.clear()`），
+   所以 tick 轴（平面）与 `TickRequest` 节奏（`GwFlowClock`）现在是**两个对象**。
+   原版只有一台。归一 = 让平面暴露"这一帧的 `TickRequest` 条数"，然后删掉 `GwFlowClock`
+   的时钟部分（只留 `state_sync_kinds()`/`new_connection_request_body()` 两个静态出口）。
+   **要动 `src/graphwar_plane.rs`**（不在 T99 写范围）。
+4. **联机倒计时仍在"本回合已过 tick"轴上**，不是服务端绝对 tick 轴
+   （`end_of_turn_tick − current_tick`）。两者只差一个常量偏移，判据不变（`TurnClock` 的文档已写），
+   但"跟着服务端 tick 走"这件事本身没做。`EndOfTurnInfo.end_of_turn_tick` 现在只是显示。
+5. **`_online_poll_tick` 的 tick 轴对齐仍是"回调里拨一次"**：`TickReply` 到达时
+   `_plane.set_fractional_tick(cur)`。原版是 tick handler 内部把 `now` 覆盖掉（`+0x20`/`+0x28`
+   哨兵那套，`graphwar_tick_handler.rs` 的 `set_now/clear_now` 已建模）—— 接线在平面侧，未接。
+6. **`app.gd` 的编排 7 行**（A06/A07/A08）与 **P05/P34 的编排顺序**仍然没有证据。要证只有两条路：
+   (a) 动态插桩原版 `GraphwarGameClient::process`/`initialize` 的调用序列；(b) 找到 `GraphwarRootNode`
+   的 `initialize` 侧写出真实顺序。两条都不在 T99 范围内。
+
+### 144.7 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t99     # 换你自己的树
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.agent-work/cargo-target
+# ① 内核 + 门槛
+cargo test --offline                                   # 1620 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings         # 1769 / 0 / 1 ignored（含本轮 5 条新单测）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/
+$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client --import
+H=$WT/.agent-work/fakehome && mkdir -p $H/.local/share/godot/app_userdata/Graphwar/replays
+cp $MAIN/.reference/replays/gw2-replays-snapshot/replays/{1793897298,1783255495} \
+   $H/.local/share/godot/app_userdata/Graphwar/replays/
+HOME=$H bash client/run.sh selftest                    # 757 / 0 / 1 skip，missing=0 silent=0
+for f in client/tools/*_check.gd; do n=$(basename $f .gd); \
+  $MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client \
+    --script res://tools/$n.gd 2>&1 | grep -E '^[A-Z_]+ [0-9]+ passed'; done      # 1979 / 0
+python3 tools/coverage_matrix.py --check && python3 tools/check_doc_refs.py
+python3 tools/docsec.py check docs/06-verification.md
+# ② 三轴（**轴名必须一起报**）
+S=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+$CARGO_TARGET_DIR/release/examples/replay_attrib --dir $S --drive fire  --policy default --json /dev/null
+$CARGO_TARGET_DIR/release/examples/replay_attrib --dir $S --drive batch --policy default --json /dev/null
+$CARGO_TARGET_DIR/release/examples/batch_conv    --dir $S --policy strict
+# ③ 台账统计
+awk -F'\t' 'NR>1 && $1 !~ /^#/ && NF>1 {print $7}' fixtures/client_flow_ledger.tsv | sort | uniq -c
+# ④ 预注册文件一个字没改（自证）
+git diff --exit-code $MAIN/fixtures/frame_diff_thresholds.txt $MAIN/fixtures/frame_capture_freeze_plan.txt
+```
+
+### 144.8 范围声明（给 `merge_check.py` 的禁区闸）
+
+本任务的搬迁对象**就是**这三份仿制品，任务书写明允许改 `client/**`、新建的
+`src/_scaffold/*_class.rs` 与 `src/_scaffold/mod.rs`、新建 fixtures、`docs/06`。
+逐条声明（`merge_check` 的 ① 禁区闸读这一行）：
+
+* 声明：`client/src/screens/play_screen.gd` —— 任务书授权的搬迁对象（P15/P39/P41 注释更正）；
+* 声明：`client/src/net/session.gd` —— 任务书授权的搬迁对象（S06+S13）；
+* 声明：`docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` —— **重跑生成物**
+  （`tools/coverage_matrix.py`，`src/` 树 119→120 文件、4077→4097 条 `fn`），不是手改数字。
+
+**本轮没改**：`client/src/app/app.gd`（台账里 16 段全判 `keep`/`partial`，理由逐行在台账
+`missing_if_kept` 列；本轮**没有**需要改动它的搬迁）、`src/graphwar_*.rs`、`tools/frame_capture.py`、
+`tools/frame_diff.py`、`fixtures/frame_diff_thresholds.txt`、`fixtures/frame_capture_freeze_plan.txt`、
+`fixtures/guardrails.json`。
