@@ -443,6 +443,20 @@ pub struct GraphwarBackend {
     pub server: Option<ServerSlot>,
     /// `start_client_to_replay` 造出来的 `SocketAddr`（`([::1], 端口)`；见 [`REPLAY_CLIENT_ADDR`]）。
     pub client_addr: Option<([u8; 16], u16)>,
+    /// 内联回放播放器对象的 **`+0x48` = 表指针 / `+0x50` = 表长**：**clip 检查点**表（升序 `u32`）。
+    ///
+    /// ⚠️ 这**不是** [`crate::graphwar_replay_player::GraphwarReplayPlayer::checkpoints`]（那个在
+    /// `+0x28/+0x30/+0x38`）：两个表是不同的东西，判别依据是 arm64 侧两条函数的取址偏移 ——
+    /// `go_to_next_checkpoint`（`0x3d929c`）读 `+0x30`/`+0x38` + tick `+0x58`，
+    /// 而 [`Self::get_next_clip_checkpoint`]（`0x40745c`）读 `+0x48`/`+0x50`。
+    ///
+    /// 原版这里是**两字的切片**（`(ptr, len)`；`0x407468 ldp x8,x9,[x0,#0x48]` 只读两个字，
+    /// 且 `+0x58` 已经被 tick 占掉）⇒ 更可能是 `Box<[u32]>` / `&'static [u32]`；
+    /// 我方用 `Vec<u32>` 承载，只读 ⇒ 语义等价。
+    ///
+    /// 播放器结构体本身（`src/graphwar_replay_player.rs`）**不在 T106 的写范围** ⇒ 这个字段暂挂在本结构上，
+    /// 偏移以注释为准；表值类型 `u32` 来自 `0x4074a4 ldr w14,[x8,x13,lsl #2]`（4 字节元素 = tick 口径）。
+    pub clip_checkpoints: Vec<u32>,
 }
 
 /// `start_client_to_replay` 造的那个 `SocketAddr`：**`[::1]:0`**。
@@ -754,6 +768,91 @@ impl GraphwarBackend {
             started: true,
         }); // 0x406ccc..0x406ce8
         steps
+    }
+
+    /// `get_next_clip_checkpoint` —— **原版 arm64 `0x40745c` / 156 字节**（x86 侧**无 Location 锚**，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x40745c..0x4074f8`；T106 逐条读，`llvm-objdump -d --start-address=0x40745c`）：
+    ///
+    /// ```text
+    /// 0x40745c  ldr  x8,[x0]              ; x0 = self（播放器槽判别字在 +0x00）
+    /// 0x407460  cmp  x8,#0x2
+    /// 0x407464  b.eq 0x4074d4             ; 槽空（2）⇒ 直接 None（0x4074d4 mov w0,wzr / ret）
+    /// 0x407468  ldp  x8,x9,[x0,#0x48]     ; x8 = clip 检查点表指针(+0x48)、x9 = 表长(+0x50)
+    /// 0x40746c  cbz  x9,0x407480
+    /// 0x407480  add x10,x9,x9 / cmp x10,x9 / b.hs 0x4074d4   ; len==0 的残路 ⇒ None
+    /// 0x407470  cmp  x9,#0x1 / b.ne 0x407490                  ; len>1 走二分
+    /// 0x407478  mov  x10,xzr / b 0x4074b8                     ; len==1：lo=0 直接判
+    ///   ── 二分（0x407498..0x4074b4）──
+    /// 0x407498  lsr  x12,x11,#1           ; half = hi/2
+    /// 0x40749c  add  x13,x12,x10          ; mid  = lo + half
+    /// 0x4074a0  sub  x11,x11,x12          ; hi  -= half
+    /// 0x4074a4  ldr  w14,[x8,x13,lsl #2]  ; 表[mid]
+    /// 0x4074a8  cmp  w14,w1               ; 与实参比
+    /// 0x4074ac  csel x10,x10,x13,hi       ; **表[mid] > 实参 ⇒ lo 不动**，否则 lo = mid
+    /// 0x4074b0  cmp  x11,#0x1 / b.hi 0x407498
+    ///   ── 收敛后的等值/邻位判定 ──
+    /// 0x4074b8  ldr  w11,[x8,x10,lsl #2]  ; 表[lo]
+    /// 0x4074bc  cmp  w11,w1
+    /// 0x4074c0  b.ne 0x4074dc             ; 不等 ⇒ 走邻位分支
+    /// 0x4074c4  mov  w11,#0x1 / add x10,x11,x10   ; 相等 ⇒ idx = lo+1（**严格大于**才返回）
+    /// 0x4074cc  cmp  x10,x9 / b.lo 0x4074ec       ; idx < len ⇒ 返回表[idx]
+    /// 0x4074dc  cinc x10,x10,lo           ; 表[lo] < 实参 ⇒ lo+1，否则 lo（取"第一个大于"的下标）
+    /// 0x4074e4  cmp  x10,x9 / b.hs 0x4074d4       ; 越界 ⇒ None
+    /// 0x4074ec  ldr  w1,[x8,x10,lsl #2]   ; 返回值 = 表[idx]（w1）
+    /// 0x4074f0  mov  w0,#0x1 / ret        ; 判定字 w0 = 1 = Some
+    /// 0x4074d4  mov  w0,wzr / ret         ; 判定字 w0 = 0 = None
+    /// ```
+    ///
+    /// ⇒ 语义：**在 clip 检查点表里找第一个严格大于 `current` 的元素**（= `upper_bound`），
+    /// 没有就返回 `None`。返回形态是 `Option<u32>`：判定字在 `w0`、值在 `w1`（`0x4074f0` 那对
+    /// `mov w0,#1` + 前一条 `ldr w1`）；空判定是 `w0 = 0`。
+    ///
+    /// 三个不显然的点：
+    /// 1. **槽空就直接 None**（`0x407464`），不碰表 —— 与 `stop_client`/`process` 用的是**同一个**
+    ///    `+0x00 == 2` 判据（[`PLAYER_SLOT_EMPTY`]）；
+    /// 2. **等值也跳过**（`0x4074c4` 相等 ⇒ `idx = lo+1`）⇒ 同一个 tick 连问两次拿到的是**下一个**检查点，
+    ///    这正是"播放下一个 clip"要的语义；
+    /// 3. 表是**升序**假设（二分），原版没有做有序性校验。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令；函数名来自 arm64 `.symtab` 的
+    /// `graphwarrust::graphwar_backend::GraphwarBackend::get_next_clip_checkpoint::h9639fc97afa47d4`）。
+    /// 不能标"逐位"：x86 侧没有锚，无法同函数对拍；两颗星的语义等价性只经过"指令顺序 → 我方同构循环"的对读。
+    pub fn get_next_clip_checkpoint(&self, current: u32) -> Option<u32> {
+        // 0x407460 cmp x8,#0x2 / 0x407464 b.eq —— 回放槽空 ⇒ None
+        if self.replay_slot_tag == PLAYER_SLOT_EMPTY {
+            return None;
+        }
+        // 0x407468 ldp x8,x9,[x0,#0x48]：内联播放器的 (ptr, len)
+        let cps = &self.clip_checkpoints;
+        let len = cps.len();
+        if len == 0 {
+            // 0x40746c cbz x9 → 0x407480 → b.hs 0x4074d4
+            return None;
+        }
+        // 0x407498..0x4074b4：二分，收敛到"最后一个 <= current"的位置（`hi` 折半、`lo` 只在
+        // `表[mid] <= current` 时前移 —— 与 0x4074ac 的 `csel …, hi` 同构）
+        let (mut lo, mut hi) = (0usize, len);
+        while hi > 1 {
+            let half = hi / 2; // 0x407498
+            let mid = lo + half; // 0x40749c
+            hi -= half; // 0x4074a0
+            if cps[mid] > current {
+                // 0x4074a8 cmp / 0x4074ac csel hi ⇒ lo 不动
+            } else {
+                lo = mid;
+            }
+        }
+        // 0x4074b8..0x4074e0：等值也 +1（严格大于），否则按大小取 lo 或 lo+1
+        let idx = if cps[lo] == current {
+            lo + 1 // 0x4074c4 mov w11,#1 / 0x4074c8 add x10,x11,x10
+        } else if cps[lo] < current {
+            lo + 1 // 0x4074dc cinc x10,x10,lo
+        } else {
+            lo // 0x4074e0 add x10,xzr,x10
+        };
+        // 0x4074cc / 0x4074e4 越界 ⇒ None（w0=0）；否则 0x4074ec ldr w1 + 0x4074f0 mov w0,#1
+        cps.get(idx).copied()
     }
 
     /// `resubscribe_to_events`（x86 **`0x514d80`** / FDE `0x112`；arm64 `0x407114`）。
@@ -1111,5 +1210,95 @@ mod replay_session_tests {
             crate::graphwar_replay_player::GraphwarReplayPlayer::new(),
         );
         assert!(steps.contains(&ReplayStartStep::DropOldPlayer), "0x514fe8 判据");
+    }
+}
+
+#[cfg(test)]
+mod denom_t106_tests {
+    //! T106：**527 分母之外**的 5 条 `graphwar_backend` 源码函数。
+    //!
+    //! **期望值来源**：全部来自 Android 2.0.60 **arm64** 反汇编的具体指令
+    //! （`llvm-objdump -d --start-address=<vaddr> --stop-address=<vaddr+size>
+    //! `.reference/steam/android-2.0.60/libgraphwarrust.so``），**不来自**我方实现的输出
+    //! （AGENTS.md §0.5）。x86 侧这些函数没有 `panic::Location` 锚 ⇒ 档位只能到 **观测**。
+    use super::*;
+
+    /// `get_next_clip_checkpoint` = **upper_bound**（严格大于）。用例覆盖
+    /// 0x4074c4（等值 +1）、0x4074dc（小于 +1）、0x4074e0（大于不动）、0x4074cc/0x4074e4（越界 None）、
+    /// 0x407464（槽空 None）、0x40746c（空表 None）六条分支。
+    #[test]
+    fn get_next_clip_checkpoint_is_a_strict_upper_bound() {
+        let mut b = GraphwarBackend::new();
+        b.replay_slot_tag = 0; // != 2 ⇒ 槽里有活的播放器（0x407460 判据）
+        b.clip_checkpoints = vec![100, 200, 300, 400];
+
+        // ① 等值 ⇒ 返回**下一个**（0x4074c4 相等就 lo+1）
+        assert_eq!(b.get_next_clip_checkpoint(200), Some(300), "0x4074c4：相等不算命中");
+        // ② 落在两值之间 ⇒ 返回上一个的上界（0x4074dc 小于 ⇒ lo+1）
+        assert_eq!(b.get_next_clip_checkpoint(250), Some(300), "0x4074dc cinc …lo");
+        // ③ 小于首元素 ⇒ 返回首元素（0x4074e0 lo 不动）
+        assert_eq!(b.get_next_clip_checkpoint(0), Some(100), "0x4074e0");
+        // ④ 等于末元素 ⇒ 越界（0x4074cc cmp x10,x9 / b.hs）
+        assert_eq!(b.get_next_clip_checkpoint(400), None, "0x4074e4 越界");
+        // ⑤ 大于一切 ⇒ None
+        assert_eq!(b.get_next_clip_checkpoint(u32::MAX), None, "0x4074e4 越界");
+    }
+
+    /// 重复值：`[100,100,200]` 对 `100` 必须返回 `200`（等值跳过**所有**相同值）。
+    /// 原版靠"相等 ⇒ lo+1"这一条实现，没有去重逻辑（0x4074c4 之后没有回退循环）。
+    #[test]
+    fn get_next_clip_checkpoint_skips_duplicates() {
+        let mut b = GraphwarBackend::new();
+        b.replay_slot_tag = 0;
+        b.clip_checkpoints = vec![100, 100, 200];
+        assert_eq!(b.get_next_clip_checkpoint(100), Some(200));
+        // 单个元素 + 等值 ⇒ 空（0x407478 len==1 的 `mov x10,xzr` 路径）
+        b.clip_checkpoints = vec![7];
+        assert_eq!(b.get_next_clip_checkpoint(7), None, "len==1 且相等 ⇒ 越界 None");
+        assert_eq!(b.get_next_clip_checkpoint(6), Some(7), "len==1 且小于 ⇒ 该元素");
+    }
+
+    /// 两个早退判据：槽空（0x407464）与空表（0x40746c → 0x407480）。
+    #[test]
+    fn get_next_clip_checkpoint_early_returns() {
+        // ① 槽判别字 == 2（空）：表里就算有东西也不读
+        let mut b = GraphwarBackend::new();
+        b.clip_checkpoints = vec![10, 20];
+        b.replay_slot_tag = PLAYER_SLOT_EMPTY;
+        assert_eq!(b.get_next_clip_checkpoint(5), None, "0x407464 b.eq");
+
+        // ② 槽活着但表空
+        b.replay_slot_tag = 0;
+        b.clip_checkpoints.clear();
+        assert_eq!(b.get_next_clip_checkpoint(5), None, "0x40746c cbz x9");
+    }
+
+    /// 差分对拍：我方这段循环与 `partition_point(|&c| c <= current)`（upper_bound 的另一种写法）
+    /// 在 200 组随机升序表上必须逐值相同 —— 这是**规格级**对拍（两边都是同一句话的实现），
+    /// 用来抓"二分收敛位置差一"这类手抄错误，不当作复原证据。
+    #[test]
+    fn get_next_clip_checkpoint_matches_partition_point() {
+        let mut seed: u64 = 0x1234_5678_9abc_def0;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..200 {
+            let n = (next() % 12) as usize;
+            let mut table: Vec<u32> = (0..n).map(|_| (next() % 64) as u32).collect();
+            table.sort_unstable(); // 原版假设升序
+            let mut b = GraphwarBackend::new();
+            b.replay_slot_tag = 0;
+            b.clip_checkpoints = table.clone();
+            for key in 0..=66u32 {
+                let want = {
+                    let i = table.partition_point(|&c| c <= key);
+                    table.get(i).copied()
+                };
+                assert_eq!(b.get_next_clip_checkpoint(key), want, "表={:?} key={}", table, key);
+            }
+        }
     }
 }
