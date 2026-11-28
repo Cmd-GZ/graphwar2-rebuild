@@ -957,6 +957,28 @@ pub fn apply_show_screen<H: ScreenHost + ?Sized>(
 //    8 / 0x14 / 0xf / 6 / 3… 等长度分支没过完。缺：131 KB 反编译的逐分支审计。
 // 3. `background` 这个键从哪来：全库无独立字面量、无重定位引用（见 [`SPECIAL_MAP_KEYS`]）。
 //    ⇒ 该分支可能是死分支/防御性代码，也可能屏表的键不是取自 `.rodata` 的 `&'static str`。
+// 4a. 【T97 结案】**`+0xb0` 的写入点**（T71 §123.8 第 4 条要的 `mov …,0xb0(%reg)` 全 `.text` 扫描）：
+//    在 `graphwar_root_node.rs` 归属的函数内**共 6 条**（脚本：`python3` 逐条 capstone 解 `.text`
+//    152 万条指令，按 `.eh_frame` FDE 归属；正对照命中已知的 `0x3b50d4`）：
+//    * `0x3a2ae9 mov qword [r15+0xb0], rbp` —— 在构造器 [`FN_CONSTRUCT`]（`0x3a22f0`）里 ⇒ **初值**；
+//    * `0x3b2e1d mov qword [rbx+0xb0], r14` —— `r14` 由 `0x3b2df0 movabs r14,0x8000000000000000`
+//      给出 ⇒ **就是哨兵**（= [`save_level::LEVEL_KEY_SENTINEL`]）；且 `0x3b2dfa..0x3b2e17` 是
+//      「旧值是哨兵就不 dealloc」的闸（`0x3b2e01 mov rax,rsi; neg rax; jo 0x3b2e1d`）
+//      ⇒ 哨兵语义 = **"还没有关卡标识"**，不再需要额外证据；
+//    * `0x3b0dc7` / `0x3b2db2` / `0x3b401a` / `0x3b418d` —— 写新值的 ptr，紧跟一条
+//      `mov qword [rbx+0xb8], …` ⇒ `+0xb0` 是一个 **16 字节 `String`**（`+0xb0` ptr、`+0xb8` cap/len），
+//      不是裸 8 字节字。
+//    前五条全部落在 [`FN_COMMAND_BUS`]（`0x3b0830` = `process_button_pressed`）里 ⇒
+//    **关卡标识只由「命令总线」写**（`check_save_level` 只读不写：全 `.text` 只有 `0x3afd0a cmp`）。
+//    ⚠️ 仍未证：那 5 处写的是**哪个**键（要靠运行时观测 `[+0xb0]` 的字节内容）。
+// 4b. 【T97】**`+0x1f8` 的写入点在**本模块归属内是 **0 条**：全 `.text` 写 `[reg+0x1f8]` 共 19 条
+//    （排除栈槽），其中唯一落在 527 归属里的是 `graphwar_setup_control.rs` 的 `0x4d4b99`
+//    （另一个类）⇒ `check_save_level` 读的那个 qword 是**别人写进去的**（Rc 载荷里的对象指针）。
+//    ⇒ 该闸门**语义仍未解**（缺：`[+0x1f8]` 的 Rc 是谁的、谁在构造它）。
+// 4c. 【T97】**`GATE_B`（`+0x1703`）写点已闭合**：全 `.text` 写 3 条 ——
+//    `0x3b2130` / `0x3b3ad4`（都 `=1`，都在 [`FN_COMMAND_BUS`] 里）；
+//    `0x3b50d4`（`=0`，在 `request_permissions_result`，T71 已落码）。
+//    读 2 条：`0x3a57ad` / `0x3a61ec`（都在 `process`）。⇒ 置位 = 命令总线，清零 = 权限回调。
 // 4. `0x9ba978` / `0x9baa20` / `0x9baa10` / `0x9ba720` / `0x39fe10` 的引擎侧符号：
 //    只能确认「收 bool」「返回 bool」「收 (out, gd, name, len, 8, 0)」「收一个临时值」。
 // 5. `[+0x15d8]` 构造期写 `1e9` 与 §15.3 的「String + 长度落点」两说未合。
