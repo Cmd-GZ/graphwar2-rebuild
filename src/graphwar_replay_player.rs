@@ -955,6 +955,25 @@ pub trait ReplayInjectTarget {
     fn freeze_tick_handler(&mut self);
 }
 
+/// 不做任何事的注入目标：给"只关心装配顺序"的调用方用（原版这里传的是真的对局客户端）。
+///
+/// `game_state_byte` 返回满值 ⇒ 不触发 tick 同步；`tick_handler_base_nanos` 返回非哨兵
+/// ⇒ 不冻结时钟。两者都是"让逻辑路径最短"的选择，**不是**原版行为。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoInjectTarget;
+
+impl ReplayInjectTarget for NoInjectTarget {
+    fn dispatch_replay_event(&mut self, _ev: &ReplayEvent) {}
+    fn game_state_byte(&self) -> u8 {
+        GAME_STATE_GATE_LIMIT
+    }
+    fn set_tick_handler_tick(&mut self, _tick: u32) {}
+    fn tick_handler_base_nanos(&self) -> u32 {
+        0
+    }
+    fn freeze_tick_handler(&mut self) {}
+}
+
 impl GraphwarReplayPlayer {
     /// 空播放器（原版没有"`new` 只写这一节字段"的证据，这里只给 `Default` 同义的构造）。
     pub fn new() -> Self {
