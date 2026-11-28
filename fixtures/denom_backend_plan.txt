@@ -1,0 +1,151 @@
+# denom_backend_plan.txt —— T106 预注册（**先提交，后动手**；do not edit）
+#
+# 背景：T105（`docs/06` §152 / `fixtures/denom_outside.tsv`）把 **527 分母之外**的真实源码函数
+# 全量量化为 X = 143 个源码函数（207 条机器码），其中 **real-missing = 57 条机器码 / 55 个源码函数**。
+# 本任务负责其中 **11 条**（= 11 条机器码 / 11 个源码函数）：
+#   graphwar_backend 8 · graphwar_crash_reporter 2 · backtracer 1
+#
+# 口径与地址（见 `AGENTS.md`「反复踩过的坑」第 1 条）：
+#   * 地址一律 **ELF vaddr（RVA）**，直接当 vaddr 用、不平移；Ghidra = vaddr + 0x100000。
+#   * 本轮这些函数在 **x86 steam 构建里没有 `panic::Location` 锚**（T105 判 denom:no-loc），
+#     所以逐条证据只能来自 **Android 2.0.60 arm64 未 strip 构建**的 `.symtab` + 反汇编。
+#     构建路径：`.reference/steam/android-2.0.60/libgraphwarrust.so`（14 979 192 B）。
+#
+# ============================================================================
+# §0 三条通用判据（"怎么确认它真的没有实现"）
+# ============================================================================
+# J1 名字：`llvm-nm -C --defined-only <android .so>` 里有 **`t` 类型的 FUNC**，demangle 成
+#    `graphwarrust::<原版模块>::<Type>::<fn>[:：:h…]`。⇒ 函数**真实存在**、名字是硬的。
+# J2 未实现：我方 `<原版模块>.rs` 里 `grep -n 'fn <name>'` **零命中**（含 `_scaffold`）。
+#    仅出现在注释/常量/文档里 **不算实现** —— T102 §148 的 P2 教训：
+#    `src/backtracer.rs` 头部注释逐字写了 `install_panic_log_hook` 的 vaddr 与字节数，
+#    文件里却没有这个 `fn`；`docs/06` §152.11 第 5 条记的就是这件事。
+# J3 反例闸：允许"上一轮已落、本轮只复核"。复核判据 = ①`git log --oneline -- <file>` 有落码提交
+#    ②函数体第 1 行写了 vaddr ③有单测 ④单测期望值来自反汇编常数/分支（不是我方输出）。
+#
+# ============================================================================
+# §1 逐条：判据 / 取证方法 / 期望落点 / 档位上限
+# ============================================================================
+# 每行格式：<arm64 vaddr> <真名> | 判据 | 取证方法 | 期望落点 | 档位上限
+#
+# --- graphwar_backend（8 条）---
+# 0x406ba4 GraphwarBackend::stop_client      | J2 → **J3 复核**（T103 已落）| 见 §2 | src/graphwar_backend.rs | 观测
+# 0x406c0c GraphwarBackend::stop_server      | J2 → **J3 复核**（T103 已落）| 见 §2 | src/graphwar_backend.rs | 观测
+# 0x406c64 GraphwarBackend::start_server     | J2 → **J3 复核**（T103 已落）| 见 §2 | src/graphwar_backend.rs | 观测
+# 0x407068 GraphwarBackend::stop_lan_broadcaster      | J2 | A1+A2+A3 | src/graphwar_backend.rs | 观测
+# 0x407220 GraphwarBackend::start_lan_broadcaster     | J2 | A1+A2+A3 | src/graphwar_backend.rs | 观测
+# 0x40745c GraphwarBackend::get_next_clip_checkpoint  | J2 | A1+A2+A3 | src/graphwar_backend.rs | 观测
+# 0x4074f8 GraphwarBackend::stop_server_broker_handler| J2 | A1+A2+A3 | src/graphwar_backend.rs | 观测
+# 0x4077bc GraphwarBackend::start_server_broker_handler| J2 | A1+A2+A3 | src/graphwar_backend.rs | 观测
+#
+# --- graphwar_crash_reporter（2 条）---
+# 0x4ca340 GraphwarCrashReporter::clear_report      | J2 | A1+A2+A3+A4 | src/graphwar_crash_reporter.rs | 观测
+# 0x4ca444 GraphwarCrashReporter::send_pending_report| J2 | A1+A2+A3+A4 | src/graphwar_crash_reporter.rs | 观测
+#
+# --- backtracer（1 条）---
+# 0x4becec Backtracer::install_panic_log_hook | J2 | A1+A2+A3+A4+A5 | src/backtracer.rs | 观测
+#
+# ============================================================================
+# §2 三个"T103 已落"条目的复核判据（不许重复落）
+# ============================================================================
+# 三条在 `f1e55d8/62bf998/df6b5f9/10e9455/31f7fab` 这 5 个提交里落过。复核动作：
+#   R1 `grep -n 'fn stop_client\|fn stop_server\|fn start_server' src/graphwar_backend.rs` 命中；
+#   R2 每个函数体第 1 行/第二行写了 arm64 vaddr + `cmp x8,#4` / `cmp x8,#2` 这类判据；
+#   R3 `cargo test --offline` 里 `lifecycle_tests` 三条测试在跑；
+#   R4 用本轮同一份反汇编（0x406ba4/0x406c0c/0x406c64）**重新核一遍**注释里的指令顺序，
+#      发现出入就**只改注释/单测**、不改语义（语义要改必须有新的指令级证据 + 单独 commit）。
+#   ⇒ **结论写进 `docs/06` §153，不再落码**。
+#
+# ============================================================================
+# §3 取证方法（A1–A5，全部可复跑）
+# ============================================================================
+# A1 真名与函数边界：
+#     llvm-nm -C --defined-only .reference/steam/android-2.0.60/libgraphwarrust.so \
+#       | grep -E 'graphwar_backend|graphwar_crash_reporter|backtracer'
+#     期望：11 条全有 `t` 符号；`st_size` 与 T105 台账的 `size` 列一致（88/104/88/216/172/144/156/136/140/260/1136/876）。
+# A2 逐指令：
+#     llvm-objdump -d --no-show-raw-insn --start-address=<vaddr> --stop-address=<vaddr+size> <android .so>
+#     看点固定四类：①函数入口的**前置守卫**（`cmp`/`cbz`/`b.eq`）②**调用点顺序**（`bl` 的地址先后）
+#     ③**立即数**（判别字、长度、`mov w#` 常量）④**结构体偏移**（`ldr/str [xN,#off]`）。
+# A3 `.rodata` 字符串/格式串：`.rodata` 的 **文件偏移 = vaddr**（`readelf -SW`：`0000000000179000 179000 1039d4`）
+#     ⇒ 直接 `seek(vaddr)` 读。格式串在本板 rustc 里是**紧凑编码**：
+#     `[piece_len][piece 文本]` 交错 `\xc0<下一个 piece 的长度>` 占位符（本轮实测两条都对得上，见 §4）。
+# A4 调用图（谁调它）：
+#     llvm-objdump -d --no-show-raw-insn <android .so> | grep -E 'bl\s+0x<vaddr>'
+#     负结论（"只有 N 个调用者"）必须先做正对照：同一遍扫描里已知被大量调用的地址应给出非零命中。
+# A5 x86 侧交叉（只用于"确认 x86 无锚"这条负结论）：
+#     .reference/venv/bin/python tools/addr_probe.py fde|locs|callers <x86 vaddr>
+#
+# ============================================================================
+# §4 期望（动手前写死，跑完不许为了对上而改）
+# ============================================================================
+# E1 结构体/字段断言（来自 `GraphwarBackend::new` arm64 0x407d08，本轮先读出来的）：
+#      +0x000 回放播放器槽判别字，初值 **2**（`0x407e0c mov w9,#0x2; str x9,[x21]`）
+#      +0x060 内联 server 槽判别字，初值 **4**（`0x407e00 mov w9,#0x4; str x9,[x21,#0x60]`）
+#      +0x110 内联 LAN 广播者槽，初值 **0x8000000000000001**（`0x407e10 mov x9,#-0x7fffffffffffffff; 0x407e1c str x9,[x21,#0x110]`）
+#      +0x228 内联 broker handler 槽，**首字 = 0 ⇒ None**（`stop_server_broker_handler` 0x407510 `cbz x20`，
+#             `start_server_broker_handler` 0x4077d0 `cbz x8` ⇒ niche 判空；`stop` 收尾 `0x407548 str xzr,[x21]`）
+#      +0x260 broker 槽结束 ⇒ handler 对象 **0x38 = 56 字节**（`start` 侧 `0x407800`–`0x40781c` 从 sp+0x8 拷 0x38 字节）
+#      +0x1c8 LAN 广播者的 socket fd（对象内偏移 0xb8）：`GraphwarLanBroadcasterV6::new` 0x3de0f0 `str w8(=-1),[x19,#0xb8]`
+#      +0x188 LAN 广播者的 hashbrown 表（对象内偏移 0x78）
+#      +0x1d0 共享句柄（`new` 0x407e2c `str x19,[x21,#0x1d0]`）
+# E2 `get_next_clip_checkpoint`（0x40745c）的语义 = **upper_bound**：
+#      在 `+0x48`（ptr）/`+0x50`（len）那张 `u32` 有序表里找 **第一个严格大于实参**的元素；没有就返回空。
+#      判据链：0x407460 `cmp x8,#2 / b.eq` 空槽早退 → 二分（0x407498–0x4074b4）→ 0x4074bc 等值判定
+#      → 0x4074dc `cinc x10,x10,lo`（严格大于才取下标+1）→ 0x4074f0 `mov w0,#1`/`0x4074d4 mov w0,wzr`
+#      ⇒ 返回形态 = `Option<u32>`（w0 = 1/0 判定 + w1 = 值）。**期望 8 个用例**（含重复值上界、超上限、空表）。
+# E3 `stop_lan_broadcaster`（0x407068）的动作**顺序**：guard 0x407088 → `close(fd)`（仅当 fd != -1，0x407090/0x407098）
+#      → `fd = -1`（0x40709c）→ drop hashbrown 表 +0x188（0x4070a4）→ 条件 dealloc（0x4070b0/0x4070b8 两个跳过判据）
+#      → 槽写 None 哨兵（0x4070cc）。
+# E4 `start_lan_broadcaster`（0x407220）与 `start_server_broker_handler`（0x4077bc）都**只在槽为空时才装**
+#      （0x40723c `b.ne` / 0x4077d0 `cbz` 反向 ⇒ 非空直接返回），装配是 `new` → `start(实参)` → 整块搬入；
+#      与 `start_server`（0x406c64，**无条件重建**）形态相反 —— 这条不对称是期望值之一。
+# E5 `clear_report`（0x4ca340）：`std::fs::write(path, &[])`（0x4ca35c；空内容 = 指针 1/长度 0，
+#      即 `0x4ca350 mov w2,#1` + `0x4ca354 mov x3,xzr`）；**成功静默返回**（0x4ca360 `cbz x0`）；
+#      失败则 `format!("Failed to clear crash log at {ts}: {err}")`（fmt 串在 0x1805a0）后 `_print`（stdout，0x81a7fc）。
+#      ⇒ 期望：①空内容 ②时间戳来自 `chrono::Utc::now()` 的 **Display**（0x4d8e80），
+#      **不是** `TIMESTAMP_FORMAT`（全函数没有 `StrftimeItems::new` 调用，本轮**证伪**旧注释"被 clear_report 共用"）。
+# E6 `send_pending_report`（0x4ca444）：`FileAccess::open("user://crash_log.txt", 20, 1)`（0x4ca478）
+#      → `get_as_text()`（0x4ca4a8）→ `to_string` → `close()`（0x4ca52c）→ `str::trim`（0x4ca538，
+#      len==0 就 dealloc 返回，0x4ca53c）→ `ProjectSettings::globalize_path("user://crash_log.txt", 20)`（0x4ca56c）
+#      → `thread::spawn_unchecked`（0x4ca5f8）→ 丢 JoinHandle/Arc。⇒ 期望：**空日志 = 什么都不发**；
+#      发/清都不主线程做（另起线程）；读日志走 **godot FileAccess**（与 `clear_report` 走 `std::fs` **不同**，不对称是新证据）。
+# E7 `install_panic_log_hook`（0x4becec）：`ProjectSettings::singleton`（0x4bed0c）+ `check_rtti`（0x4bed24）
+#      + `globalize_path`（0x4bed38）→ 初始化 2 个 OnceLock（0x8b4398 的 initialize 与 0x8b43b8 的 initialize，
+#      0x4bef0c / 0x4bef48）→ `std::panicking::take_hook`（0x4bee80）→ `__rust_alloc(16,8)`（0x4bee9c）
+#      → `std::panicking::set_hook`（0x4beeb0，vtable 0x85ad38）。钩子本体 = 闭包 0x4bf058。
+#      钩子本体（**逐字**，`.rodata` 两段格式串）：
+#        panic 行  0x17a21e: `"[{ts}] PANIC in thread '{thread}': {X}\n"`
+#        版本行    0x182d1e: `"Graphwar version: {full_version} ({os_name})\n"`
+#      其中 thread 名空 ⇒ `"<unnamed>"`（9 字节，0x1a1499）；`os_name` 未初始化 ⇒ `"unknown"`（7 字节，0x1a14a2）；
+#      `full_version` = `graphwar_version_get_full_version()`（0x3913e4）；
+#      **写回顺序 = 旧内容 + 版本行 + panic 行**（0x4bf1dc 先追加版本行、0x4bf23c 再追加 panic 行），
+#      **上限 10240 字节且按 UTF-8 字符边界截断**（0x4bf268 `mov w8,#0x2801` 比较 +
+#      0x4bf280–0x4bf2a0 的字符边界回退），并且若"旧内容+版本行"已 ≥ 10240 就**整条 panic 行都不追加**
+#      （0x4bf22c `lsr x8,x25,#0xb` / `cmp x8,#5` / `b.hs 0x4bf2c4`）；
+#      最后 `fs::write`（0x4bf2ac，错误静默丢弃）→ **调用旧钩子**（0x4bf2d4 `ldp x0,x8,[x21]` + `ldr x8,[x8,#0x28]` + `blr`）。
+#      调用者：`<GraphwarRootNode as INode>::ready` 0x39a720 / 0x39a734（先装钩子、再补发，与旧文档一致）。
+#
+# ============================================================================
+# §5 "做不到"的预先声明（跑完不许偷换）
+# ============================================================================
+# 本组 11 条里有 **3 条的运行时依赖不在本 crate**：`Config` godot 对象图（`ProjectSettings` / `FileAccess` / `GString`）、
+# 全局 panic hook 的**安装副作用**。对这些条目的处理规则（先写死，避免事后找理由）：
+#   P1 纯逻辑部分**必须落码并带单测**：步骤枚举（顺序 = `bl` 地址顺序）、所有立即数/偏移、
+#      以及能从 `.rodata` 逐字复原的格式串与拼接/截断规则（E7 的 panic 行/版本行/10240 截断）。
+#   P2 **不许**在本 crate 里真装全局 panic hook（会让 `cargo test` 的其它测试互相污染）——
+#      在文档里写明"未装"，并写清缺什么（godot `ProjectSettings` / `GString`）。
+#   P3 godot 侧调用（`FileAccess` / `ProjectSettings` / `check_rtti`）在落码里只能作为**步骤名 + 地址**出现，
+#      不许假装被调用。
+#
+# ============================================================================
+# §6 交付时的手工核对表（每条都要能在 `docs/06` §153 指到）
+# ============================================================================
+#  C1 11 条各一行：vaddr | 真名 | 落点(文件:行) | 档位(观测/推断) | 依据的指令地址
+#  C2 三条 T103 条目的复核结论（R1–R4）
+#  C3 分母外真缺：57 条机器码 → ? ；55 个源码函数 → ?（口径 = T105 `fixtures/denom_outside.tsv` 的
+#     `real-missing/denom:no-loc` 行数；本轮自己的 11 行逐条点名删除，**不重跑 T105 的工具**）
+#  C4 三个数（A/B/D_A/1:1）**报"一位未动"并说明为什么**（这 11 条在 527 分母之外 ⇒ 不进 A/B 的分子）
+#  C5 门槛读数逐个贴（cargo / gdext / coverage_matrix / check_doc_refs / docsec / 三轴 / boundary_audit）
+#  C6 我证伪/更正了哪几条旧结论（至少要有：`clear_report` 不用 TIMESTAMP_FORMAT；
+#     `tests/misc_modules.rs::hook_renders_all_four_segments` 钉的是**推断骨架**、真值实为两行）

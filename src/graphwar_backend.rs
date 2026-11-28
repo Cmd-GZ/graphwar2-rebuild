@@ -154,6 +154,31 @@ impl BackendField {
     pub const MODULES: usize = 0x220;
     /// `Option<GraphwarServerBrokerHandler>`（内联）。
     pub const BROKER: usize = 0x228;
+    /// `+0x228..+0x260` = `GraphwarServerBrokerHandler` 本体 **0x38 = 56 字节**（内联，不是堆对象）。
+    /// 真值：`start_server_broker_handler` `0x407800`–`0x40781c`（3 条 `ldur q` + 1 条 `ldr x9`，
+    /// 从 `sp+0x8` 拷 0x38 字节到 `self+0x228`）；`GraphwarBackend::new` `0x407e14`/`0x407e24`/`0x407e28`
+    /// 写的是同一段（`stp q0,q1` + `str q0,[x8,#0x20]` + `str x9,[x21,#0x258]`）。
+    pub const BROKER_SLOT_SIZE: usize = 0x38;
+    /// `+0x230`（**broker handler 对象内 `+0x8`**）：那个 `HashMap` 的 hashbrown 表。
+    /// `stop_server_broker_handler` `0x407540`/`0x407560` 的 `add x0,x19,#0x230` + `bl RawTable::drop`。
+    /// 对象布局 ⇒ `+0x228` 一个 8 字节指针（Arc 指针）+ 48 字节 `HashMap`
+    /// （hashbrown `RawTable` 32 + `RandomState` 16 = 48）。
+    pub const BROKER_MAP: usize = 0x230;
+    /// `+0x188`（**LAN 广播者对象内 `+0x78`**）：hashbrown 表。
+    /// `stop_lan_broadcaster` 的 `0x4070a4 add x0,x19,#0x188` + `0x4070a8 bl RawTable::drop` 就是它。
+    pub const LAN_TABLE: usize = 0x188;
+    /// `+0x1c8`（**LAN 广播者对象内 `+0xb8`**）：原始 socket fd（`i32`）。
+    /// 三处指令定死：`GraphwarLanBroadcasterV6::new` arm64 `0x3de0f0 str w8(=-1),[x19,#0xb8]` 写初值 −1；
+    /// `stop_lan_broadcaster` `0x40708c ldr w0,[x19,#0x1c8]` / `0x407090 cmn w0,#0x1`（−1 就不 close）/
+    /// `0x407098 bl close@plt` / `0x4070a0 str w8(=-1),[x19,#0x1c8]`（关完立刻写回 −1）。
+    pub const LAN_FD: usize = 0x1c8;
+    /// `+0x110..+0x1d0` = `GraphwarLanBroadcasterV6` 本体 **0xC0 = 192 字节**（内联，不是堆对象）。
+    /// 真值：`start_lan_broadcaster` `0x407258`–`0x407284` 共 8 组 `ldp q/stp q`，
+    /// 把栈上 `sp+0x00..sp+0xc0` 整块搬到 `self+0x110..self+0x1d0`。
+    pub const LAN_SLOT_SIZE: usize = 0xc0;
+    /// `+0x48` / `+0x50`（**内联回放播放器对象内**）：clip 检查点表的 `(ptr, len)`。
+    /// 见 [`GraphwarBackend::clip_checkpoints`] / [`GraphwarBackend::get_next_clip_checkpoint`]。
+    pub const CLIP_CHECKPOINTS: usize = 0x48;
 }
 
 /// 房间名默认值（13 字节）。
@@ -443,6 +468,24 @@ pub struct GraphwarBackend {
     pub server: Option<ServerSlot>,
     /// `start_client_to_replay` 造出来的 `SocketAddr`（`([::1], 端口)`；见 [`REPLAY_CLIENT_ADDR`]）。
     pub client_addr: Option<([u8; 16], u16)>,
+    /// 内联回放播放器对象的 **`+0x48` = 表指针 / `+0x50` = 表长**：**clip 检查点**表（升序 `u32`）。
+    ///
+    /// ⚠️ 这**不是** [`crate::graphwar_replay_player::GraphwarReplayPlayer::checkpoints`]（那个在
+    /// `+0x28/+0x30/+0x38`）：两个表是不同的东西，判别依据是 arm64 侧两条函数的取址偏移 ——
+    /// `go_to_next_checkpoint`（`0x3d929c`）读 `+0x30`/`+0x38` + tick `+0x58`，
+    /// 而 [`Self::get_next_clip_checkpoint`]（`0x40745c`）读 `+0x48`/`+0x50`。
+    ///
+    /// 原版这里是**两字的切片**（`(ptr, len)`；`0x407468 ldp x8,x9,[x0,#0x48]` 只读两个字，
+    /// 且 `+0x58` 已经被 tick 占掉）⇒ 更可能是 `Box<[u32]>` / `&'static [u32]`；
+    /// 我方用 `Vec<u32>` 承载，只读 ⇒ 语义等价。
+    ///
+    /// 播放器结构体本身（`src/graphwar_replay_player.rs`）**不在 T106 的写范围** ⇒ 这个字段暂挂在本结构上，
+    /// 偏移以注释为准；表值类型 `u32` 来自 `0x4074a4 ldr w14,[x8,x13,lsl #2]`（4 字节元素 = tick 口径）。
+    pub clip_checkpoints: Vec<u32>,
+    /// `+0x110`：**内联 `GraphwarLanBroadcasterV6`**（0xC0 字节；空槽编码见 [`LAN_SLOT_EMPTY`]）。
+    pub lan_broadcaster: Option<LanBroadcasterSlot>,
+    /// `+0x228`：**内联 `GraphwarServerBrokerHandler`**（0x38 字节；空 = 首字 0，见 [`BrokerSlot`]）。
+    pub broker: Option<BrokerSlot>,
 }
 
 /// `start_client_to_replay` 造的那个 `SocketAddr`：**`[::1]:0`**。
@@ -507,6 +550,126 @@ pub struct ServerSlot {
 /// 不是猜的；`==2`/`==4` 的比较点见 [`BackendField::MODE`] / [`BackendField::STATE`]。
 pub const PLAYER_SLOT_EMPTY: u32 = 2;
 pub const SERVER_SLOT_EMPTY: u32 = 4;
+
+/// LAN 广播者槽（`+0x110`）的**空**编码：`0x8000_0000_0000_0001`。
+///
+/// 三个写点/读点（arm64，全在 T106 本轮读到的指令里）：
+/// * `GraphwarBackend::new` `0x407e10 mov x9,#-0x7fffffffffffffff` + `0x407e1c str x9,[x21,#0x110]`
+///   ⇒ **初值就是这个值**（⇒ 它是"空"的编码，不是构造出来的对象）；
+/// * `stop_lan_broadcaster` `0x407080`/`0x407084`（`cmp x20,x21` / `b.eq` 早退）与 `0x4070cc`（写回）；
+/// * `start_lan_broadcaster` `0x407234`/`0x407238`/`0x40723c`（`cmp x8,x9` / `b.ne` 早退）。
+///
+/// ⚠️ **这个哨兵由什么机制产生（`Option<…>` 的 niche？哪个字段承载？）本轮未知** ——
+/// 已知的只是"它是 `+0x110` 首字（同时也是 `stop` 里 `__rust_dealloc` 的 size 实参）的非法值"。
+/// `0x8000_0000_0000_0000` 与 `0` 是另外两个"跳过 dealloc"的特例（`0x4070ac`/`0x4070b8`）。
+pub const LAN_SLOT_EMPTY: u64 = 0x8000_0000_0000_0001;
+
+/// LAN 广播者 socket fd 的"未打开"值（`i32` 的 −1）。
+///
+/// `GraphwarLanBroadcasterV6::new` arm64 `0x3de0f0 str w8(=-1),[x19,#0xb8]` 写它；
+/// `stop_lan_broadcaster` `0x407090 cmn w0,#0x1` 用它判"要不要 close"。
+pub const LAN_FD_CLOSED: i32 = -1;
+
+/// 内联 `GraphwarLanBroadcasterV6`（`+0x110..+0x1d0`，0xC0 字节）里**我方建模**的那部分。
+///
+/// 只有两件事有指令证据：socket fd 与那个被 `__rust_dealloc` 释放的堆缓冲长度。
+/// 其余 0xC0−12 字节没读出来 ⇒ 不建模（AGENTS.md §0.3：不猜）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LanBroadcasterSlot {
+    /// `GraphwarLanBroadcasterV6::new` 的第 1 个实参（`start_lan_broadcaster` `0x407244 mov x8,sp` /
+    /// `0x407248 mov w0,w1` ⇒ 本函数第 2 实参原样传进去，且是 **32 位**）。
+    pub port: u32,
+    /// `+0x1c8`（对象内 `+0xb8`）：原始 socket fd，`−1` = 未打开（见 [`LAN_FD_CLOSED`]）。
+    ///
+    /// ⚠️ **已知语义损失**：`GraphwarLanBroadcasterV6::start`（arm64 `0x3de19c`）的**体内本轮没读**
+    /// ⇒ "`start` 之后 fd 变成几"未知。因此 [`GraphwarBackend::start_lan_broadcaster`] 装进来的槽
+    /// 保持 `−1`，`stop` 时也就不会推 `CloseSocket` 步骤。要补这一格，缺的是 `0x3de19c` 的逐指令读
+    /// （`socket()`/`bind()`/`setsockopt()` 的返回值落地位置）。
+    pub fd: i32,
+    /// `+0x110`（对象首字）：堆缓冲的**长度**（`stop` 里的 `__rust_dealloc` 拿它当 `size`，
+    /// 指针取 `+0x118`：`0x4070bc ldr x0,[x19,#0x118]`）。`0` 与 `0x8000_0000_0000_0000` 时**跳过**释放
+    /// （`0x4070b0`/`0x4070b8` 两条判据）—— 也就是"空缓冲不收尾"。
+    pub buffer_len: u64,
+}
+
+/// `start_lan_broadcaster`（arm64 `0x407220` / 144 B）的步骤，顺序 = `bl` 地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartLanBroadcasterStep {
+    /// `GraphwarLanBroadcasterV6::new`（`0x40724c bl 0x3de064`，sret = `x8 = sp`，实参 `w0 = 端口`）。
+    /// 对象建在**栈上**（本函数 `sub sp,sp,#0xe0` 的 0xC0 字节区）。
+    NewBroadcaster,
+    /// `GraphwarLanBroadcasterV6::start`（`0x407254 bl 0x3de19c`，实参 `&mut 栈上对象`）。
+    StartBroadcaster,
+    /// 装槽：`0x407258`–`0x407284` 八组 `ldp q / stp q`，把栈上 0xC0 字节搬进 `self+0x110..+0x1d0`。
+    Install,
+}
+
+/// 内联 `GraphwarServerBrokerHandler`（`+0x228..+0x260`，0x38 字节）里**我方建模**的那部分。
+///
+/// 布局证据（都是指令）：槽的**首字**是一个带原子强计数的堆指针（`stop` 里
+/// `0x407520 ldxr` / `0x407524 subs #1` / `0x407528 stlxr` / `0x40753c bl Arc::drop_slow`），
+/// 紧随其后 `+0x230` 是一个 hashbrown 表 ⇒ 对象 = `{ Arc<…>(8) , HashMap(48) }`。
+/// `Option<…>` 的空靠**首字为 0**（`0x407510 cbz x20` / `0x4077d0 cbz x8` / 收尾 `0x407548 str xzr`），
+/// 与 LAN 槽那个 `0x8000_0000_0000_0001` 哨兵**不是同一套编码**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrokerSlot {
+    /// `GraphwarServerBrokerHandler::start` 的第 2 个实参（`0x4077f4 mov x1,x19` ⇒
+    /// `start_server_broker_handler` 的实参**原样**透传；宽度本轮未证 —— 用 `u32` 承载只为可测）。
+    pub arg: u32,
+    /// `+0x228`（对象首字）那个 `Arc` 的**强引用计数**。
+    ///
+    /// ⚠️ **推断**：装槽时给 1 是 `Arc::new` 的 std 契约；`GraphwarServerBrokerHandler::new`（0x489d64）
+    /// 的体内本轮**没读**，所以"新建对象时是不是恰好 1"没有指令证据。
+    /// `stop` 侧用得到它：`0x407524 subs #1` 之后 `0x407530 b.ne` ⇒ 归零才 `Arc::drop_slow`。
+    pub arc_strong: usize,
+    /// `+0x230`（对象内 `+0x8`）那个 `HashMap` 里几条 —— 只在文档/测试里用；
+    /// `stop` 里丢表是**无条件**的（`0x407540` 没有守卫）。
+    pub map_entries: usize,
+}
+
+/// `start_server_broker_handler`（arm64 `0x4077bc` / 140 B）的步骤，顺序 = `bl` 地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartBrokerStep {
+    /// `GraphwarServerBrokerHandler::new`（`0x4077f0 bl 0x489d64`，sret = `x8 = sp+0x8`）。
+    /// ⚠️ 该调用点 `x0` 仍是 `self`、`x1` 是 `start` 的第 2 实参 ⇒ `new` 的头两个实参
+    /// **本轮没读明白**（`0x489d64` 的体没读）；只确定 sret 是 `sp+0x8`、对象 0x38 字节。
+    NewHandler,
+    /// `GraphwarServerBrokerHandler::start`（`0x4077fc bl 0x489fa8`，实参 `&mut 栈上对象` + 原实参）。
+    StartHandler,
+    /// 装槽：`0x407814 stp q0,q1,[x8]` / `0x407818 str q2,[x8,#0x20]` / `0x40781c str x9,[x8,#0x30]`
+    /// （`x8 = self+0x228`，共 0x38 字节）。
+    Install,
+}
+
+/// `stop_server_broker_handler`（arm64 `0x4074f8` / 136 B）的步骤，顺序 = 指令地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopBrokerStep {
+    /// `GraphwarServerBrokerHandler::stop`（`0x40751c bl 0x489e50`，实参 `&mut self+0x228`）。
+    HandlerStop,
+    /// 槽首字那个 `Arc` 的**强计数 −1**（`0x407520 ldxr` / `0x407524 subs x8,x8,#1` / `0x407528 stlxr`，
+    /// store 失败 `cbnz` 自旋重试）。
+    ArcRelease,
+    /// 计数减到 0 ⇒ `Arc::drop_slow`（`0x407534 dmb ishld` / `0x40753c bl 0x45f2e4`）。
+    /// **只在"减完 == 0"时才走**（`0x407530 b.ne 0x407540` 跳过）。
+    ArcDropSlow,
+    /// 丢 handler 里的 `HashMap`（`0x407540 add x0,x19,#0x230` + `0x407544 bl RawTable::drop`）—— **无条件**。
+    MapDrop,
+}
+
+/// `stop_lan_broadcaster`（arm64 `0x407068` / 172 B）的步骤，顺序 = 指令地址顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopLanBroadcasterStep {
+    /// `close(fd)`（`0x407098 bl close@plt`）—— **只有 `fd != -1` 才调**
+    /// （`0x407090 cmn w0,#0x1` / `0x407094 b.eq` 跳过）。
+    CloseSocket,
+    /// `+0x1c8` 写回 `-1`（`0x40709c mov w8,#-1` + `0x4070a0 str`）—— **无条件**（close 两条路汇合到这里）。
+    ResetFd,
+    /// 丢 LAN 广播者里的 hashbrown 表（`0x4070a4 add x0,x19,#0x188` + `0x4070a8 bl RawTable::drop`）—— 无条件。
+    DropTable,
+    /// 释放那块的堆缓冲（`0x4070bc ldr x0,[x19,#0x118]` + `w2=1` + `0x4070c8 bl __rust_dealloc`）。
+    /// **两条跳过判据**：长度 `== 0x8000_0000_0000_0000`（`0x4070b0`/`0x4070b4`）或 `== 0`（`0x4070b8 cbz`）。
+    DeallocBuffer,
+}
 
 /// `setup_level`（arm64 `0x406b4c` / 88 B）的步骤。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -753,6 +916,282 @@ impl GraphwarBackend {
             arg1,
             started: true,
         }); // 0x406ccc..0x406ce8
+        steps
+    }
+
+    /// `get_next_clip_checkpoint` —— **原版 arm64 `0x40745c` / 156 字节**（x86 侧**无 Location 锚**，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x40745c..0x4074f8`；T106 逐条读，`llvm-objdump -d --start-address=0x40745c`）：
+    ///
+    /// ```text
+    /// 0x40745c  ldr  x8,[x0]              ; x0 = self（播放器槽判别字在 +0x00）
+    /// 0x407460  cmp  x8,#0x2
+    /// 0x407464  b.eq 0x4074d4             ; 槽空（2）⇒ 直接 None（0x4074d4 mov w0,wzr / ret）
+    /// 0x407468  ldp  x8,x9,[x0,#0x48]     ; x8 = clip 检查点表指针(+0x48)、x9 = 表长(+0x50)
+    /// 0x40746c  cbz  x9,0x407480
+    /// 0x407480  add x10,x9,x9 / cmp x10,x9 / b.hs 0x4074d4   ; len==0 的残路 ⇒ None
+    /// 0x407470  cmp  x9,#0x1 / b.ne 0x407490                  ; len>1 走二分
+    /// 0x407478  mov  x10,xzr / b 0x4074b8                     ; len==1：lo=0 直接判
+    ///   ── 二分（0x407498..0x4074b4）──
+    /// 0x407498  lsr  x12,x11,#1           ; half = hi/2
+    /// 0x40749c  add  x13,x12,x10          ; mid  = lo + half
+    /// 0x4074a0  sub  x11,x11,x12          ; hi  -= half
+    /// 0x4074a4  ldr  w14,[x8,x13,lsl #2]  ; 表[mid]
+    /// 0x4074a8  cmp  w14,w1               ; 与实参比
+    /// 0x4074ac  csel x10,x10,x13,hi       ; **表[mid] > 实参 ⇒ lo 不动**，否则 lo = mid
+    /// 0x4074b0  cmp  x11,#0x1 / b.hi 0x407498
+    ///   ── 收敛后的等值/邻位判定 ──
+    /// 0x4074b8  ldr  w11,[x8,x10,lsl #2]  ; 表[lo]
+    /// 0x4074bc  cmp  w11,w1
+    /// 0x4074c0  b.ne 0x4074dc             ; 不等 ⇒ 走邻位分支
+    /// 0x4074c4  mov  w11,#0x1 / add x10,x11,x10   ; 相等 ⇒ idx = lo+1（**严格大于**才返回）
+    /// 0x4074cc  cmp  x10,x9 / b.lo 0x4074ec       ; idx < len ⇒ 返回表[idx]
+    /// 0x4074dc  cinc x10,x10,lo           ; 表[lo] < 实参 ⇒ lo+1，否则 lo（取"第一个大于"的下标）
+    /// 0x4074e4  cmp  x10,x9 / b.hs 0x4074d4       ; 越界 ⇒ None
+    /// 0x4074ec  ldr  w1,[x8,x10,lsl #2]   ; 返回值 = 表[idx]（w1）
+    /// 0x4074f0  mov  w0,#0x1 / ret        ; 判定字 w0 = 1 = Some
+    /// 0x4074d4  mov  w0,wzr / ret         ; 判定字 w0 = 0 = None
+    /// ```
+    ///
+    /// ⇒ 语义：**在 clip 检查点表里找第一个严格大于 `current` 的元素**（= `upper_bound`），
+    /// 没有就返回 `None`。返回形态是 `Option<u32>`：判定字在 `w0`、值在 `w1`（`0x4074f0` 那对
+    /// `mov w0,#1` + 前一条 `ldr w1`）；空判定是 `w0 = 0`。
+    ///
+    /// 三个不显然的点：
+    /// 1. **槽空就直接 None**（`0x407464`），不碰表 —— 与 `stop_client`/`process` 用的是**同一个**
+    ///    `+0x00 == 2` 判据（[`PLAYER_SLOT_EMPTY`]）；
+    /// 2. **等值也跳过**（`0x4074c4` 相等 ⇒ `idx = lo+1`）⇒ 同一个 tick 连问两次拿到的是**下一个**检查点，
+    ///    这正是"播放下一个 clip"要的语义；
+    /// 3. 表是**升序**假设（二分），原版没有做有序性校验。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令；函数名来自 arm64 `.symtab` 的
+    /// `graphwarrust::graphwar_backend::GraphwarBackend::get_next_clip_checkpoint::h9639fc97afa47d4`）。
+    /// 不能标"逐位"：x86 侧没有锚，无法同函数对拍；两颗星的语义等价性只经过"指令顺序 → 我方同构循环"的对读。
+    pub fn get_next_clip_checkpoint(&self, current: u32) -> Option<u32> {
+        // 0x407460 cmp x8,#0x2 / 0x407464 b.eq —— 回放槽空 ⇒ None
+        if self.replay_slot_tag == PLAYER_SLOT_EMPTY {
+            return None;
+        }
+        // 0x407468 ldp x8,x9,[x0,#0x48]：内联播放器的 (ptr, len)
+        let cps = &self.clip_checkpoints;
+        let len = cps.len();
+        if len == 0 {
+            // 0x40746c cbz x9 → 0x407480 → b.hs 0x4074d4
+            return None;
+        }
+        // 0x407498..0x4074b4：二分，收敛到"最后一个 <= current"的位置（`hi` 折半、`lo` 只在
+        // `表[mid] <= current` 时前移 —— 与 0x4074ac 的 `csel …, hi` 同构）
+        let (mut lo, mut hi) = (0usize, len);
+        while hi > 1 {
+            let half = hi / 2; // 0x407498
+            let mid = lo + half; // 0x40749c
+            hi -= half; // 0x4074a0
+            if cps[mid] > current {
+                // 0x4074a8 cmp / 0x4074ac csel hi ⇒ lo 不动
+            } else {
+                lo = mid;
+            }
+        }
+        // 0x4074b8..0x4074e0：等值也 +1（严格大于），否则按大小取 lo 或 lo+1
+        let idx = if cps[lo] == current {
+            lo + 1 // 0x4074c4 mov w11,#1 / 0x4074c8 add x10,x11,x10
+        } else if cps[lo] < current {
+            lo + 1 // 0x4074dc cinc x10,x10,lo
+        } else {
+            lo // 0x4074e0 add x10,xzr,x10
+        };
+        // 0x4074cc / 0x4074e4 越界 ⇒ None（w0=0）；否则 0x4074ec ldr w1 + 0x4074f0 mov w0,#1
+        cps.get(idx).copied()
+    }
+
+    /// `start_lan_broadcaster` —— **原版 arm64 `0x407220` / 144 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x407220..0x4072b0`）：
+    ///
+    /// ```text
+    /// 0x407220  sub  sp,sp,#0xe0 / 存 x29,x30,x19     ; 0xC0 字节区给广播者对象，0x20 给帧
+    /// 0x407230  ldr  x8,[x0,#0x110]                   ; 槽首字（判别位，见 LAN_SLOT_EMPTY）
+    /// 0x407234  mov  x9,#-0x7fffffffffffffff
+    /// 0x407238  cmp  x8,x9
+    /// 0x40723c  b.ne 0x407288                        ; **已经装着 ⇒ 一步都不做**（直接 epilogue）
+    /// 0x407244  mov  x8,sp                           ; sret = 栈上对象
+    /// 0x407248  mov  w0,w1                           ; 实参 = 本函数第 2 实参（32 位口径）
+    /// 0x40724c  bl   0x3de064                        ; GraphwarLanBroadcasterV6::new
+    /// 0x407250  mov  x0,sp
+    /// 0x407254  bl   0x3de19c                        ; GraphwarLanBroadcasterV6::start(&mut 栈上)
+    /// 0x407258..0x407284  8 组 ldp q/stp q            ; 把 0xC0 字节从 sp 搬到 self+0x110..+0x1d0
+    ///                                                       （顺序：+0x190/+0x1b0 → +0x150/+0x170 → +0x110/+0x130）
+    /// 0x407288..  epilogue / ret
+    /// ```
+    ///
+    /// ⇒ 语义：**只在槽为空时装**（与 `start_server` 的"无条件重建"相反，见 [`Self::start_server`]）；
+    /// 装配顺序 = `new(端口)` → `start()` → **整块 0xC0 字节搬进槽**（`new`+`start` 都在栈上完成，
+    /// 失败/panic 时槽仍是原样）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。`start` 的体内没读 ⇒ 开 socket 之后 `+0x1c8` 的 fd 值未知
+    /// （见 [`LanBroadcasterSlot::fd`] 的已知语义损失）。
+    pub fn start_lan_broadcaster(&mut self, port: u32) -> Vec<StartLanBroadcasterStep> {
+        let mut steps = Vec::new();
+        // 0x407238/0x40723c：槽首字 != 空哨兵 ⇒ 直接返回（不 new、不 start）
+        if self.lan_broadcaster.is_some() {
+            return steps;
+        }
+        // 0x40724c：GraphwarLanBroadcasterV6::new(w0 = 端口)，对象在栈上
+        steps.push(StartLanBroadcasterStep::NewBroadcaster);
+        // 0x407254：GraphwarLanBroadcasterV6::start(&mut 栈上对象)
+        steps.push(StartLanBroadcasterStep::StartBroadcaster);
+        // 0x407258..0x407284：整块 0xC0 字节写入 self+0x110
+        self.lan_broadcaster = Some(LanBroadcasterSlot {
+            port,
+            fd: LAN_FD_CLOSED,
+            buffer_len: 0,
+        });
+        steps.push(StartLanBroadcasterStep::Install);
+        steps
+    }
+
+    /// `stop_lan_broadcaster` —— **原版 arm64 `0x407068` / 172 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x407068..0x407114`，主路径；`0x4070e0` 之后是 panic 垫片）：
+    ///
+    /// ```text
+    /// 0x407078  ldr  x20,[x0,#0x110]           ; 槽首字（空哨兵见 LAN_SLOT_EMPTY）
+    /// 0x407084  cmp  x20,x21                   ; x21 = 0x8000_0000_0000_0001
+    /// 0x407088  b.eq 0x4070cc                  ; **已经是空 ⇒ 跳过全部收尾**（只写回哨兵）
+    /// 0x40708c  ldr  w0,[x19,#0x1c8]           ; socket fd
+    /// 0x407090  cmn  w0,#0x1 / 0x407094 b.eq   ; fd == -1 ⇒ 不 close
+    /// 0x407098  bl   close@plt
+    /// 0x40709c  mov  w8,#-1 / 0x4070a0 str w8,[x19,#0x1c8]   ; fd = -1（无条件）
+    /// 0x4070a4  add  x0,x19,#0x188
+    /// 0x4070a8  bl   RawTable::drop            ; 丢掉 hashbrown 表（无条件）
+    /// 0x4070ac  mov  x8,#-0x8000000000000000
+    /// 0x4070b0  cmp  x20,x8 / 0x4070b4 b.eq     ; 长度 == i64::MIN ⇒ 不 dealloc
+    /// 0x4070b8  cbz  x20,0x4070cc              ; 长度 == 0 ⇒ 不 dealloc
+    /// 0x4070bc  ldr  x0,[x19,#0x118]           ; 指针（注意：**指针在 +0x118，长度在 +0x110**）
+    /// 0x4070c0  mov  x1,x20 / 0x4070c4 mov w2,#1
+    /// 0x4070c8  bl   __rustc::__rust_dealloc   ; dealloc(ptr, size=长度, align=1)
+    /// 0x4070cc  str  x21,[x19,#0x110]          ; 槽 = 空哨兵（空槽时也走这一句）
+    /// ```
+    ///
+    /// ⇒ 语义：**空槽什么都不做；非空则 close(fd) → fd=-1 → 丢表 → （长度合法才）释放缓冲 → 写空哨兵**。
+    /// 三个不显然的点：
+    /// 1. `fd` 与"长度"是**同一个对象里**的两个字段（`+0x1c8` / `+0x110`），所以"关 socket"和
+    ///    "释放缓冲"是**两件独立的事**（一个成功另一个也可能跳过）；
+    /// 2. 释放用的 `size` 是槽的**首字**（既是空哨兵位、又是 dealloc 的 size 实参）
+    ///    ⇒ 这也是为什么"空/未分配"必须用哨兵和 0 两个特例把它排掉（`0x4070b0`/`0x4070b8`）；
+    /// 3. 收尾的写哨兵（`0x4070cc`）在**两条路汇合之后** ⇒ 空槽调用也是幂等的（写回同一个值）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。不声称"逐位"：x86 侧没有锚。
+    pub fn stop_lan_broadcaster(&mut self) -> Vec<StopLanBroadcasterStep> {
+        let mut steps = Vec::new();
+        // 0x407084/0x407088：空槽 ⇒ 一步都不推（但 0x4070cc 的写哨兵是汇合后的，照做）
+        if let Some(slot) = self.lan_broadcaster {
+            // 0x407090 cmn w0,#0x1 / b.eq：fd == -1 就不 close
+            if slot.fd != LAN_FD_CLOSED {
+                steps.push(StopLanBroadcasterStep::CloseSocket); // 0x407098
+            }
+            steps.push(StopLanBroadcasterStep::ResetFd); // 0x40709c/0x4070a0（无条件）
+            steps.push(StopLanBroadcasterStep::DropTable); // 0x4070a4/0x4070a8（无条件）
+            // 0x4070b0/0x4070b4 + 0x4070b8：两个"跳过 dealloc"的特例
+            if slot.buffer_len != 0 && slot.buffer_len != 0x8000_0000_0000_0000 {
+                steps.push(StopLanBroadcasterStep::DeallocBuffer); // 0x4070bc..0x4070c8
+            }
+        }
+        self.lan_broadcaster = None; // 0x4070cc str x21(哨兵),[x19,#0x110]
+        steps
+    }
+
+    /// `start_server_broker_handler` —— **原版 arm64 `0x4077bc` / 140 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x4077bc..0x407848`）：
+    ///
+    /// ```text
+    /// 0x4077bc  sub  sp,sp,#0x60 / 存 x29,x30,x20,x19   ; 0x38 字节区给 handler 对象
+    /// 0x4077cc  ldr  x8,[x0,#0x228]                     ; 槽首字（= Arc 指针，0 = 空）
+    /// 0x4077d0  cbz  x8,0x4077e4                        ; **空才装**；非空 ⇒ 0x4077d4 直接 epilogue
+    /// 0x4077e4  add  x8,sp,#0x8                         ; sret = 栈上对象
+    /// 0x4077e8  mov  x20,x0                             ; self
+    /// 0x4077ec  mov  x19,x1                             ; 唯一的实参
+    /// 0x4077f0  bl   0x489d64                           ; GraphwarServerBrokerHandler::new
+    /// 0x4077f4  add  x0,sp,#0x8 / 0x4077f8 mov x1,x19
+    /// 0x4077fc  bl   0x489fa8                           ; GraphwarServerBrokerHandler::start(&mut, 实参)
+    /// 0x407800..0x40781c  ldur q0/q1/q2 + ldr x9（sp+0x8..sp+0x40，共 0x38 字节）
+    ///                     → stp q0,q1,[x8] + str q2,[x8,#0x20] + str x9,[x8,#0x30]（x8 = self+0x228）
+    /// ```
+    ///
+    /// ⇒ 语义：**只在槽为空时装**（与 `start_lan_broadcaster` 同形态、与 `start_server` 相反）：
+    /// `new()` → `start(实参)` → 整块 0x38 字节搬进 `+0x228`。`new`/`start` 都在栈上完成
+    /// ⇒ 中途 panic 不会留下半个槽。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。`new`/`start` 的体内没读 ⇒ "装进来的对象里有什么"
+    /// 只有槽首字的 Arc 指针 + 后随 hashbrown 表两条（见 [`BrokerSlot`]）。
+    pub fn start_server_broker_handler(&mut self, arg: u32) -> Vec<StartBrokerStep> {
+        let mut steps = Vec::new();
+        // 0x4077d0 cbz x8：槽非空 ⇒ 一步都不做
+        if self.broker.is_some() {
+            return steps;
+        }
+        // 0x4077f0：GraphwarServerBrokerHandler::new（栈上，sret = sp+0x8）
+        steps.push(StartBrokerStep::NewHandler);
+        // 0x4077fc：GraphwarServerBrokerHandler::start(&mut 栈上对象, 实参)
+        steps.push(StartBrokerStep::StartHandler);
+        // 0x407814..0x40781c：0x38 字节整块写进 self+0x228
+        self.broker = Some(BrokerSlot {
+            arg,
+            arc_strong: 1, // Arc::new 的契约初值（**推断**，见 BrokerSlot::arc_strong）
+            map_entries: 0,
+        });
+        steps.push(StartBrokerStep::Install);
+        steps
+    }
+
+    /// `stop_server_broker_handler` —— **原版 arm64 `0x4074f8` / 136 字节**（x86 侧无 Location 锚，527 分母外）。
+    ///
+    /// 逐指令（arm64 `0x4074f8..0x407580`，主路径）：
+    ///
+    /// ```text
+    /// 0x4074f8  stp x29,x30,[sp,#-0x30]! / 存 x21,x20,x19
+    /// 0x407508  ldr  x20,[x0,#0x228]      ; 槽首字 = handler 里那个 Arc 的指针
+    /// 0x40750c  add  x21,x0,#0x228
+    /// 0x407510  cbz  x20,0x407548        ; **空槽 ⇒ 跳过全部收尾**（只去写 0）
+    /// 0x407518  add  x0,x0,#0x228
+    /// 0x40751c  bl   0x489e50             ; GraphwarServerBrokerHandler::stop(&mut self+0x228)
+    /// 0x407520  ldxr x8,[x20] / 0x407524 subs x8,x8,#1 / 0x407528 stlxr w9,x8,[x20]
+    /// 0x40752c  cbnz w9,0x407520         ; store 失败 ⇒ 重试（`fetch_sub` 的 LL/SC 循环）
+    /// 0x407530  b.ne 0x407540            ; **减完非 0** ⇒ 还有人持有，跳过 drop_slow
+    /// 0x407534  dmb  ishld
+    /// 0x40753c  bl   0x45f2e4             ; Arc::drop_slow（最后一个引用）
+    /// 0x407540  add  x0,x19,#0x230
+    /// 0x407544  bl   0x3c5f2c             ; RawTable::drop（handler 里的 HashMap，**无条件**）
+    /// 0x407548  str  xzr,[x21]            ; 槽 = 0 = 空（两条路都汇合到这里 ⇒ 空槽调用也幂等）
+    /// ```
+    ///
+    /// ⇒ 语义：**空槽什么都不做；非空则 stop() → Arc 强计数减一 → （减到 0 才）drop_slow
+    /// → 丢 HashMap → 槽置空**。
+    ///
+    /// 三个不显然的点：
+    /// 1. **顺序是 stop 先于解引用**（`0x40751c` < `0x407520`）：先让 handler 自己收尾，
+    ///    再放掉它持有的共享句柄 —— 反过来会让 `stop` 在计数已减的 `Arc` 上跑；
+    /// 2. **`Arc::drop_slow` 只对最后一个引用**（`0x407530 b.ne` 跳过）—— 与 `stop_lan_broadcaster`
+    ///    里"无条件 dealloc"的形态不同（那边没有引用计数）；
+    /// 3. `HashMap` 的释放**在 Arc 之后、且无条件**（`0x407540`）：它是 handler 的**内联字段**
+    ///    （`+0x230`），所以不管 Arc 有没有别人持有，这段必须在本函数的槽被清空前丢掉。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。`GraphwarServerBrokerHandler::stop`（0x489e50）的体内没读
+    /// ⇒ "stop 会不会自己清空槽"未知（我方模型：不会，槽由本函数写 0）。
+    pub fn stop_server_broker_handler(&mut self) -> Vec<StopBrokerStep> {
+        let mut steps = Vec::new();
+        // 0x407510 cbz x20：空槽 ⇒ 一步不推（0x407548 的写 0 仍执行，我方 None 等价）
+        if let Some(slot) = self.broker {
+            steps.push(StopBrokerStep::HandlerStop); // 0x40751c
+            steps.push(StopBrokerStep::ArcRelease); // 0x407520..0x40752c
+            // 0x407524 subs x8,x8,#1 + 0x407530 b.ne：**减完恰好 0** 才 drop_slow
+            if slot.arc_strong.wrapping_sub(1) == 0 {
+                steps.push(StopBrokerStep::ArcDropSlow); // 0x40753c
+            }
+            steps.push(StopBrokerStep::MapDrop); // 0x407540/0x407544
+        }
+        self.broker = None; // 0x407548 str xzr,[x21]
         steps
     }
 
@@ -1111,5 +1550,248 @@ mod replay_session_tests {
             crate::graphwar_replay_player::GraphwarReplayPlayer::new(),
         );
         assert!(steps.contains(&ReplayStartStep::DropOldPlayer), "0x514fe8 判据");
+    }
+}
+
+#[cfg(test)]
+mod denom_t106_tests {
+    //! T106：**527 分母之外**的 5 条 `graphwar_backend` 源码函数。
+    //!
+    //! **期望值来源**：全部来自 Android 2.0.60 **arm64** 反汇编的具体指令
+    //! （`llvm-objdump -d --start-address=<vaddr> --stop-address=<vaddr+size>
+    //! `.reference/steam/android-2.0.60/libgraphwarrust.so``），**不来自**我方实现的输出
+    //! （AGENTS.md §0.5）。x86 侧这些函数没有 `panic::Location` 锚 ⇒ 档位只能到 **观测**。
+    use super::*;
+
+    /// `get_next_clip_checkpoint` = **upper_bound**（严格大于）。用例覆盖
+    /// 0x4074c4（等值 +1）、0x4074dc（小于 +1）、0x4074e0（大于不动）、0x4074cc/0x4074e4（越界 None）、
+    /// 0x407464（槽空 None）、0x40746c（空表 None）六条分支。
+    #[test]
+    fn get_next_clip_checkpoint_is_a_strict_upper_bound() {
+        let mut b = GraphwarBackend::new();
+        b.replay_slot_tag = 0; // != 2 ⇒ 槽里有活的播放器（0x407460 判据）
+        b.clip_checkpoints = vec![100, 200, 300, 400];
+
+        // ① 等值 ⇒ 返回**下一个**（0x4074c4 相等就 lo+1）
+        assert_eq!(b.get_next_clip_checkpoint(200), Some(300), "0x4074c4：相等不算命中");
+        // ② 落在两值之间 ⇒ 返回上一个的上界（0x4074dc 小于 ⇒ lo+1）
+        assert_eq!(b.get_next_clip_checkpoint(250), Some(300), "0x4074dc cinc …lo");
+        // ③ 小于首元素 ⇒ 返回首元素（0x4074e0 lo 不动）
+        assert_eq!(b.get_next_clip_checkpoint(0), Some(100), "0x4074e0");
+        // ④ 等于末元素 ⇒ 越界（0x4074cc cmp x10,x9 / b.hs）
+        assert_eq!(b.get_next_clip_checkpoint(400), None, "0x4074e4 越界");
+        // ⑤ 大于一切 ⇒ None
+        assert_eq!(b.get_next_clip_checkpoint(u32::MAX), None, "0x4074e4 越界");
+    }
+
+    /// 重复值：`[100,100,200]` 对 `100` 必须返回 `200`（等值跳过**所有**相同值）。
+    /// 原版靠"相等 ⇒ lo+1"这一条实现，没有去重逻辑（0x4074c4 之后没有回退循环）。
+    #[test]
+    fn get_next_clip_checkpoint_skips_duplicates() {
+        let mut b = GraphwarBackend::new();
+        b.replay_slot_tag = 0;
+        b.clip_checkpoints = vec![100, 100, 200];
+        assert_eq!(b.get_next_clip_checkpoint(100), Some(200));
+        // 单个元素 + 等值 ⇒ 空（0x407478 len==1 的 `mov x10,xzr` 路径）
+        b.clip_checkpoints = vec![7];
+        assert_eq!(b.get_next_clip_checkpoint(7), None, "len==1 且相等 ⇒ 越界 None");
+        assert_eq!(b.get_next_clip_checkpoint(6), Some(7), "len==1 且小于 ⇒ 该元素");
+    }
+
+    /// 两个早退判据：槽空（0x407464）与空表（0x40746c → 0x407480）。
+    #[test]
+    fn get_next_clip_checkpoint_early_returns() {
+        // ① 槽判别字 == 2（空）：表里就算有东西也不读
+        let mut b = GraphwarBackend::new();
+        b.clip_checkpoints = vec![10, 20];
+        b.replay_slot_tag = PLAYER_SLOT_EMPTY;
+        assert_eq!(b.get_next_clip_checkpoint(5), None, "0x407464 b.eq");
+
+        // ② 槽活着但表空
+        b.replay_slot_tag = 0;
+        b.clip_checkpoints.clear();
+        assert_eq!(b.get_next_clip_checkpoint(5), None, "0x40746c cbz x9");
+    }
+
+    /// `0x407e10 mov x9,#-0x7fffffffffffffff` + `0x407e1c str x9,[x21,#0x110]`：LAN 槽的"空"编码。
+    /// 契约断言（不含语义）：钉住常量与指令立即数的对应关系。
+    #[test]
+    fn lan_slot_empty_sentinel_matches_instructions() {
+        assert_eq!(LAN_SLOT_EMPTY, 0x8000_0000_0000_0001, "0x407e10 / 0x407080 / 0x407234");
+        assert_eq!(LAN_FD_CLOSED, -1, "0x3de0f0 str w8(=-1)；0x407090 cmn w0,#0x1");
+        assert_eq!(BackendField::LAN_SLOT_SIZE, 0xc0, "8 组 ldp/stp q = 0xC0 字节");
+        assert_eq!(BackendField::LAN_FD, 0x110 + 0xb8, "对象内 +0xb8 ⇒ 绝对 +0x1c8");
+        assert_eq!(BackendField::LAN_TABLE, 0x110 + 0x78, "对象内 +0x78 ⇒ 绝对 +0x188");
+        // 新后端里 LAN 槽必须是空的（new 写的就是那个哨兵）
+        assert!(GraphwarBackend::new().lan_broadcaster.is_none());
+    }
+
+    /// `start_lan_broadcaster`：**只在空槽时装**（0x40723c `b.ne`），装的时候顺序是
+    /// new(0x40724c) → start(0x407254) → 整块搬入(0x407258..)。第二次调用一步都不推。
+    #[test]
+    fn start_lan_broadcaster_only_installs_into_an_empty_slot() {
+        let mut b = GraphwarBackend::new();
+        assert_eq!(
+            b.start_lan_broadcaster(35245),
+            vec![
+                StartLanBroadcasterStep::NewBroadcaster,
+                StartLanBroadcasterStep::StartBroadcaster,
+                StartLanBroadcasterStep::Install,
+            ],
+            "顺序 = bl 地址顺序 0x40724c → 0x407254 → 0x407258"
+        );
+        let slot = b.lan_broadcaster.expect("0x407284 之后槽里是活的广播者");
+        assert_eq!(slot.port, 35245, "0x407248 mov w0,w1：实参原样进 new");
+        assert_eq!(slot.fd, LAN_FD_CLOSED, "new 写 -1（0x3de0f0）；start 之后的真值本轮未知");
+
+        // 第二个次调用：槽非空 ⇒ 0x40723c b.ne 直接返回，连 new 都不调
+        assert!(b.start_lan_broadcaster(9999).is_empty(), "0x40723c b.ne 0x407288");
+        assert_eq!(b.lan_broadcaster.unwrap().port, 35245, "旧槽不被覆盖（与 start_server 相反）");
+    }
+
+    /// `stop_lan_broadcaster` 的四条分支：①空槽 ②fd 打开 + 长度合法（四步全走）
+    /// ③fd 已关 + 长度 0（跳过 close 与 dealloc）④长度 = `0x8000…0000`（跳过 dealloc）。
+    /// 判据地址：0x407090（cmn）、0x4070a8（RawTable::drop）、0x4070b0/0x4070b4、0x4070b8。
+    #[test]
+    fn stop_lan_broadcaster_walks_four_guards() {
+        use StopLanBroadcasterStep::*;
+
+        // ① 空槽：一步不推，且写回哨兵（= 我方 None，幂等）
+        let mut b = GraphwarBackend::new();
+        assert!(b.stop_lan_broadcaster().is_empty(), "0x407088 b.eq");
+        assert!(b.lan_broadcaster.is_none(), "0x4070cc 写回空哨兵");
+
+        // ② fd=7、长度 64：close → fd=-1 → 丢表 → dealloc
+        let mut b = GraphwarBackend::new();
+        b.lan_broadcaster = Some(LanBroadcasterSlot { port: 35245, fd: 7, buffer_len: 64 });
+        assert_eq!(
+            b.stop_lan_broadcaster(),
+            vec![CloseSocket, ResetFd, DropTable, DeallocBuffer],
+            "地址顺序 0x407098 → 0x40709c → 0x4070a8 → 0x4070c8"
+        );
+        assert!(b.lan_broadcaster.is_none());
+
+        // ③ fd 已关（-1）+ 长度 0：两条跳过判据都命中 ⇒ 只剩 ResetFd + DropTable
+        let mut b = GraphwarBackend::new();
+        b.lan_broadcaster = Some(LanBroadcasterSlot { port: 1, fd: LAN_FD_CLOSED, buffer_len: 0 });
+        assert_eq!(b.stop_lan_broadcaster(), vec![ResetFd, DropTable], "0x407094 b.eq + 0x4070b8 cbz");
+
+        // ④ 长度 == 0x8000_0000_0000_0000：只跳过 dealloc（close 照做）
+        let mut b = GraphwarBackend::new();
+        b.lan_broadcaster =
+            Some(LanBroadcasterSlot { port: 2, fd: 9, buffer_len: 0x8000_0000_0000_0000 });
+        assert_eq!(b.stop_lan_broadcaster(), vec![CloseSocket, ResetFd, DropTable], "0x4070b4 b.eq");
+    }
+
+    /// 与 `start_lan_broadcaster` 配对的正对照：装进去（fd=−1、长度 0）再停，
+    /// 只应推 `ResetFd + DropTable`（close 与 dealloc 都被判据跳过）。
+    #[test]
+    fn start_then_stop_lan_broadcaster_skips_socket_and_buffer() {
+        use StopLanBroadcasterStep::*;
+        let mut b = GraphwarBackend::new();
+        b.start_lan_broadcaster(35245);
+        assert_eq!(b.stop_lan_broadcaster(), vec![ResetFd, DropTable]);
+        assert!(b.lan_broadcaster.is_none());
+    }
+
+    /// broker 槽的布局契约：handler 对象 0x38 字节、`HashMap` 在对象内 +0x8（绝对 +0x230）、
+    /// 空编码 = 首字 0（**不是** LAN 那个 0x8000…0001 哨兵）。指令：0x407800–0x40781c / 0x4077d0 / 0x407510。
+    #[test]
+    fn broker_slot_layout_matches_instructions() {
+        assert_eq!(BackendField::BROKER_SLOT_SIZE, 0x38, "0x407800..0x40781c 拷 0x38 字节");
+        assert_eq!(BackendField::BROKER_MAP, BackendField::BROKER + 8, "对象内 +0x8");
+        assert_eq!(BackendField::BROKER + 0x38, 0x260, "槽结束位置（new 的 0x407e28 写 +0x258）");
+        assert!(GraphwarBackend::new().broker.is_none(), "new 把这段写成 0（0x407e14/0x407e24）");
+    }
+
+    /// `start_server_broker_handler`：**只在空槽时装**（0x4077d0 `cbz`），顺序 new → start → 装。
+    #[test]
+    fn start_server_broker_handler_only_installs_into_an_empty_slot() {
+        let mut b = GraphwarBackend::new();
+        assert_eq!(
+            b.start_server_broker_handler(35245),
+            vec![StartBrokerStep::NewHandler, StartBrokerStep::StartHandler, StartBrokerStep::Install],
+            "顺序 = bl 地址顺序 0x4077f0 → 0x4077fc → 0x407814"
+        );
+        assert_eq!(b.broker.unwrap().arg, 35245, "0x4077f4 mov x1,x19：实参原样进 start");
+
+        // 第二次：槽非空 ⇒ 0x4077d0 cbz 走 0x4077d4 的 epilogue，连 new 都不调
+        assert!(b.start_server_broker_handler(1).is_empty(), "0x4077d0 cbz 0x4077e4 的反面");
+        assert_eq!(b.broker.unwrap().arg, 35245, "旧槽不被覆盖");
+    }
+
+    /// `stop_server_broker_handler` 的四条分支：①空槽 ②强计数 1（最后一个引用 ⇒ 四步全走）
+    /// ③强计数 2（跳过 `Arc::drop_slow`，0x407530 b.ne）④强计数 0（wrapping：subs 得 MAX ≠ 0 ⇒ 也跳过）。
+    #[test]
+    fn stop_server_broker_handler_walks_arc_and_map_guards() {
+        use StopBrokerStep::*;
+
+        // ① 空槽：一步不推（0x407510 cbz）
+        let mut b = GraphwarBackend::new();
+        assert!(b.stop_server_broker_handler().is_empty(), "0x407510 cbz x20,0x407548");
+        assert!(b.broker.is_none());
+
+        // ② 最后一个引用：stop → 减一 → drop_slow → 丢表
+        let mut b = GraphwarBackend::new();
+        b.broker = Some(BrokerSlot { arg: 35245, arc_strong: 1, map_entries: 3 });
+        assert_eq!(
+            b.stop_server_broker_handler(),
+            vec![HandlerStop, ArcRelease, ArcDropSlow, MapDrop],
+            "地址顺序 0x40751c → 0x407520 → 0x40753c → 0x407544"
+        );
+        assert!(b.broker.is_none(), "0x407548 str xzr");
+
+        // ③ 还有别的引用：drop_slow 被 0x407530 b.ne 跳过
+        let mut b = GraphwarBackend::new();
+        b.broker = Some(BrokerSlot { arg: 1, arc_strong: 2, map_entries: 0 });
+        assert_eq!(b.stop_server_broker_handler(), vec![HandlerStop, ArcRelease, MapDrop]);
+
+        // ④ 强计数 0（模型里的异常态）：`subs` 借位得 usize::MAX ≠ 0 ⇒ 同样跳过 drop_slow
+        let mut b = GraphwarBackend::new();
+        b.broker = Some(BrokerSlot { arg: 2, arc_strong: 0, map_entries: 0 });
+        assert_eq!(b.stop_server_broker_handler(), vec![HandlerStop, ArcRelease, MapDrop]);
+    }
+
+    /// 与 `start_server_broker_handler` 配对的正对照：装（arc_strong=1）再停 ⇒ 必须走到 `ArcDropSlow`
+    /// （证明两个函数的槽语义自洽：装进来的就是"唯一持有者"）。
+    #[test]
+    fn start_then_stop_broker_handler_drops_the_only_arc() {
+        use StopBrokerStep::*;
+        let mut b = GraphwarBackend::new();
+        b.start_server_broker_handler(35245);
+        assert_eq!(
+            b.stop_server_broker_handler(),
+            vec![HandlerStop, ArcRelease, ArcDropSlow, MapDrop]
+        );
+        assert!(b.broker.is_none());
+    }
+
+    /// 差分对拍：我方这段循环与 `partition_point(|&c| c <= current)`（upper_bound 的另一种写法）
+    /// 在 200 组随机升序表上必须逐值相同 —— 这是**规格级**对拍（两边都是同一句话的实现），
+    /// 用来抓"二分收敛位置差一"这类手抄错误，不当作复原证据。
+    #[test]
+    fn get_next_clip_checkpoint_matches_partition_point() {
+        let mut seed: u64 = 0x1234_5678_9abc_def0;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..200 {
+            let n = (next() % 12) as usize;
+            let mut table: Vec<u32> = (0..n).map(|_| (next() % 64) as u32).collect();
+            table.sort_unstable(); // 原版假设升序
+            let mut b = GraphwarBackend::new();
+            b.replay_slot_tag = 0;
+            b.clip_checkpoints = table.clone();
+            for key in 0..=66u32 {
+                let want = {
+                    let i = table.partition_point(|&c| c <= key);
+                    table.get(i).copied()
+                };
+                assert_eq!(b.get_next_clip_checkpoint(key), want, "表={:?} key={}", table, key);
+            }
+        }
     }
 }
