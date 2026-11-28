@@ -124,6 +124,31 @@ impl GwFlowClock {
         n
     }
 
+    /// **联机倒计时的换算**：`end_of_turn_tick − now_tick` 的剩余**整秒**；`-1` = 没有截止。
+    ///
+    /// 判据出处（**逐位**，`docs/06` §150 P4-1）—— 播放屏那台 `process`（宿主 `0x3dcbb0`）里：
+    ///
+    /// ```text
+    /// 0x3dccd6  mov  ebx, dword ptr [r15+0x58]  ; now_tick = GraphwarTickHandler.current_tick
+    ///                                           ;   r15 = RefCell 守卫 ⇒ 载荷在 +0x18 ⇒ +0x58 = 载荷+0x40
+    /// 0x3dcd2c  call 0x462ec0                   ; TurnManager::get_end_of_turn_tick → Option<u32>
+    /// 0x3dcd35  test al, 1 / je                 ; None（TimerInf）⇒ 另一个分支（标签空白）
+    /// 0x3dcd47  sub  edx, ebx                   ; end − now（u32 模运算）
+    /// 0x3dcd49  cmovb edx, eax(=0)              ; **借位 ⇒ 0**（= saturating_sub，不出负数）
+    /// 0x3dcd4c  imul rax, rdx ; shr rax, 0x25   ; / 60 ⇒ 剩余整秒（截断）
+    /// ```
+    ///
+    /// ⇒ **两个操作数在同一根 60 Hz tick 轴上**（`end_of_turn_tick` 是服务端绝对 tick，
+    /// `now_tick` 是客户端那台 tick handler 的 `current_tick`，由 `TickReply` 拨到同一条轴）。
+    /// **不是**"回合时长 − 本回合已过 tick"（那是本地局的口径，见 `_turn_clock`）。
+    /// 关联函数（与 [`GwFlowClock::state_sync_kinds`] 同一形态），GDScript 侧写
+    /// `GwFlowClock.seconds_left_in_turn(...)` —— 它**不依赖那台 tick handler**，
+    /// 纯换算（`now_tick` 由调用方给，联机路径给平面那台 handler 的 `integer_tick_now()`）。
+    #[func]
+    fn seconds_left_in_turn(end_of_turn_tick: i64, now_tick: i64) -> i64 {
+        seconds_until_turn_end(end_of_turn_tick, now_tick).unwrap_or(-1)
+    }
+
     /// 当前 tick 计数（`GraphwarTickHandler` 的 `+0x40`；诊断/自检用）。
     #[func]
     fn tick(&self) -> i64 {
@@ -207,6 +232,26 @@ fn new_connection_request_json() -> String {
     )
 }
 
+/// **联机倒计时**：`end_of_turn_tick − now_tick` 折成整秒（`None` = 这一档没有截止）。
+///
+/// 逐位对应的指令（`docs/06` §150 P4-1，宿主 `0x3dcbb0`）：
+///
+/// ```text
+/// 0x3dcd47  sub edx, ebx / 0x3dcd49 cmovb edx,0   ; saturating_sub（借位夹 0）
+/// 0x3dcd4c  imul rax, rdx ; shr rax, 0x25         ; / 60，截断
+/// ```
+///
+/// `TimerInf` 档原版走 `get_end_of_turn_tick() == None`（`0x3dcd35 test al,1 / je`），
+/// 我方线上代理是 `end_of_turn_tick == 0`（`docs/14` §3.3.2 四档实测：TimerInf 线上写 `0`）
+/// ⇒ `None` ⇒ 标签空白。
+pub fn seconds_until_turn_end(end_of_turn_tick: i64, now_tick: i64) -> Option<i64> {
+    if end_of_turn_tick <= 0 {
+        return None; // `TimerInf` 哨兵（原版 Option::None；线上 0）
+    }
+    let left_ticks = (end_of_turn_tick - now_tick).max(0); // 0x3dcd49 cmovb：借位夹 0
+    Some(left_ticks / crate::graphwar_tick_handler::TICKS_PER_SECOND as i64) // 0x3dcd4c：/60 截断
+}
+
 /// 把一帧的 `delta` 折成整数 tick 并逐个 [`GraphwarTickHandler::tick`]，
 /// 返回这一帧该发几条 `TickRequest`（纯逻辑，单测直接喂它；类里那两行只是加上计数）。
 fn drive_handler(handler: &mut GraphwarTickHandler, carry_ns: &mut u64, delta: f64) -> i64 {
@@ -252,6 +297,26 @@ mod tests {
         }
         assert_eq!(h.current_tick, 60);
         assert_eq!(fired, 1, "第二次触发在 tick=60，不在 tick=59");
+    }
+
+    /// **联机倒计时的轴**（`docs/06` §150 P4-4）：`(end − now) / 60`，**截断**、下溢夹 0。
+    ///
+    /// 真值来自 `0x3dcd47`–`0x3dcd55`（`sub edx,ebx` / `cmovb edx,0` / `/60` 幻数
+    /// `0x88888889 >> 0x25`）。这些断言钉住**边界**（到点 = `00:00` 而不是负数）与
+    /// **`TimerInf` 哨兵**（线上 `0` ⇒ 空白），两处都是原版指令直接给的口径。
+    #[test]
+    fn turn_countdown_is_end_minus_now_on_the_same_tick_axis() {
+        assert_eq!(seconds_until_turn_end(10_800, 0), Some(180));
+        // `docs/92` §4.10 观测到"3 分钟档一开局就显示 `02:59`"：那是 `end − now` 在公告那一 tick
+        // 已经是 179 秒左右（`end` 在回合起点算，`EndOfTurnInfo` 晚一两 tick 才到）——
+        // **不是**这里再减 1。所以本条只钉 180/179 都由同一算式给出，不额外造偏移。
+        assert_eq!(seconds_until_turn_end(10_800, 60), Some(179), "过 60 tick ⇒ 179 秒");
+        assert_eq!(seconds_until_turn_end(10_800, 10_800), Some(0), "到点 == 00:00（不是负数）");
+        assert_eq!(seconds_until_turn_end(10_800, 10_801), Some(0), "过点 ⇒ 夹 0（cmovb）");
+        assert_eq!(seconds_until_turn_end(600, 537), Some(1), "63 tick ⇒ 1 秒（截断）");
+        assert_eq!(seconds_until_turn_end(59, 0), Some(0), "不足 1 秒 ⇒ 00:00（整数除法）");
+        assert_eq!(seconds_until_turn_end(0, 5), None, "TimerInf 哨兵（线上 0）⇒ 无截止");
+        assert_eq!(seconds_until_turn_end(-1, 5), None, "负值也当哨兵，不给负数秒");
     }
 
     /// 折法是整数纳秒（`fold_dt_into_ticks`）：120 个半帧 = 60 tick，余数不许攒出多余 tick。

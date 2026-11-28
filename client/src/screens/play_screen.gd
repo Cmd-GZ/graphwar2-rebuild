@@ -255,6 +255,13 @@ var _flow := GwShotFlow.new()
 var _turn_clock := GwTurnClock.new()
 ## `TickRequest` 的节奏时钟（Rust：`GraphwarTickHandler`，`0x519840` / `0x519630`）。
 var _flow_clock := GwFlowClock.new()
+## **联机倒计时的剩余秒**（`-1` = 这一档没有截止 ⇒ 标签空白）。
+##
+## 轴是**服务端绝对 60Hz tick**（原版 `0x3dcd47 sub edx,ebx` 两个操作数同一根轴），
+## 不是我方"时长 − 本回合已过 tick"。取数在 `_online_tick()`，换算在 Rust
+## （`GwFlowClock.seconds_left_in_turn`，逐位判据见 `docs/06` §150 P4-*）。改前这里是
+## `_turn_clock.advance(delta)` 的墙钟折 tick ⇒ **与平面那台 tick handler 不同轴**。
+var _online_seconds_left := -1.0
 ## **本回合已过 tick**（同时回合收集阶段的 deadline 轴，`docs/06` §150 P1-3）。
 ##
 ## 原版判"什么时候该结算"用的是**同一根 60Hz 轴上的两个数**：
@@ -3209,12 +3216,20 @@ func _online_can_fire() -> bool:
 ## 联机下的时钟：只走数、不换手。换手是服务端 `TurnInfo` 的事 ——
 ## 本地那条"到点自动换手"（`_process` 的另一半）在这里会让两个真相源打架。
 ##
-## 倒计时**不是**我方的墙钟（T99 / `docs/06` §144）：改前是 `_time_left -= delta`，与
-## `GwTurnClock` 平行；现在推进 Rust 的 `TurnClock`（`graphwar_play_screen_control`）——
-## 它按 `TICKS_PER_SECOND` 把秒折成 tick、`seconds_left()` = 时长 − 已过 tick，
-## 时长来自 `graphwar_mode_manager::TimeMode::seconds()`（`docs/42` 抓包实证 30/60/120/180/300）。
-func _online_tick(delta: float) -> void:
-	_turn_clock.advance(delta)
+## **倒计时的轴**（T104 / `docs/06` §150 第④条）：原版是
+## `剩余秒 = saturating_sub(end_of_turn_tick, now_tick) / 60`，两个操作数**同一根 60 Hz tick 轴**
+## （`0x3dcd47 sub edx,ebx` / `0x3dcd49 cmovb` / `0x3dcd4c` 除 60 幻数 `0x88888889>>0x25`）；
+## `now_tick` 读的是 `GraphwarTickHandler` 的 `current_tick`（`0x3dccd6 mov ebx,[r15+0x58]`，
+## r15 是 RefCell 守卫 ⇒ 载荷 +0x40）。改前我方用的是 `TurnClock` 的"时长 − 本回合已过 tick"
+## （墙钟折 tick）—— 与平面那台 tick handler **不同轴**，只是因为两边都被夹到同一个时长，
+## 读数上只差一个常量偏移（T99 §144.6 #4 的登记）。
+## 现在：`end_of_turn_tick` 来自服务端 `EndOfTurnInfo`（`session.gd::_apply`），
+## `now_tick` 取平面那台 tick handler（`integer_tick_now()`；收到 `TickReply` 时被
+## `set_fractional_tick` 拨到服务端轴上、之后由 `drive_frame` 按 60 Hz 推进）。
+func _online_tick(_delta: float) -> void:
+	_online_seconds_left = float(GwFlowClock.seconds_left_in_turn(
+		int(_online_room().get("end_of_turn_tick", 0)),
+		int(_plane.call("integer_tick_now")) if _plane != null else 0))
 	_update_timer_label()
 
 ## 联机开火：**只发两条请求**，弹道与服务端算。判定/生死/回合全在服务端
@@ -3587,8 +3602,11 @@ func _update_timer_label() -> void:
 	var app_node := app()
 	if app_node == null:
 		return
-	# 本地与联机**同一条**路径：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
-	var left := _turn_clock.seconds_left()
+	# 两条路径，**两条不同的轴**（原版就是这样，见 `docs/06` §150）：
+	# * 联机 = 服务端绝对 tick 轴（`end_of_turn_tick − 平面 tick`，`0x3dcd47`）；
+	# * 本地局 = `GwTurnClock`（时长 − 本回合已过 tick；本地没有服务端的 `EndOfTurnInfo`）。
+	# 两者 `-1.0` 都表示"这一档没有截止" ⇒ 标签空白（`TimerInf`）。
+	var left := _online_seconds_left if _online_mode else _turn_clock.seconds_left()
 	_timer_label.text = "" if left < 0.0 else GwModes.format_clock(left)
 
 # ---------------------------------------------------------------- 附加按钮与显示开关
