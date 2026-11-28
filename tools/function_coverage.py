@@ -87,9 +87,53 @@ BOUNDARY = "fixtures/boundary_audit.tsv"
 MATRIX = "docs/coverage-matrix.tsv"
 OUT = "fixtures/function_coverage.tsv"
 NA_LEDGER = "fixtures/f3_triage.tsv"
+# T105：527 **分母之外**的真实源码函数（预注册 fixtures/denom_outside_plan.txt；生成器
+# `tools/global_triage.py --denom-outside`）。本工具只**读**它，不重算（重算需要 capstone + Android .so）。
+DENOM_TSV = "fixtures/denom_outside.tsv"
 
 GRADES_WITH_EVIDENCE = ("逐位", "观测")
 SCAFFOLD_PREFIX = "src/_scaffold/"
+
+# ---------------------------------------------------------------------------
+# T105：分母外源码函数（`lin_fns_noloc` 列 + 第四口径 D）
+# ---------------------------------------------------------------------------
+def load_noloc(path=DENOM_TSV):
+    """读 `fixtures/denom_outside.tsv` → dict(per_module, X, X_impl, X_alt, X_missing, X_mc, serde)。
+
+    **只读、不重算**（重算要 capstone + Android 未剥离 `.so`，属 `tools/global_triage.py --denom-outside`）。
+    文件缺失 ⇒ 返回 None（调用方按"没有这一列/没有 D 口径"处理，不猜、不静默填 0）。
+    """
+    if not os.path.exists(os.path.join(ROOT, path)):
+        return None
+    groups, serde = {}, set()
+    for ln in open(os.path.join(ROOT, path), encoding="utf-8"):
+        if ln.startswith("#"):
+            continue
+        p = ln.rstrip("\n").split("\t")
+        if p[0] == "android_addr" or not p[0].startswith("0x"):
+            continue
+        if not p[13].endswith("denom:no-loc"):
+            continue
+        groups[p[15]] = (p[3], p[13])
+        if p[5] in ("serialize", "deserialize"):
+            serde.add(p[15])
+    per = collections.Counter()
+    impl = collections.Counter()
+    for g, (mod, verdict) in groups.items():
+        per[mod + ".rs"] += 1
+        if not verdict.startswith("real-missing"):
+            impl[mod + ".rs"] += 1
+    n_impl = sum(1 for _g, (_m, v) in groups.items() if v.startswith("implemented/"))
+    n_alt = sum(1 for _g, (_m, v) in groups.items() if v.startswith("implemented-alt/"))
+    n_scaf = sum(1 for _g, (_m, v) in groups.items() if v.startswith("scaffold-only"))
+    n_miss = sum(1 for _g, (_m, v) in groups.items() if v.startswith("real-missing"))
+    return dict(per_module=per, per_module_impl=impl, X=len(groups), X_mc=sum(
+        1 for ln in open(os.path.join(ROOT, path), encoding="utf-8")
+        if not ln.startswith("#") and ln.split("\t")[0].startswith("0x")
+        and ln.rstrip("\n").split("\t")[13].endswith("denom:no-loc")),
+        X_impl=n_impl, X_alt=n_alt, X_scaf=n_scaf, X_missing=n_miss,
+        n_serde=len(serde))
+
 
 # ---------------------------------------------------------------------------
 # T85：`na` 口径（预注册 fixtures/function_coverage_na_plan.txt §2–§6）
@@ -1034,7 +1078,7 @@ def build(ledger=None, android_names=None):
     return out
 
 
-def fmt_row(o, with_na=False):
+def fmt_row(o, with_na=False, with_noloc=None):
     r = o["row"]
     cols = [
         r["addr"], r["name"], r["name_src"], os.path.basename(r["loc_main_file"]),
@@ -1046,6 +1090,9 @@ def fmt_row(o, with_na=False):
         cols.append(e["category"] if e else NA_DEFAULT)
         cols.append((f"ledger#{e['line']} " + e["evidence"].replace("\t", " ")[:120]) if e
                     else NA_DEFAULT_BASIS)
+    if with_noloc is not None:
+        cols.append(str((with_noloc.get("per_module") or {}).get(
+            os.path.basename(r["loc_main_file"]), 0)))
     return "\t".join(cols)
 
 
@@ -1067,6 +1114,17 @@ HEADER = ("# function_coverage.tsv —— 由 tools/function_coverage.py 生成�
           "#       hyb-only=只有预测名 / pinned=F1 的指认成立 / grade-inferred=档位=推断 /\n"
           "#       addr-neighbor=地址引用只贴到邻居函数（人工复核否决，见工具里的 ADDR_MANUAL）\n")
 
+# T105：启用分母外口径时追加的说明与一列（`--no-noloc` 时不追加 ⇒ 与 T105 之前逐字节相同）
+NOLOC_HEADER_EXTRA = (
+    "# ── T105 追加一列（预注册 fixtures/denom_outside_plan.txt）──────────────────────────────\n"
+    "#   lin_fns_noloc = 该**原版模块**里「有源码身份但体内**没有** `panic::Location`」的原版**源码函数**数\n"
+    "#     （= fixtures/denom_outside.tsv 里 verdict 以 `/denom:no-loc` 结尾的**源码组**数；生成器\n"
+    "#      `tools/global_triage.py --denom-outside`；本工具只读不重算）。\n"
+    "#     ⚠️ 这些函数**结构上进不了 527 分母** ⇒ 本表 527 行**看不见它们**；所以第四口径 D 把它们加进分母。\n"
+    "#     ⚠️ 本列是**模块级**属性（同一模块的 527 行拿到同一个数），**不要**跨行求和。\n"
+    "#   `--stats` 会并列打第四口径 D = F1/(527+X) 等（口径 A/B/B′ 一个数不动）。\n"
+)
+
 # T85：启用 na 口径时追加的两列与说明（`--no-na` 时不追加 ⇒ 生成物与 T85 之前逐字节相同）
 NA_HEADER_EXTRA = (
     "# ── T85 追加两列（预注册 fixtures/function_coverage_na_plan.txt）──────────────────────────\n"
@@ -1079,7 +1137,7 @@ NA_HEADER_EXTRA = (
 )
 
 
-def stats(out, verbose=True, na=None):
+def stats(out, verbose=True, na=None, noloc=None):
     c = collections.Counter(o["bucket"] for o in out)
     sub = collections.Counter(o["sub"] for o in out)
     pin = collections.Counter(o["pin"] for o in out)
@@ -1158,6 +1216,34 @@ def stats(out, verbose=True, na=None):
               f"{legacy_f1*100.0/dA:5.1f}%  —— **不可引用**，只用于与 T85 之前的读数对照")
         print(f"  [禁止] 分子用含 na 的 {legacy_f1} + 分母剔 na 的 {dB} = "
               f"{legacy_f1*100.0/dB:5.1f}% 是**双向占便宜**的口径错配（HANDOVER 曾误写 71.1%）")
+
+    # --------------------------------------------------------------
+    # T105：第四口径 D（分母 = 527 + **分母外**真实源码函数 X）
+    #   预注册 fixtures/denom_outside_plan.txt；数据 fixtures/denom_outside.tsv
+    # --------------------------------------------------------------
+    if noloc is not None:
+        X = noloc["X"]
+        dA, dB, dBp = n, n - n_na, n - n_strong
+        lo = X - noloc["n_serde"]          # serde 派生/手写待定的那批：下限口径
+        print(f"\n=== 第四口径 D（T105：分母扩到 527 **之外**；预注册 fixtures/denom_outside_plan.txt）")
+        print(f"  X = **{X}** 个「有源码身份但体内**没有** `panic::Location`」的原版**源码函数**"
+              f"（机器码 {noloc['X_mc']}）：我方已实现 {noloc['X_impl'] + noloc['X_alt']}"
+              f"（本模块 {noloc['X_impl']} + 跨模块同名 {noloc['X_alt']}）/ scaffold-only "
+              f"{noloc['X_scaf']} / **真缺 {noloc['X_missing']}**")
+        print(f"  口径 D_A  = F1 / ({dA}+X) = {m1:4d} / {dA + X}  = {m1*100.0/(dA+X):5.1f}%"
+              f"   严口径（分子只认 F1 有物证）")
+        print(f"  口径 D_B  = F1 / ({dB}+X) = {m1:4d} / {dB + X}  = {m1*100.0/(dB+X):5.1f}%"
+              f"   对应招牌口径 B")
+        print(f"  口径 D_B′ = F1 / ({dBp}+X) = {m1:4d} / {dBp + X}  = {m1*100.0/(dBp+X):5.1f}%")
+        nu = m1 + noloc["X_impl"] + noloc["X_alt"]
+        print(f"  敏感度 D_A+ = (F1 + 分母外已实现) / ({dA}+X) = {nu} / {dA + X}"
+              f" = {nu*100.0/(dA+X):5.1f}%   ⚠️ 分子混档：分母外的「已实现」只是**名字命中**，无逐位/观测档")
+        print(f"  证据档：X 的「体内无 Location」= **观测**；「Linux 侧也没有」= **推断**（stripped + 无键）；"
+              f"其中 {noloc['n_serde']} 组是 `serialize`/`deserialize`（serde 派生 vs 手写名字上分不开）")
+        print(f"          ⇒ X ∈ [{lo}, {X}] ⇒ D_A ∈ [{m1*100.0/(dA+lo):.1f}%, {m1*100.0/(dA+X):.1f}%]"
+              f"、D_B ∈ [{m1*100.0/(dB+lo):.1f}%, {m1*100.0/(dB+X):.1f}%]")
+        print(f"  ⚠️ 口径 A/B/B′ 一个数没动（本轮不碰判据）；D 是**并列新增**，不替代招牌数。"
+              f"分母变大 ⇒ 完成度**下降**，这就是它的价值。")
 
     GAP = ("skel", "register-only", "named-miss", "parent-missing")
     UNK = ("hyb-miss", "noname")
@@ -1260,6 +1346,9 @@ def main(argv=None):
                     help="不叠加 T87 的跨构建真名（fixtures/naming_android.tsv）⇒ 与 T87 之前逐字节相同")
     ap.add_argument("--android-na-report", dest="android_na", action="store_true",
                     help="只打印 T87 R3 判出的「非游戏 crate 单态化」候选（**不进计分**，na 台账权威来源仍是 f3_triage.tsv）")
+    ap.add_argument("--no-noloc", dest="no_noloc", action="store_true",
+                    help="旧行为（T105 之前）：不读 fixtures/denom_outside.tsv、不写 lin_fns_noloc 列、"
+                         "不打第四口径 D；生成物与 --stats 与改动前逐字节相同")
     ap.add_argument("--no-na", dest="no_na", action="store_true",
                     help="旧行为（T85 之前）：不读 na 台账、不写 na 列、不做 P2 负向排除；"
                          "生成物与 --stats 与改动前逐字节相同")
@@ -1271,6 +1360,10 @@ def main(argv=None):
         ledger = load_na_ledger()
         validate_na_ledger(ledger, load_boundary())    # M1/M2/M4/M5/M7（M3 在读取时已挡）
     android_names = None if args.no_android else load_android_names()
+    noloc = None if args.no_noloc else load_noloc()
+    if not args.no_noloc and noloc is None:
+        print(f"⚠ 缺 {DENOM_TSV} ⇒ 不写 lin_fns_noloc 列、不打第四口径 D（等价 --no-noloc）；"
+              f"生成：$PY tools/global_triage.py --denom-outside")
     out = build(ledger, android_names)
     if args.android_na:
         cand = load_android_na()
@@ -1290,7 +1383,7 @@ def main(argv=None):
     if args.control:
         control(out)
         return 0
-    c, sub, pin, bymod = stats(out, na=ledger)
+    c, sub, pin, bymod = stats(out, na=ledger, noloc=noloc)
     if args.module:
         rows = [o for o in out if os.path.basename(o["row"]["loc_main_file"]) == args.module]
         print(f"\n=== {args.module}: {len(rows)} 行")
@@ -1307,9 +1400,12 @@ def main(argv=None):
         fh.write(HEADER)
         if use_na:
             fh.write(NA_HEADER_EXTRA)
+        if noloc is not None:
+            fh.write(NOLOC_HEADER_EXTRA)
         for o in out:
-            fh.write(fmt_row(o, with_na=use_na) + "\n")
-    print(f"\n写出 {OUT}：{len(out)} 行{'（含 na/na_basis 两列）' if use_na else '（--no-na：旧 13 列）'}")
+            fh.write(fmt_row(o, with_na=use_na, with_noloc=noloc) + "\n")
+    print(f"\n写出 {OUT}：{len(out)} 行{'（含 na/na_basis 两列）' if use_na else '（--no-na：旧 13 列）'}"
+          f"{'（+ lin_fns_noloc 列）' if noloc is not None else ''}")
     return 0
 
 
