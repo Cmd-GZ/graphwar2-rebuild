@@ -62,6 +62,10 @@ CTRL_GDEXT = """0x3aa6a0 0x3aa820 0x3b56c0 0x3b5910 0x3b5ce0
 CTRL_GDEXT_CLOSURE = {"0x4dec00", "0x500070", "0x5005b0"}
 CTRL_REAL = ["0x3afcf0", "0x3b4ec0"]              # T71 落码的两条业务函数
 CTRL_REAL_EXTRA = ["0x519630", "0x519840", "0x4ee720"]  # 已知 F1 真业务（防"全判 na"）
+# §10 E9-2：3 条旧 G4 闭包样本在 T87 定名后升 F1、已不在 F3 集合 ⇒ 补一条**活着的** G4 正对照：
+# `0x4eb94b` 的 Location `src/math_function.rs:184:24` 被 ≥2 条**无名** F3 行共享（G4 的机判形式），
+# 且它不在 F3 的 machine 路径上被任何更强规则抢走 ⇒ 必须仍判 `unknown`。
+CTRL_G4_LIVE = ["0x4eb94b"]
 CTRL_STD_SIZES = [0x164, 0x158, 0x564, 0x100, 0x721, 0x66f]  # 台账：每对逐字节相同
 
 PREFIX = {
@@ -81,7 +85,20 @@ class Feat:
         "callers", "slots", "lea_refs", "caller_loc_n", "callees",
         "n_direct_call", "n_plt", "strings", "cmpsd", "ret_like",
         "first", "last_ops",
+        # §10 勘误 E6/E7：调用形态（本轮新增）
+        "indirect", "slot_addrs", "slot_ref_sites",
     )
+
+    # 调用形态四档（预注册 §10 E8）
+    @property
+    def callform(self):
+        if self.callers >= 1:
+            return "direct"
+        if self.indirect >= 1:
+            return "indirect"
+        if self.slots >= 1:
+            return "handed-out"
+        return "dead"
 
 
 def secname(ctx, va):
@@ -134,6 +151,9 @@ def features(ctx, va, index):
     if not ex:
         f.start = f.end = va
         f.size = 0
+        f.indirect = 0
+        f.slot_addrs = []
+        f.slot_ref_sites = []
         return f
     f.start, f.end = ex
     f.size = ex[1] - ex[0]
@@ -213,6 +233,28 @@ def features(ctx, va, index):
     f.callers = len(call_imm.get(f.start, ()))
     f.slots = len([k for k, v in ctx.rel.items() if v == f.start])
     f.lea_refs = len(rip.get(f.start, ())) + len(imm.get(f.start, ()))
+
+    # §10 勘误 E6：**间接调用**（经 GOT/数据槽的 `call|jmp qword ptr [rip+槽]`）。
+    # 为什么需要它：预注册正的 12 条 std 正对照里 `0x4825b0/0x482c20` 的 `callers(rel32)==0`、
+    # `slots==1`，但它们的槽（`0x9bbf40`/`0x9bbf38`）被 5 条 `call qword ptr [rip+…]` **间接调用**
+    # （调用点在 `graphwar_function_evolutionator` 的排序实例里）⇒ 只看 rel32 会误判成"没人调用"。
+    f.slot_addrs = sorted(k for k, v in ctx.rel.items() if v == f.start)
+    f.slot_ref_sites = []
+    f.indirect = 0
+    for s in f.slot_addrs:
+        for site in sorted(rip.get(s, ())):
+            one = ap.dis_list(ctx, site, site + 8)
+            if not one:
+                continue
+            ins0 = one[0]
+            if ins0.mnemonic not in ("call", "jmp"):
+                continue
+            if not ins0.operands or ins0.operands[0].type != X86_OP_MEM:
+                continue
+            if ins0.operands[0].mem.base != X86_REG_RIP:
+                continue
+            f.indirect += 1
+            f.slot_ref_sites.append(site)
 
     # 唯一/主要调用者自己引用 Location 吗（=0 ⇒ 调用者是 std/gdext/引擎侧）
     sites = sorted(call_imm.get(f.start, ()))
@@ -413,8 +455,13 @@ def rule_hits(f, size_freq, row=None, shared_locs=None):
     other = []
     if f.ret_like:
         other.append("O-ret")
+    # §10 勘误 E6：把**调用形态**记进「判据命中」列（新增第四档轴，不改任何既有规则）
+    hits.append("CALLFORM=%s" % f.callform)
+    if f.indirect and f.callers == 0:
+        hits.append("INDIRECT=%d@%#x" % (f.indirect, f.slot_ref_sites[0]))
     return dict(hits=hits, A=A, B=B, C=C, cmp_hit=cmp_hit, pair=pair,
-                std=std, gdext=gdext, other=other, g4=g4, g4why=g4why)
+                std=std, gdext=gdext, other=other, g4=g4, g4why=g4why,
+                callform_ok=callform_ok(f, A, B, C))
 
 
 def final_class(addr, f, hits):
@@ -439,6 +486,78 @@ def machine_class(f, hits, manual=None):
     if hits["other"]:
         return "na:other"
     return "real-missing"
+
+
+# ---------------------------------------------------------------------------
+# §10 勘误 E6 / E7：「调用形态」闸（2026-11-27 T92；判据在跑数前写死在 plan §10）
+# ---------------------------------------------------------------------------
+# 起因（T89 `docs/06` §138.5）：`0x438880` 被 T87 的 R3 负向推断判成 `na:std-mono`
+# （Android 命中 `std::sys::backtrace::__rust_begin_short_backtrace`），但逐位证据表明
+# `0x438896 mov edx,0x1e`(=30) + `0x4388a0 call [slot]`(=TcpStream::connect_timeout)
+# ⇒ 它是**游戏 `connect` 的线程闭包体**，只是被整体内联进 std 的 spawn wrapper。
+WRAP_FAMILY = ("__rust_begin_short_backtrace", "catch_unwind",
+               "thread::spawn", "LangStart")
+
+
+def callform_ok(f, A, B, C):
+    """§10 E6：调用形态是否支持「这一条是泛型单态化实例」。
+
+    预注册判据 = ① `CALLERS(rel32) >= 1`（被直接调用）**或** ② R-STD 结构组 A/B/C 命中。
+    * **`indirect` 不算"被调用"**（第一版实现把它算进去了，被 F 组正对照当场抓出：`0x438880` 也是
+      `indirect` —— 它的槽 `0x9bb940` 被 std 线程入口 `0x43b070` 用 `call qword ptr [rip+…]` 调用。
+      ⇒ 「被间接调用」对 0x438880 与合法单态化**同样成立**，没有区分力，不许当腿）。
+    * ② 是"体本身就是算法"的结构证据（`0x438880` 的 self/strides/ucomisd/bulk/cmov **全 0** ⇒ 不中）；
+      两条 `CALLERS=0` 的 std 正对照（`0x4825b0/0x482c20`）正是靠 ② 过闸（B+C 命中）。
+    """
+    return (f.callers >= 1) or A or B or C
+
+
+def callform_verdict(f, A, B, C):
+    """→ (ok, 人可读理由)。判据同 `callform_ok()`。"""
+    note = ""
+    if f.indirect and f.callers == 0:
+        note = ("（附：槽被 `call|jmp qword ptr [rip+槽]` 间接调用 %d 处，首址 %#x —— "
+                "**不算**被直接调用，plan §10 E6）" % (f.indirect, f.slot_ref_sites[0]))
+    if f.callers >= 1:
+        return True, "① CALLERS(rel32)=%d（被直接调用）" % f.callers
+    if A or B or C:
+        grp = "/".join(g for g, v in (("A", A), ("B", B), ("C", C)) if v)
+        return True, "② R-STD 结构组 %s 命中（体本身就是泛型算法）%s" % (grp, note)
+    return False, ("① CALLERS=0；② R-STD 结构组 A/B/C **全不中**%s ⇒ "
+                   "「标准库单态化实例」这个解释站不住（与 T89 驳回的 `0x438880` 同形）" % note)
+
+
+def wrap_family_of(android_hits):
+    """§10 E7：Android 侧命中的具名函数是否属于 wrapper 家族。
+
+    返回命中的家族名（或空串）。**只认预注册名单里的 4 个**，不按"像不像"自由裁量。
+    """
+    for h in android_hits:
+        for w in WRAP_FAMILY:
+            if w in h:
+                return w
+    return ""
+
+
+def gate_na_callform(rows):
+    """§10 E6 闸：对**分类结果里每一条 `na:std-mono`**（含 MANUAL 裁决）复核调用形态。
+
+    为什么闸放在分类之后而不是 `rule_hits()` 里：机器候选 `std = A∨B∨C`，判据 ② 天然满足
+    ⇒ 机判行永远过闸；**真正需要闸的是人工/外部轴（T87 R3）给的 `na:std-mono`**。
+    `0x438880` 正是外部轴给的（它从来不在本台账里，在 `function_coverage.py --android-na-report`
+    的 21 条候选里），它 `CALLERS=0` 且 A/B/C 全不中 ⇒ 本闸拒。
+    → (rows, violations)。violations 非空 ⇒ 调用方**不许出数**（同 `function_coverage.py` 的 M 闸）。
+    """
+    out, viol = [], []
+    for o in rows:
+        if o["cat"] != "na:std-mono":
+            continue
+        f, h = o["f"], o["h"]
+        ok, why = callform_verdict(f, h["A"], h["B"], h["C"])
+        out.append((o["row"]["addr"], f.callform, ok, why))
+        if not ok:
+            viol.append((o["row"]["addr"], why))
+    return out, viol
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +708,8 @@ def main(argv=None):
     ap_.add_argument("--features", nargs="+", metavar="VADDR")
     ap_.add_argument("--control", action="store_true")
     ap_.add_argument("--stats", action="store_true")
+    ap_.add_argument("--na-rescan", dest="na_rescan", action="store_true",
+                     help="§10 E8：全量重扫 fixtures/f3_triage.tsv 的 na:* 行（调用形态 + Android 命中家族）")
     ap_.add_argument("--json", metavar="PATH")
     args = ap_.parse_args(argv)
 
@@ -625,9 +746,179 @@ def main(argv=None):
     for r, f, h in rows:
         cat, mach = final_class(r["addr"], f, h)
         out.append(dict(row=r, f=f, h=h, cat=cat, mach=mach))
+
+    # §10 E6 闸：na:std-mono 的调用形态必须先过闸，否则**不许出数**（同 function_coverage 的 M 闸）
+    gate_rows, viol = gate_na_callform(out)
+    print("\n=== §10 E6 闸：na:std-mono 的调用形态复核（%d 条）" % len(gate_rows))
+    for a, cf, ok, why in gate_rows:
+        print("  %-4s %-10s CALLFORM=%-11s %s" % ("✓" if ok else "✗", a, cf, why))
+    if viol:
+        print("✗ R-CALLFORM 闸不通过（%d 条）⇒ 按预注册 §10 E6 **拒绝出数**：" % len(viol))
+        for a, why in viol:
+            print("   %s %s" % (a, why))
+        return 2
+
+    if args.na_rescan:
+        return cmd_na_rescan(cov, feats)
     if args.stats:
         return stats(out)
     return write(out, args.json)
+
+
+# ---------------------------------------------------------------------------
+# §10 勘误 E8：全量重扫 na 台账（本轮交付物）
+# ---------------------------------------------------------------------------
+RESCAN_OUT = os.path.join(ROOT, "fixtures", "f3_triage_na_rescan.tsv")
+
+
+def read_ledger_main(path=OUT_TSV):
+    """读台账**主表**（读到 `# ----` 分节横幅即停，F2-scan 不进）。→ [(addr, name, size, cat, ev)]"""
+    out = []
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("# ----"):
+                break
+            if ln.startswith("#") or not ln.strip():
+                continue
+            c = ln.rstrip("\n").split("\t")
+            if c[0] == "vaddr" or not c[0].startswith("0x"):
+                continue
+            out.append(c)
+    return out
+
+
+def android_hit_names():
+    """→ {linux_va: [Android 侧命中的具名函数 demangled…]}（用 T87 的特征缓存，按 Location 键集）。
+
+    依赖 `tools/naming_android.py` 的 `load_cache()`；缓存不可用就返回 `{}` 并打印说明
+    （**不让 Android 轴缺失变成静默的空值**：调用方会把该列写成「Android 轴不可用」）。
+    """
+    try:
+        import naming_android as NA
+        data = NA.load_cache()
+        ax = NA.Axes(data)
+    except Exception as e:                                  # noqa: BLE001
+        print("  ⚠ Android 轴不可用（%s: %s）⇒ 该列留空，E7 只能靠 Location 判" %
+              (type(e).__name__, e))
+        return None
+    out = {}
+    for va, L in ax.lin.items():
+        top, _ = ax.l_candidates(L)
+        names = []
+        for a in top[:2]:
+            for r in ax.agn.get(a, ()):
+                names.append(r["demangled"])
+        out[va] = names
+    return out
+
+
+def cmd_na_rescan(cov, feats):
+    """§10 E8：把台账主表里**全部 `na:*` 行**逐条按 E6/E7 重扫，写
+    `fixtures/f3_triage_na_rescan.tsv`。
+
+    这是本轮的交付物：回答「还有多少条是**被内联进 std wrapper 的游戏闭包**被误判成 na:*」。
+    """
+    bucket = {r["addr"]: r["bucket"] for r in cov}
+    name = {r["addr"]: r["name"] for r in cov}
+    led = read_ledger_main()
+    nas = [c for c in led if c[4].startswith("na:")]
+    print("\n=== §10 E8 全量重扫 na 台账：主表 %d 行，其中 na:* **%d 条**"
+          % (len(led), len(nas)))
+    andn = android_hit_names()
+    lines = []
+    lines.append("# f3_triage_na_rescan.tsv —— §10 E8（T92）：`fixtures/f3_triage.tsv` 主表 **全部 na:* 行**"
+                 "按预注册 §10 的 E6/E7 重扫")
+    lines.append("# 判据 = fixtures/f3_triage_plan.txt §10（跑数前写死）。地址 = ELF vaddr。")
+    lines.append("# 形态四档：direct=CALLERS(rel32)>=1 / indirect=CALLERS=0 但槽被 call|jmp [rip+槽] 调用 / "
+                 "handed-out=CALLERS=0 且槽只被取走 / dead=谁都不引用")
+    lines.append("# E6 = na:std-mono 必须「CALLERS(rel32)>=1 ∨ R-STD 结构组命中」（indirect **不算**，见 plan §10 E11）；"
+                 "E7 = wrapper 家族命中 + "
+                 "Linux 自身 Location 含 src/graphwar_*.rs ⇒ 游戏闭包被内联进 foreign wrapper ⇒ 不许 na")
+    lines.append("vaddr\t台账类别\tFDE尺寸\tCALLERS\tINDIRECT\tSLOTS\t形态\tR-STD\tG命中\t"
+                 "Linux自身Location\tAndroid命中符号\t复核触发\t裁决\t依据")
+    n_keep = n_flip = n_review = 0
+    shape_of = []          # [(addr, 台账类别, 形态)]
+    for c in nas:
+        addr, cat, sz = c[0], c[4], c[2]
+        f = feats.get(addr)
+        if f is None:
+            lines.append("\t".join([addr, cat, sz, "—", "—", "—", "—", "—", "—", "—",
+                                    "不在 527 全集", "—", "unknown", "无特征"]))
+            continue
+        r = {"addr": addr, "name_src": "", "module": ""}
+        h = rule_hits(f, collections.Counter(), r, None)
+        grp = "/".join(g for g, v in (("A", h["A"]), ("B", h["B"]), ("C", h["C"])) if v) or "—"
+        locs = ";".join("%s×%d" % (l, n) for l, n in f.locs[:2]) or "—"
+        ah = andn.get(int(addr, 16), []) if andn is not None else []
+        ahs = " | ".join(sorted({a.split("::h")[0] for a in ah})[:2]) or \
+            ("—" if andn is not None else "（Android 轴不可用）")
+        game_locs = [l for l, _ in f.locs if l.startswith("src/")]
+        triggers, verdict, why = [], "维持 na", []
+        if cat == "na:std-mono":
+            ok, w = callform_verdict(f, h["A"], h["B"], h["C"])
+            why.append(w)
+            if not ok:
+                triggers.append("E6")
+                verdict = "**不许 na**（E6 拒）"
+        wfam = wrap_family_of(ah)
+        if wfam:
+            triggers.append("E7:%s" % wfam)
+            if game_locs:
+                verdict = "**不许 na**（E7 拒：游戏闭包被内联进 foreign wrapper）"
+                why.append("wrapper 家族 `%s` 命中 + Linux 自身 Location 有游戏文件 %s ⇒ 体是游戏源码"
+                           % (wfam, game_locs[:2]))
+            else:
+                why.append("wrapper 家族 `%s` 命中但 Linux 自身 Location 全在非游戏文件 ⇒ wrapper 本体实例，na 成立"
+                           % wfam)
+        elif andn is not None and not ah:
+            triggers.append("E7:无Android证据")
+            why.append("Android 侧无具名命中 ⇒ E7 不适用（本行的 na 来自机器结构规则，不是 R3 负向推断）")
+        if not why:
+            why.append("E6 不适用（本行不是 na:std-mono）；E7 未触发（Android 命中不在 wrapper 家族 "
+                       "⇒ 不是「被内联进 foreign wrapper 的游戏闭包」）；本行的 na 来自机器结构规则，维持")
+        if verdict.startswith("维持"):
+            n_keep += 1
+        elif "不许 na" in verdict:
+            n_flip += 1
+        if triggers:
+            n_review += 1
+        shape_of.append((addr, cat, f.callform))
+        lines.append("\t".join([addr, cat, sz, str(f.callers), str(f.indirect), str(f.slots),
+                                f.callform, grp, ("|".join(h["gdext"]) or "—"), locs, ahs,
+                                (",".join(triggers) or "—"), verdict,
+                                ("；".join(why)).replace("\t", " ")]))
+    # ---- 正对照：T89 驳回的那一条（不在台账里，但闸必须拒它）----
+    ctl = "0x438880"
+    f = feats.get(ctl)
+    if f is not None:
+        h = rule_hits(f, collections.Counter(), {"addr": ctl, "name_src": "naming_android", "module": ""}, None)
+        ok, w = callform_verdict(f, h["A"], h["B"], h["C"])
+        ah = (andn or {}).get(int(ctl, 16), [])
+        wfam = wrap_family_of(ah)
+        game_locs = [l for l, _ in f.locs if l.startswith("src/")]
+        print("  正对照 %s：CALLFORM=%s INDIRECT=%d R-STD=%s ⇒ E6 %s；Android 家族=%s + 游戏 Location=%s ⇒ E7 %s"
+              % (ctl, f.callform, f.indirect,
+                 "/".join(g for g, v in (("A", h["A"]), ("B", h["B"]), ("C", h["C"])) if v) or "全不中",
+                 "✓ 拒（na 不成立）" if not ok else "✗ 竟然通过",
+                 wfam or "—", bool(game_locs),
+                 "✓ 拒（na 不成立）" if (wfam and game_locs) else "✗"))
+        if ok:
+            print("  ✗ 正对照失败 ⇒ 闸没挡住 T89 已驳回的那条，先修工具")
+            return 2
+    open(RESCAN_OUT, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    print("  写出 %s（%d 行）" % (os.path.relpath(RESCAN_OUT, ROOT), len(nas)))
+    print("  裁决：维持 na **%d** 条 / **不许 na（改判）%d** 条 / 触发复核 %d 条"
+          % (n_keep, n_flip, n_review))
+    shp = collections.Counter(x[2] for x in shape_of)
+    print("  调用形态分布（%d 条）：%s" % (len(shape_of), dict(shp)))
+    for k in ("direct", "indirect", "handed-out", "dead"):
+        if k in shp:
+            bycat = collections.Counter(cat for _a, cat, cf in shape_of if cf == k)
+            print("    %-11s %3d 条（%s）"
+                  % (k, shp[k], ", ".join("%s=%d" % (c, n) for c, n in sorted(bycat.items()))))
+    return 0
 
 
 def _cat_key(o):
@@ -637,15 +928,26 @@ def _cat_key(o):
 
 
 def write(out, json_path=None):
+    # §10 E12（落地勘误）：台账 `name` 列必须取 **boundary_audit.tsv 的名字**，不能取
+    # `function_coverage.tsv` 的「符号名」。原因：`tools/function_coverage.py` 的 M7 闸要求
+    # 「台账 name == boundary name」，而这两列的来源口径不同 —— boundary 用 v2 `role=outer` 身份
+    # （T89 裁决后一个地址一个名字），function_coverage 的符号名列在 5 个地址上还带 `::{{closure}}`
+    # （例 `0x4c5c00` boundary `connect_entry_buttons` vs cov `connect_entry_buttons::{{closure}}`）。
+    # 旧台账（T82 手工写的）用的是 boundary 名，所以 M7 一直是绿的；本轮改为重跑生成，
+    # 若照抄 cov 的名字就会一次造成 5 条 M7 假违例 ⇒ 这里显式取 boundary 名。
+    bnames = {a: d.get("name") for a, d in read_boundary().items()}
     lines = []
-    lines.append("# f3_triage.tsv —— T82：F3 缺口 153 条**逐条**分类（度量口径审计，只审计不改码）")
-    lines.append("# 判据 = **预注册** fixtures/f3_triage_plan.txt（先提交后跑）+ 同文件 §9 勘误（追加式）")
+    lines.append("# f3_triage.tsv —— F3 缺口**逐条**分类（度量口径审计，只审计不改码）")
+    lines.append("# 判据 = **预注册** fixtures/f3_triage_plan.txt（先提交后跑）+ 同文件 §9/§10 勘误（追加式）")
     lines.append("# 复跑：PY=.reference/venv/bin/python ; $PY tools/f3_triage.py --control   # 先验判法（rc=0 才许信）")
     lines.append("#       $PY tools/f3_triage.py                                             # 重写本文件 + 打印统计")
     lines.append("# 口径：地址 = ELF vaddr（RVA）；FDE 尺寸 = .eh_frame 自解；归属 = panic::Location；")
     lines.append("#       **机器规则只是候选，「类别」列是人工裁决结果**（改判的条目在「依据」里写明否定机器候选的理由）")
     lines.append("# 类别：real-missing=真的缺（进诚实缺口）/ na:std-mono=std 单态化 / na:gdext-glue=gdext 宏产物")
     lines.append("#       na:other=其它不该手写（含泛型单态化实例）/ unknown=判不了（计入缺口，保守）")
+    lines.append("# §10 新增：`判据命中` 列带 CALLFORM=<direct|indirect|handed-out|dead>（调用形态）")
+    lines.append("#   定义：direct=CALLERS(rel32)>=1；indirect=CALLERS=0 但槽被 call|jmp [rip+槽] 调用；")
+    lines.append("#         handed-out=CALLERS=0 且槽只被取走；dead=谁都不引用。判据见 plan §10 E6/E8。")
     lines.append("# 列：vaddr | 名字（function_coverage.tsv 的符号名） | FDE尺寸 | 判据命中 | 类别 | 依据")
     lines.append("vaddr\tname\tsize\thits\tcategory\tevidence")
     for o in sorted(out, key=_cat_key):
@@ -656,7 +958,8 @@ def write(out, json_path=None):
         ev = evidence(f, h, r, None)
         if r["addr"] in MANUAL:
             ev = (ev + "；" if ev else "") + "**人工改判**：" + MANUAL[r["addr"]][1]
-        lines.append("\t".join([r["addr"], r["name"] or FAKE, "%#x" % f.size,
+        nm = bnames.get(r["addr"]) or r["name"]
+        lines.append("\t".join([r["addr"], nm or FAKE, "%#x" % f.size,
                                 hits, o["cat"], ev.replace("\t", " ")]))
     # ---- F2 顺带扫描（不进 153 的算术，预注册 §5） ----
     lines.append("")
@@ -674,9 +977,36 @@ def write(out, json_path=None):
             lines.append("\t".join([r["addr"], r["name"] or FAKE, "%#x" % f.size,
                                     "|".join(h["hits"]) or "—", cat,
                                     evidence(f, h, r, None).replace("\t", " ")]))
+    # ---- §10 E10：历史行归档（台账不是 F3 的派生视图，是历史裁决记录）----
+    # 把「上一版台账主表里有、本轮重跑后已不属于 F3」的行写成**注释行**（不参与任何机读计数）。
+    # 归档行自己也读回来再去重 ⇒ 反复重跑不丢历史。
+    now = {o["row"]["addr"] for o in out}
+    covb = {r["addr"]: r for r in cov}
+    archived = {}
+    for c in read_ledger_main():
+        if c[0] not in now and c[0] not in archived:
+            archived[c[0]] = c[4]
+    old_lines = list(open(OUT_TSV, encoding="utf-8")) if os.path.exists(OUT_TSV) else []
+    for ln in old_lines:
+        if not ln.startswith("# [归档] "):
+            continue
+        parts = ln[len("# [归档] "):].split()
+        if parts and parts[0].startswith("0x"):
+            archived.setdefault(parts[0], parts[1] if len(parts) > 1 else "?")
+    if archived:
+        lines.append("")
+        lines.append("# ---- 归档：曾在台账主表、本轮重跑后**已不属于 F3 集合**的历史裁决行"
+                     "（§10 E10；注释行，不参与任何机读计数）----")
+        for a in sorted(archived, key=lambda x: int(x, 16)):
+            r = covb.get(a)
+            if r:
+                lines.append("# [归档] %s %s ⇒ 已离开 F3（现 %s：%s %s）"
+                             % (a, archived[a], r["bucket"], r["name_src"] or "—", r["name"] or FAKE))
+            else:
+                lines.append("# [归档] %s %s ⇒ 已不在 527 全集" % (a, archived[a]))
     open(OUT_TSV, "w", encoding="utf-8").write("\n".join(lines) + "\n")
-    print("写出 %s（F3 %d 行 + F2-scan %d 行）" %
-          (OUT_TSV, len(out), sum(1 for x in lines if x.startswith("0x")) - len(out)))
+    print("写出 %s（F3 %d 行 + F2-scan %d 行 + 归档 %d 行）" %
+          (OUT_TSV, len(out), sum(1 for x in lines if x.startswith("0x")) - len(out), len(archived)))
     return stats(out)
 
 
@@ -694,7 +1024,14 @@ def stats(out):
     print("\n=== F3 %d 条分类（人工裁决后）" % n)
     for k in ("real-missing", "na:std-mono", "na:gdext-glue", "na:other", "unknown"):
         print("  %-16s %3d  (%5.1f%%)" % (k, c[k], c[k] * 100.0 / n))
-    print("  合计 %d（应 = 153）%s" % (sum(c.values()), "✓" if sum(c.values()) == n else "✗"))
+    print("  合计 %d（= 当前 F3 %d 条 / 分母 527）%s"
+          % (sum(c.values()), n, "✓" if sum(c.values()) == n else "✗"))
+    # 台账一致性（§10 E10 之后才有意义）：盘上台账主表行数 vs 本轮 F3 条数
+    led = read_ledger_main()
+    if led:
+        n_na_led = sum(1 for c in led if c[4].startswith("na:"))
+        print("  盘上台账：主表 %d 行 / na:* %d 条 ⇒ 与本轮 F3 %d 条相差 %+d（差数应 = 归档行数）"
+              % (len(led), n_na_led, n, len(led) - n))
     print("\n=== 三个数字")
     print("  ① 诚实缺口：F3 里 real-missing = **%d** 条（unknown %d 条另计；na:* %d 条不该手写）"
           % (rm, unk, na))
@@ -763,14 +1100,49 @@ def control(rows, feats, size_freq, shared_locs=None):
               ("✓" if good else "✗", a, want, got, fmt_feat(f, h)[:80], note))
         return good
 
+    # §10 E9：控制组里 3 条 G4 源码闭包的期望值**已过期**（它们在 T87 定名后升 F1、不在 F3 集合了）。
+    covrows = {r["addr"]: r for r in read_cov()}
+    f3addrs = {r["addr"] for r, _, _ in rows}
+
+    def judge_closure_left_f3(a):
+        """§10 E9-1：断言「**已不在 F3**（T87 定名 ⇒ F1/F2）」+「机器候选不是 na:*」。
+
+        旧期望是 `unknown`（G4 判不了），前提是"父函数在符号表里没有真名"。T87 用 Android
+        `.symtab` 把它们定名成 `GraphwarLanVBox::update_game_list::{{closure}}` 后，这个前提**不成立了**；
+        而 `machine_class()` 只对 F3 行生效 —— 对已离场的地址它当然退回 `real-missing`。
+        ⇒ 继续要求 `unknown` 等于要求工具维持一个已失效的结论。
+        """
+        nonlocal ok
+        f = feats.get(a)
+        if f is None:
+            f = features(mk_ctx(), int(a, 16), None)
+        h = rule_hits(f, size_freq, {"addr": a, "name_src": "", "module": ""}, shared_locs)
+        got = machine_class(f, h)
+        left = a not in f3addrs
+        not_na = not got.startswith("na:")
+        good = left and not_na
+        if not good:
+            ok = False
+        r = covrows.get(a, {})
+        print("  %-4s %-9s 期望「已不在 F3 ∧ 机器候选非 na」  在F3=%s  机器候选=%-13s 现=%s: %s"
+              % ("✓" if good else "✗", a, ("否" if left else "**是**"), got,
+                 r.get("bucket", "?"), (r.get("name") or "—")[:44]))
+        return good
+
     print("\n-- A 组：12 条 std 单态化 ⇒ 应判 na:std-mono")
     for a in CTRL_STD:
         judge(a, "na:std-mono")
 
-    print("\n-- B 组：19 条 gdext 宏产物 ⇒ 应判 na:gdext-glue（其中 3 条源码闭包按 G4 判 unknown）")
+    print("\n-- B 组：19 条 gdext 宏产物 ⇒ 应判 na:gdext-glue")
+    print("   （其中 3 条源码闭包 `%s`：§10 E9 —— T87 已用 Android 符号表把它们定名成"
+          % ",".join(sorted(CTRL_GDEXT_CLOSURE)))
+    print("    `GraphwarLanVBox::update_game_list::{{closure}}` ⇒ 已被判 F1、**不在 F3 集合**，"
+          "故本组改为负向断言）")
     for a in CTRL_GDEXT:
-        want = "unknown" if a in CTRL_GDEXT_CLOSURE else "na:gdext-glue"
-        judge(a, want, "(G4 源码闭包)" if a in CTRL_GDEXT_CLOSURE else "")
+        if a in CTRL_GDEXT_CLOSURE:
+            judge_closure_left_f3(a)
+        else:
+            judge(a, "na:gdext-glue")
 
     print("\n-- C 组：2 条 T71 落码的真业务函数 ⇒ 不许判 na:*")
     for a in CTRL_REAL:
@@ -791,6 +1163,37 @@ def control(rows, feats, size_freq, shared_locs=None):
         ok = ok and good
         print("  %-4s %-9s want=real（非 na）  got=%-14s %s" %
               ("✓" if good else "✗", a, got, fmt_feat(f, h)[:70]))
+
+    print("\n-- E 组（§10 E9-2）：**活着的** G4 正对照 —— 3 条旧样本已离场，必须补一条")
+    print("   （判据：G4 命中 ⇒ machine_class 必须给 unknown；这些地址**不在** MANUAL 里被用来兜这一条）")
+    for a in CTRL_G4_LIVE:
+        f = feats.get(a) or features(mk_ctx(), int(a, 16), (None, None, None))
+        h = rule_hits(f, size_freq, {"addr": a, "name_src": "", "module": ""}, shared_locs)
+        got = machine_class(f, h)
+        good = (got == "unknown" and h["g4"])
+        ok = ok and good
+        print("  %-4s %-9s want=unknown(G4)  got=%-14s g4=%-5s %s"
+              % ("✓" if good else "✗", a, got, h["g4"], h["g4why"][:60]))
+
+    print("\n-- F 组（§10 E6）：R-CALLFORM 正/负对照（调用形态闸）")
+    print("   负对照：12 条 std 正对照必须全部**过闸**（体是泛型算法 ⇒ 允许 na:std-mono）")
+    for a in CTRL_STD:
+        f = feats.get(a) or features(mk_ctx(), int(a, 16), (None, None, None))
+        h = rule_hits(f, size_freq, None, shared_locs)
+        good, why = callform_verdict(f, h["A"], h["B"], h["C"])
+        ok = ok and good
+        print("  %-4s %-9s CALLFORM=%-11s %s" % ("✓" if good else "✗", a, f.callform, why[:88]))
+    print("   正对照：T89 驳回的那一条 `0x438880` **若被当成 na:std-mono 候选，闸必须拒绝**")
+    a = "0x438880"
+    f = feats.get(a) or features(mk_ctx(), int(a, 16), (None, None, None))
+    h = rule_hits(f, size_freq, {"addr": a, "name_src": "naming_android", "module": ""}, shared_locs)
+    rej, why = callform_verdict(f, h["A"], h["B"], h["C"])
+    good = (not rej) and h["A"] is False and h["B"] is False and h["C"] is False and f.callers == 0
+    ok = ok and good
+    print("  %-4s %-9s want=闸拒绝  CALLFORM=%-11s CALLERS=%d R-STD=%s ⇒ %s"
+          % ("✓" if good else "✗", a, f.callform, f.callers,
+             "/".join(g for g, v in (("A", h["A"]), ("B", h["B"]), ("C", h["C"])) if v) or "全不中",
+             why[:70]))
 
     print("\n对照结论：%s" % ("全部通过 ⇒ 可以进全量" if ok else "有失败 ⇒ 必须先修工具/规则（预注册 §4）"))
     return 0 if ok else 1
