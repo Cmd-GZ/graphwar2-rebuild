@@ -338,6 +338,77 @@ pub const ENTITY_DRAWER_FUNCS: [(&str, u32, u32); 10] = [
     ("get_entity_skin_sprite", 0x4b_b6b0, 1236),
 ];
 
+// ---------------------------------------------------------------------------
+// §2.0b  四个取子节点的函数（`get_entity_*`）—— T102 落码
+// ---------------------------------------------------------------------------
+//
+// 原版有 **4 个 lazy get-or-create 函数**，各管一张 `HashMap<i32, Gd<…>>`：
+//
+// | 函数 | x86 | arm64 | `st_size` | x86 FDE |
+// |---|---|---|---|---|
+// | `get_entity_skin_sprite` | `0x4bb6b0` | `0x4c1068` | 1236 | `0x60d` |
+// | `get_entity_face_sprite` | `0x4bb0a0` | `0x4c0b94` | 1236 | `0x60d` |
+// | `get_entity_hat_sprite`  | `0x4b9e70` | `0x4bfbb0` | 1236 | `0x62c` |
+// | `get_entity_name_label`  | `0x4ba4a0` | `0x4c0084` | 2832 | `0xbf9` |
+//
+// **判别性证据（逐位）**：三个 sprite getter **逐指令同形**，只在"读哪张表"这一对上差 0x30：
+//
+// ```text
+// skin  cmp qword ptr [rsi+0x60],0     lea rdi,[r15+0x68]
+// face  cmp qword ptr [rsi+0x90],0     lea rdi,[r15+0x98]
+// hat   cmp qword ptr [rsi+0xc0],0     lea rdi,[r15+0xc8]
+// label             [rsi+0xd8]                          [rsi+0xf0]
+// ```
+//
+// 步长 `0x30` = `HashMap<u32, String>` 的 48 B（`docs/16` §46.3 记过）；基址寄存器是
+// `GraphwarGraphicsManager`（`0x46a8e0` = `get_module::<GraphwarGraphicsManager>`），
+// `+0x18` 是 `RcBox` 数据起点 ⇒ 指令里的 `+0x60/+0x90/+0xc0/+0xd8` 对应管理器自己的
+// `+0x48/+0x78/+0xa8/+0xc0` 四张表。
+// 「这三格是**名字**表」= **观测**（`GraphwarGraphicsManager::set_*_graphics` 写 +0x18/+0x48/+0x78，
+// `docs/16` §46.3 的链路 + `0x46a8e0` 定名）；哪一格是 skin/face/hat = 本表（`st_size` 与
+// `get_skin_texture`/`get_face_texture`/`get_hat_texture` 的调用者集合两端一致）。
+
+/// 三个 sprite getter 各自读的**名字表**位置：`[(函数名, 48 B 块起点, 指令里的 `cmp` 立即数, 层)]`。
+///
+/// 两个数都给，因为它们是**两个不同的事实**：
+/// * **块起点** = `HashMap<u32, String>` 在 `GraphwarGraphicsManager` 里的字段偏移（0x48 / 0x78 / 0xa8）；
+/// * **`cmp` 立即数** = 指令里真正出现的那个数（0x60 / 0x90 / 0xc0）= 块起点 **+ 0x18**，
+///   即 `HashMap` 内部第 4 个字（`items`/`ctrl` 那一位；`+0x18` 与 [`Self`] 无关，
+///   是**该结构自己**的布局）。
+/// 0x30 的步长 = 一个 `HashMap<u32, String>` 的大小（48 B）。
+/// 档位：块起点 = **观测**（`docs/16` §46.3 的三张 setter 表）；`cmp` 立即数 = **逐位**。
+pub const ENTITY_GETTER_NAME_MAP_OFFSETS: [(&str, u32, u32, EntityChildNode); 3] = [
+    ("get_entity_skin_sprite", 0x48, 0x60, EntityChildNode::SkinSprite),
+    ("get_entity_face_sprite", 0x78, 0x90, EntityChildNode::FaceSprite),
+    ("get_entity_hat_sprite", 0xa8, 0xc0, EntityChildNode::HatSprite),
+];
+
+/// `get_entity_name_label` 读的第 4 张表：块起点 `0xd8`（= 帽子那张 `0xa8` + 0x30）。
+///
+/// 指令里的两个立即数是 `[rsi+0xd8]`（块首）与 `[rsi+0xf0]`（= 0xd8 + 0x18，同一位）。
+/// 档位：**逐位**（`addr_probe.py dis 0x4ba4a0`）。
+pub const ENTITY_GETTER_NAME_LABEL_MAP_BASE: u32 = 0xd8;
+
+/// 见 [`ENTITY_GETTER_NAME_LABEL_MAP_BASE`]：`cmp` 用的那个立即数（= 块起点 + 0x18）。
+pub const ENTITY_GETTER_NAME_LABEL_CMP_IMMEDIATE: u32 = 0xf0;
+
+/// 三个 sprite getter 建完节点后依次调的两个引擎方法（thunk 里那两对 `(名,长度)` 字面量）。
+///
+/// ```text
+/// 槽 0x9bc0b8 → thunk 0x8ad2e0 → ('CanvasItem',10) + ('set_texture_filter',18)
+/// 槽 0x9bc0c0 → thunk 0x89e550 → ('Sprite2D',8)   + ('set_flip_v',10)
+/// 槽 0x9bb260 → thunk 0x8aeff0 → ('Node',4)       + ('add_child',9)
+/// ```
+///
+/// ⇒ `set_texture_filter(4)` → `set_flip_v(true)` → `add_child`，**实参取**
+/// [`SPRITE_TEXTURE_FILTER`] / [`SPRITE_FLIP_V`]（arm64 `0x4bfe10` / `0x4bfe30` 的立即数）。
+/// 档位：槽→thunk→名字 = **逐位**；"这三个调用属于创建路径" = **观测**（调用序在 body 里）。
+pub const ENTITY_GETTER_ENGINE_CALLS: [(&str, u32, &str); 3] = [
+    ("set_texture_filter", 0x9bc0b8, "CanvasItem"),
+    ("set_flip_v", 0x9bc0c0, "Sprite2D"),
+    ("add_child", 0x9bb260, "Node"),
+];
+
 /// `EntityDrawer` 的 `_init`（**不在上面 10 个里**，是 gdext 的对象构造器）。
 ///
 /// `0x4b3ff0`（320 B；arm64 `0x4ba8e4`，608 B）——位置在 `draw` 结束与 `ready` 之间，
@@ -419,6 +490,21 @@ impl EntityChildNode {
             EntityChildNode::SkinSprite => Some("get_skin_texture"),
             EntityChildNode::FaceSprite => Some("get_face_texture"),
             EntityChildNode::HatSprite => Some("get_hat_texture"),
+            EntityChildNode::NameLabel => None,
+        }
+    }
+
+    /// 这一层在 [`ENTITY_CHILD_NODES`] 里的序号（= `add_child` 顺序 = 叠放顺序）。
+    ///
+    /// 原版**没有**这个函数：它靠 4 张独立 `HashMap` 各管一层。我方把 4 个句柄合成一条
+    /// `Vec`（见 `EntityNodes` 的注释），所以需要一个"层 → 下标"的映射把
+    /// `get_entity_{skin,face,hat}_sprite` 接回原版的**函数边界**。档位：**我方化简**
+    /// （下标顺序 = [`ENTITY_CHILD_NODES`] 的声明序，而那一条是**观测**）。
+    pub const fn sprite_index(self) -> Option<usize> {
+        match self {
+            EntityChildNode::SkinSprite => Some(0),
+            EntityChildNode::FaceSprite => Some(1),
+            EntityChildNode::HatSprite => Some(2),
             EntityChildNode::NameLabel => None,
         }
     }
@@ -1965,16 +2051,33 @@ impl EntityDrawer {
             Vec::new()
         };
 
-        for (id, entity) in self.entities.iter_mut() {
+        // **子节点只从原版那 4 个函数取**（T102）：`get_entity_{skin,face,hat}_sprite` +
+        // `get_entity_name_label`。原版 `process` 也是这么拿的（`docs/16` §21.5 的调用序）。
+        // 先收 id 列表再做：那 4 个 getter 要 `&mut self`，而下面还要 `&self.entities` 取
+        // `board` / `dead_ticks` —— 顺序固定成「取句柄 → 再读状态」，就没有两份可变借用。
+        let ids: Vec<i64> = self.entities.keys().copied().collect();
+        for id in ids {
+            let mut sprites = [
+                self.get_entity_skin_sprite(id),
+                self.get_entity_face_sprite(id),
+                self.get_entity_hat_sprite(id),
+            ];
+            let Some(mut name_label) = self.get_entity_name_label(id) else {
+                continue;
+            };
+            let Some(entity) = self.entities.get(&id) else {
+                continue;
+            };
             // 表命中 ⇒ 棋盘坐标换成表里的 x/y（`[*]` 是 `PlanePos = [f64;3]`）；
             // 不命中 ⇒ 仍用 `spawn_entity` / `set_ring` 给的那一份（代偿路径）。
             // 只影响本帧的摆位，**不写回** `entity.board`（表清空后不会留残值）。
-            let board = match table.iter().find(|(table_id, _)| *table_id as i64 == *id) {
+            let board = match table.iter().find(|(table_id, _)| *table_id as i64 == id) {
                 Some((_, pos)) => BoardVec2::new(pos[0], pos[1]),
                 None => entity.board,
             };
+            let dead_ticks = entity.dead_ticks;
             // 三个贴图层：位置 / 缩放 / 水平翻面全部来自 `entity_drawer::sprite_transform`。
-            for sprite in &mut entity.sprites {
+            for sprite in sprites.iter_mut().flatten() {
                 // 原版每一层都读自己贴图的宽度（`Texture2D::get_width`）。
                 let tex_width = sprite
                     .get_texture()
@@ -1997,7 +2100,7 @@ impl EntityDrawer {
 
             // 名字标签：位置 / 不透明度来自 `entity_drawer::name_label_layout`，
             // 死亡淡出的 alpha 来自 `entity_drawer::death_alpha`。
-            let alpha = match entity.dead_ticks {
+            let alpha = match dead_ticks {
                 None => 1.0,
                 Some(ticks) => entity_drawer::death_alpha(ticks),
             };
@@ -2010,7 +2113,7 @@ impl EntityDrawer {
             // 500×300）。以前这里把 `name_label.get_size()`（58×40）当第一个实参 ⇒ k = 1.16、
             // `cx` 被夹到 0 ⇒ 名字标签被摆到控件**左上角**（实测 `pos=(0, 14.7)`），
             // 于是士兵头上没有 `cmdgz`（真帧：标签在 (772,783)–(842,854)）。
-            let min_size = entity.name_label.clone().get_minimum_size();
+            let min_size = name_label.clone().get_minimum_size();
             let layout = entity_drawer::name_label_layout(
                 BoardVec2::new(size.x as f64, size.y as f64),
                 BoardVec2::new(min_size.x as f64, min_size.y as f64),
@@ -2019,18 +2122,18 @@ impl EntityDrawer {
                 board.y,
                 alpha,
             );
-            entity.name_label.set_position(Vector2::new(
+            name_label.set_position(Vector2::new(
                 layout.position.x as f32,
                 layout.position.y as f32,
             ));
-            entity.name_label.set_modulate(Color::from_rgba(
+            name_label.set_modulate(Color::from_rgba(
                 layout.modulate.r,
                 layout.modulate.g,
                 layout.modulate.b,
                 layout.modulate.a,
             ));
             // 原版：`t >= 60` 走"藏起来"那条分支（见 `entity_drawer::death_alpha` 的文档）。
-            entity.name_label.set_visible(layout.modulate.a > 0.0);
+            name_label.set_visible(layout.modulate.a > 0.0);
         }
     }
 
@@ -2908,6 +3011,95 @@ impl EntityDrawer {
         FileAccess::file_exists(&GString::from(manifest.as_str()))
     }
 
+    // -----------------------------------------------------------------------
+    // 四个取子节点的函数（原版 `get_entity_*`，T102 落码）
+    // -----------------------------------------------------------------------
+    //
+    // 原版 `process` 每帧对每个实体调这 4 个（`docs/16` §21.5 的调用序：
+    // skin → face → hat → label，三次 `?` 早退）。返回值 = 子节点句柄，
+    // **取不到就不画**（原版是 `Option`，`?` 掉整具实体）。
+    //
+    // **我方化简（明写）**：原版是 4 张独立 `HashMap<i32, Gd<…>>` + 4 个**各自重复**
+    // get-or-create 体的 1236/2832 B 函数；我方是 1 张 `BTreeMap<i64, EntityNodes>` 装 4 个句柄、
+    // 节点在 [`Self::spawn_entity`] 里**急建**。所以这里的 4 个函数是"取"而不是"懒建"，
+    // 而 `spawn_entity` 那一侧走的是同一套常量（[`SPRITE_TEXTURE_FILTER`] / [`SPRITE_FLIP_V`] /
+    // [`ENTITY_CHILD_NODES`]）⇒ 节点形状与原版一致，**差异只在时机**（急建 vs 首次取用时建）。
+    // 这条差异登记在 `docs/06` §148.6。
+
+    /// 原版 `EntityDrawer::get_entity_skin_sprite` —— **x86 `0x4bb6b0` / arm64 `0x4c1068`**（1236 B）。
+    ///
+    /// 体（**观测**；本轮逐条读 `0x4bb6b0`，`addr_probe.py dis 0x4bb6b0`）：
+    ///
+    /// ```text
+    /// cmp qword ptr [rsi+0x60],0        ; ① skin 名字表空？空 ⇒ 直接返回 None（je 返回路径）
+    /// call 0x47dec0                     ; ② 用 u32 实体 id 走 hashbrown 的 hash
+    /// call 0x46a8e0                     ; ③ get_module::<GraphwarGraphicsManager>（docs/16 §46.3）
+    /// call 0x47dec0 / 0x47daa0          ; ④ 再两次 hash（名字表 / loader 表各一把）
+    /// call 0x3ed540                     ; ⑤ Sprite2D 的 default_instance（引用串 'Sprite2D'）
+    /// call *[0x9bc0b8]                  ; ⑥ CanvasItem::set_texture_filter(4)
+    /// call *[0x9bc0c0]                  ; ⑦ Sprite2D::set_flip_v(true)
+    /// call *[0x9bb260]                  ; ⑧ Node::add_child
+    /// ```
+    ///
+    /// 返回 `Option<Gd<Sprite2D>>`（表未命中 ⇒ `None`；名字表未命中同样 `None`）。
+    fn get_entity_skin_sprite(&mut self, id: i64) -> Option<Gd<Sprite2D>> {
+        self.entity_sprite(id, EntityChildNode::SkinSprite)
+    }
+
+    /// 原版 `EntityDrawer::get_entity_face_sprite` —— **x86 `0x4bb0a0` / arm64 `0x4c0b94`**（1236 B）。
+    ///
+    /// 与 skin 那个**逐指令同形**，只有一处结构性差异（**逐位**）：
+    /// `cmp qword ptr [rsi+0x90],0` / `lea rdi,[r15+0x98]`（= 脸的**名字**表 `+0x78` + `RcBox` 的 `+0x18`）。
+    /// 两条 FDE 尺寸也**逐字节相同**（都是 `0x60d`，`addr_probe.py fde 0x4bb0a0` / `0x4bb6b0`）
+    /// ——这是"两个函数是同一段源码的两份实例"的独立旁证。
+    fn get_entity_face_sprite(&mut self, id: i64) -> Option<Gd<Sprite2D>> {
+        self.entity_sprite(id, EntityChildNode::FaceSprite)
+    }
+
+    /// 原版 `EntityDrawer::get_entity_hat_sprite` —— **x86 `0x4b9e70` / arm64 `0x4bfbb0`**（1236 B）。
+    ///
+    /// 表偏移 `cmp qword ptr [rsi+0xc0],0` / `lea rdi,[r15+0xc8]`（帽子名字表 `+0xa8` + `0x18`）。
+    /// ⚠️ 它的 x86 FDE 比 face/skin 多 **0x1f B**（`0x62c` vs `0x60d`，`addr_probe.py fde`）：
+    /// arm64 三份 `st_size` 是**完全相同**的 1236 ⇒ 多出来的是 x86 侧一处展开差异（**未解**，
+    /// 缺的证据：逐指令 diff 到具体那 31 字节）。**这一条不影响返回值语义**（表/节点/调用序三者一致）。
+    fn get_entity_hat_sprite(&mut self, id: i64) -> Option<Gd<Sprite2D>> {
+        self.entity_sprite(id, EntityChildNode::HatSprite)
+    }
+
+    /// 原版 `EntityDrawer::get_entity_name_label` —— **x86 `0x4ba4a0` / arm64 `0x4c0084`**（2832 B）。
+    ///
+    /// 这是 4 个里唯一"建节点"路径有明确物证的（**观测**）：
+    ///
+    /// ```text
+    /// [rsi+0xd8] / [rsi+0xf0]                       ; 第 4 张表（label 缓存，再 +0x30）
+    /// lea …  'res://name_label.tscn'                ; 见 NAME_LABEL_SCENE（0x1c2b1d）
+    /// PackedScene::instantiate_as::<RichTextLabel>() ; 节点类型由那次 cast 定死
+    /// Node::add_child
+    /// ```
+    ///
+    /// 我方对应：节点由 [`new_name_label`] 造（逐项照抄 `name_label.tscn` 的 Theme/StyleBox），
+    /// 这里只取。**边界**：原版一次调用里既查名字表又建节点，我方查+建分在
+    /// `spawn_entity` 与这里两处（登记 §148.6）。
+    ///
+    /// 体 > `VOL_CAP = 0x800`（0xbf9）⇒ 按预注册 §7 L4 **整函数读过**才下的这条结论：
+    /// 逐指令读下来剩下的部分全是 hashbrown 的表操作与 `RichTextLabel` 的 8 个属性写入，
+    /// **没有第三张表、没有第二条创建路径**。
+    fn get_entity_name_label(&mut self, id: i64) -> Option<Gd<RichTextLabel>> {
+        let entity = self.entities.get(&id)?;
+        Some(entity.name_label.clone())
+    }
+
+    /// 三个 sprite getter 的共同形状（**我方化简的公共体**，见本节开头的说明）。
+    ///
+    /// 判据与 [`Self::get_entity_skin_sprite`] 里那张调用序表一致：
+    /// 表未命中（这里 = 没有这个实体）⇒ `None`；命中 ⇒ 克隆句柄（原版 `Gd` 是引用计数智能指针，
+    /// 克隆只加引用、不复制节点）。
+    fn entity_sprite(&mut self, id: i64, kind: EntityChildNode) -> Option<Gd<Sprite2D>> {
+        let index = kind.sprite_index()?;
+        let entity = self.entities.get(&id)?;
+        entity.sprites.get(index).cloned()
+    }
+
     /// 取某一层、某个名字的贴图（懒加载 + 缓存 + 兜底）。
     ///
     /// 三步，顺序就是原版 `get_entity_skin_sprite`（x86 `0x4bb6b0`）那三步：
@@ -3560,6 +3752,97 @@ mod tests {
         }
         // 反例：`TurnInfo`(43) 不在那 6 条里（原版 `ready` 里也没有它）
         assert!(!EntityDrawer::is_kernel_event(43));
+    }
+
+    // -----------------------------------------------------------------------
+    // T102：四个 `get_entity_*` 落码时钉住的**反汇编事实**
+    // -----------------------------------------------------------------------
+    //
+    // 期望值**全部来自 `addr_probe.py dis` 的指令**（`docs/06` §148.4 附了逐条指令），
+    // 不是来自我方实现的输出（`AGENTS.md` §0.5）。
+
+    /// 三个 sprite getter 的表偏移：**步长恰 0x30**、`cmp` 立即数恰 = 块起点 + 0x18。
+    ///
+    /// 这两条一起才说明"三个函数是同一段源码的三份实例、只差读哪张表"：
+    /// 若某个函数读的是**另一类**字段（例如 8 B 的 `Gd` 槽），步长就不会是 0x30。
+    #[test]
+    fn getter_name_map_offsets_step_by_hashmap_size() {
+        let rows = entity_drawer::ENTITY_GETTER_NAME_MAP_OFFSETS;
+        // 层序与原版调用序一致（skin → face → hat，`docs/16` §21.5）
+        assert_eq!(
+            rows.map(|r| r.3),
+            [
+                EntityChildNode::SkinSprite,
+                EntityChildNode::FaceSprite,
+                EntityChildNode::HatSprite
+            ]
+        );
+        // `HashMap<u32, String>` = 48 B ⇒ 三张表相邻
+        assert_eq!(rows[1].1 - rows[0].1, 0x30, "face 表应紧跟 skin 表");
+        assert_eq!(rows[2].1 - rows[1].1, 0x30, "hat 表应紧跟 face 表");
+        // 指令里的 `cmp qword ptr [rsi+imm],0`：imm 恒 = 块起点 + 0x18
+        for (name, base, imm, _kind) in rows {
+            assert_eq!(imm, base + 0x18, "{name} 的 cmp 立即数应 = 表起点 + 0x18");
+        }
+        // 实测值（逐位，`addr_probe.py dis 0x4bb6b0 / 0x4bb0a0 / 0x4b9e70`）
+        assert_eq!(rows[0].2, 0x60, "skin 的 cmp 立即数（0x4bb6b0）");
+        assert_eq!(rows[1].2, 0x90, "face 的 cmp 立即数（0x4bb0a0）");
+        assert_eq!(rows[2].2, 0xc0, "hat 的 cmp 立即数（0x4b9e70）");
+    }
+
+    /// 第 4 张表（名字标签）的块起点 = 帽子那张 + 0x30；`cmp` 立即数 = 起点 + 0x18。
+    ///
+    /// 逐位：`addr_probe.py dis 0x4ba4a0` 里出现 `[rsi+0xd8]` 与 `[rsi+0xf0]` 两个立即数。
+    #[test]
+    fn name_label_map_is_the_fourth_hashmap() {
+        let hat_base = entity_drawer::ENTITY_GETTER_NAME_MAP_OFFSETS[2].1;
+        let label_base = entity_drawer::ENTITY_GETTER_NAME_LABEL_MAP_BASE;
+        assert_eq!(label_base, hat_base + 0x30, "第 4 张表紧跟帽子表");
+        assert_eq!(label_base, 0xd8, "0x4ba4a0 里的 [rsi+0xd8]");
+        assert_eq!(
+            entity_drawer::ENTITY_GETTER_NAME_LABEL_CMP_IMMEDIATE,
+            label_base + 0x18,
+            "0x4ba4a0 里的 [rsi+0xf0]"
+        );
+    }
+
+    /// 建节点的三个引擎调用 + 实参常量：`set_texture_filter(4)` → `set_flip_v(true)` → `add_child`。
+    ///
+    /// 槽→thunk→(类名,方法名) 三对字面量是**逐位**（`docs/06` §148.2 的 C2 自校验）；
+    /// 实参 `4` / `true` 是 arm64 `0x4bfe10` / `0x4bfe30` 的立即数（**观测**）。
+    #[test]
+    fn getter_creation_path_is_three_engine_calls() {
+        let calls = entity_drawer::ENTITY_GETTER_ENGINE_CALLS;
+        assert_eq!(calls.map(|c| c.0), ["set_texture_filter", "set_flip_v", "add_child"]);
+        assert_eq!(calls.map(|c| c.2), ["CanvasItem", "Sprite2D", "Node"]);
+        // 槽号是 `.got` 里的偏移（逐位）
+        assert_eq!(calls.map(|c| c.1), [0x9bc0b8, 0x9bc0c0, 0x9bb260]);
+        // 实参常量的真值（同一份 `.rodata`/立即数）
+        assert_eq!(entity_drawer::SPRITE_TEXTURE_FILTER, 4);
+        assert!(entity_drawer::SPRITE_FLIP_V);
+    }
+
+    /// 层 → 下标映射与 `ENTITY_CHILD_NODES` 的声明序一致；名字标签不是 sprite。
+    ///
+    /// 这条钉的是[我方化简]的**唯一**自由量（`EntityNodes.sprites` 的下标序）：
+    /// 只要它等于 `ENTITY_CHILD_NODES` 的序，四个 getter 的返回就与原版 4 张表一一对应。
+    #[test]
+    fn sprite_index_mirrors_child_node_order() {
+        let sprites: Vec<EntityChildNode> = entity_drawer::ENTITY_CHILD_NODES
+            .iter()
+            .copied()
+            .filter(|k| k.is_sprite())
+            .collect();
+        assert_eq!(sprites.len(), 3);
+        for (expected, kind) in sprites.iter().enumerate() {
+            assert_eq!(kind.sprite_index(), Some(expected), "{kind:?} 的下标");
+        }
+        assert_eq!(EntityChildNode::NameLabel.sprite_index(), None);
+        // `texture_method` 与 `sprite_index` 必须同进同退（三层都有贴图方法、标签都没有）
+        for kind in entity_drawer::ENTITY_CHILD_NODES {
+            assert_eq!(kind.is_sprite(), kind.texture_method().is_some());
+            assert_eq!(kind.is_sprite(), kind.sprite_index().is_some());
+        }
     }
 }
 }
