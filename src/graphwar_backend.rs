@@ -510,6 +510,17 @@ pub enum SetupLevelStep {
     ServerSetupLevel,
 }
 
+/// `stop_client`（arm64 `0x406ba4` / 104 B）的步骤。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopClientStep {
+    /// `GraphwarGameClient::disconnect`（`0x406bc0 bl 0x4087fc`）。
+    DisconnectClient,
+    /// `drop_in_place<GraphwarGameClient>`（`0x406bc8 bl 0x417758`）。
+    DropClient,
+    /// `drop_in_place<GraphwarReplayPlayer>`（`0x406be0 bl 0x417b84`，实参 `self+0x00`）。
+    DropPlayer,
+}
+
 impl GraphwarBackend {
     /// 空后端。
     pub fn new() -> Self {
@@ -553,6 +564,45 @@ impl GraphwarBackend {
         let _ = (arg0, arg1); // 两个实参原样透传（0x406b78/0x406b7c → 0x406b88/0x406b8c）
         steps.push(SetupLevelStep::WaitForPlayers); // 0x406b80
         steps.push(SetupLevelStep::ServerSetupLevel); // 0x406b9c（尾调用 ⇒ 本函数不再有指令）
+        steps
+    }
+
+    /// `stop_client` —— **原版 arm64 `0x406ba4` / 104 字节**（x86 侧**无 Location 锚**，527 外）。
+    ///
+    /// 逐指令（arm64 `0x406ba4..0x406c0c`）：
+    ///
+    /// ```text
+    /// 0x406bb0  ldr  x8,[x0,#0x1e0]      ; 内联客户端槽（niche：0 = None）
+    /// 0x406bb8  cbz  x8,0x406bcc         ; 客户端为空 ⇒ 跳过 disconnect+drop
+    /// 0x406bc0  bl   0x4087fc            ; GraphwarGameClient::disconnect(&self.client)
+    /// 0x406bc8  bl   0x417758            ; drop_in_place<GraphwarGameClient>(&self.client)
+    /// 0x406bcc  ldr  x8,[x19]            ; 回放播放器槽判别字（self+0x00）
+    /// 0x406bd0  str  xzr,[x19,#0x1e0]    ; self.client = None
+    /// 0x406bd4  cmp  x8,#0x2
+    /// 0x406bd8  b.eq 0x406be4            ; 槽已经是空的（2）⇒ 不要再 drop
+    /// 0x406be0  bl   0x417b84            ; drop_in_place<GraphwarReplayPlayer>(self+0x00)
+    /// 0x406be8  str  x8(=2),[x19]        ; 判别字写 2 = 空
+    /// ```
+    ///
+    /// ⇒ 语义：**先拆客户端（disconnect + drop），再拆回放播放器；两个槽最后都变空**。
+    /// 注意判别字**先读**（`0x406bcc`）**后写**（`0x406bd0`）—— 读的顺序对"drop 前先判"没有影响，
+    /// 但说明这两件事在源码里是相邻的两段，不是 `Option::take()` 那种一条表达式（`take` 只会读一次）。
+    ///
+    /// ⚠️ 档位：**观测**（逐指令）。x86 侧无锚 ⇒ 不能逐位对拍。
+    pub fn stop_client(&mut self) -> Vec<StopClientStep> {
+        let mut steps = Vec::new();
+        // 0x406bb8：客户端为空就跳过整段
+        if self.client.is_some() {
+            steps.push(StopClientStep::DisconnectClient); // 0x406bc0
+            steps.push(StopClientStep::DropClient); // 0x406bc8
+            self.client = None; // 0x406bd0
+        }
+        // 0x406bd4：播放器槽判别字 == 2（空）就不 drop
+        if self.replay_slot_tag != PLAYER_SLOT_EMPTY {
+            steps.push(StopClientStep::DropPlayer); // 0x406be0
+            self.replay = None;
+        }
+        self.replay_slot_tag = PLAYER_SLOT_EMPTY; // 0x406be8
         steps
     }
 
@@ -708,6 +758,33 @@ mod lifecycle_tests {
             vec![SetupLevelStep::WaitForPlayers, SetupLevelStep::ServerSetupLevel],
             "顺序 = 调用点地址顺序 0x406b80 → 0x406b9c"
         );
+    }
+
+    /// `stop_client`：客户端那段是**有才拆**；播放器那段按判别字 2 决定 drop。
+    #[test]
+    fn stop_client_disconnects_then_clears_both_slots() {
+        // ① 两个槽都满：disconnect → drop client → drop player → 判别字=2
+        let mut b = GraphwarBackend::new();
+        b.client = Some(ReplayClientSlot::default());
+        b.replay = Some(crate::graphwar_replay_player::GraphwarReplayPlayer::new());
+        b.replay_slot_tag = 0; // != 2 ⇒ 槽里是活的播放器
+        assert_eq!(
+            b.stop_client(),
+            vec![
+                StopClientStep::DisconnectClient,
+                StopClientStep::DropClient,
+                StopClientStep::DropPlayer
+            ],
+            "0x406bc0 → 0x406bc8 → 0x406be0"
+        );
+        assert!(b.client.is_none(), "0x406bd0 str xzr,[x19,#0x1e0]");
+        assert_eq!(b.replay_slot_tag, PLAYER_SLOT_EMPTY, "0x406be8");
+
+        // ② 客户端为空：跳过前两步；播放器槽已经是 2 ⇒ 连 drop 也不做
+        let mut b = GraphwarBackend::new();
+        b.replay_slot_tag = PLAYER_SLOT_EMPTY;
+        assert!(b.stop_client().is_empty(), "0x406bb8 cbz + 0x406bd8 b.eq 两条都命中");
+        assert_eq!(b.replay_slot_tag, PLAYER_SLOT_EMPTY);
     }
 
 }
