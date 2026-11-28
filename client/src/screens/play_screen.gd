@@ -253,7 +253,8 @@ var _judged: Dictionary = {}
 var _flow := GwShotFlow.new()
 ## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
 var _turn_clock := GwTurnClock.new()
-## `TickRequest` 的节奏时钟（Rust：`GraphwarTickHandler`，`0x519840` / `0x519630`）。
+## 联机时序的**纯**出口 + 取证计数（T104 起**不再持有时钟**：节奏与 tick 计数只在平面那台
+## `GraphwarTickHandler` 里，`docs/06` §150 第③条）。
 var _flow_clock := GwFlowClock.new()
 ## **联机倒计时的剩余秒**（`-1` = 这一档没有截止 ⇒ 标签空白）。
 ##
@@ -1213,8 +1214,10 @@ func _drive_clock(delta: float) -> void:
 		_advance_curve(delta)
 		return
 	if _online_mode:
+		# **一台时钟**：`drive_frame` 推进平面那台 `GraphwarTickHandler`（`0x519840`），
+		# 并把这一帧产出的 `TickRequest` 条数留在平面里（`0x51849f call 0x3d3630` 那一泵的等价物）。
 		_plane.call("drive_frame", delta)
-		_online_poll_tick(delta)
+		_online_poll_tick()
 		_curve_tick = float(_plane.call("fractional_tick"))
 		if _curve_player >= 0:
 			_feed_curve()
@@ -1229,14 +1232,20 @@ func _drive_clock(delta: float) -> void:
 ## 也是照这个行为实现的）。`FunctionActive.active_tick` 就长在这条轴上。
 ## `TickRequest` 的节奏（T99 / `docs/06` §144）：真值 `GraphwarTickHandler::tick`（**`0x519840`**）
 ## = 每 tick `accum += 16_666_666 ns`，**`tick % 60 == 0`** 时再发一条；连上时那条走
-## `handle_connected_to_server_event`（**`0x519630`**，不看载荷）。改前是自造的墙钟累加器
-## （`_tick_request_acc += delta`）⇒ 与 tick 计数无相位关系。现在判据只在 Rust（`GwFlowClock`）。
+## `handle_connected_to_server_event`（**`0x519630`**，不看载荷）。
+##
+## **T104 / `docs/06` §150 第③条**：这两条判据的**唯一持有者**是平面那台
+## `GraphwarTickHandler`（`GraphwarPlane::drive_frame` / `tick_connected`）；本函数只是消费者。
+## 改前 `GwFlowClock` 自己又握了一台（同源时钟 ×2）—— 因为平面把发件箱 `clear()` 丢了。
+## 现在平面把产出 drain 成计数（`take_tick_requests()`）：节奏判据仍然只有一份，
+## 且**跟着平面的 tick 走**（含 `TickReply` 把轴拨到服务端之后）。
 var _online_tick_synced := -1
 
-func _online_poll_tick(delta: float) -> void:
+func _online_poll_tick() -> void:
 	if _online_session == null:
 		return
-	var due := int(_flow_clock.drive(delta))
+	_flow_clock.note_frame()
+	var due := int(_flow_clock.note_requests(int(_plane.call("take_tick_requests"))))
 	for _i in due:
 		_online_session.send_tick_request()
 	# 收到 `TickReply{current_tick}` 就把 tick 轴拨过去（原版客户端对齐服务端 tick 轴那件事；
@@ -1877,10 +1886,11 @@ func _reset_shot_state() -> void:
 		_effects.clear()
 	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
 	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。原版连上服务器时会**立刻**发一条
-	# `TickRequest`（`handle_connected_to_server_event` **`0x519630`**，不看载荷）⇒ 这里调
-	# `GwFlowClock.connected()` 那一下，而不是把某个累加器推到门槛上当替身（改前就是那样）。
+	# `TickRequest`（`handle_connected_to_server_event` **`0x519630`**，不看载荷）。
+	# T104 起这条也走平面那台时钟（`GraphwarPlane::tick_connected()`）—— 它是 `0x519630` 的
+	# 唯一接线点；改前在 `GwFlowClock` 里还有第二份同源实现（`docs/06` §150 第③条）。
 	_flow_clock.reset()
-	if _online_mode and _online_session != null and int(_flow_clock.connected()) > 0:
+	if _online_mode and _online_session != null and int(_plane.call("tick_connected")) > 0:
 		_online_session.send_tick_request()
 	_online_tick_synced = -1
 

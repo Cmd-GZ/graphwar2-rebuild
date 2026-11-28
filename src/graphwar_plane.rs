@@ -1629,6 +1629,18 @@ pub struct GraphwarPlane {
     removed_function_total: i64,
     /// 累计"本帧有曲线正在揭示"⇒ 请求重画的次数。
     reveal_redraws: i64,
+    /// 本帧 tick 产出、**还没被取走**的 `TickRequest` 条数（`take_tick_requests()` 取走）。
+    ///
+    /// 原版 `GraphwarGameClient::process`（x86 `0x518400`）每 tick 之后**立刻**泵事件
+    /// （`0x51849f call rbp`，`rbp = [GOT 0x9baef8] = 0x3d3630`，其 `panic::Location` =
+    /// `src/graphwar_event_handler.rs:467`）⇒ `tick()` 推进发件箱的那两条**被取走**。
+    /// 我方没有事件队列，改前是 `outbox.clear()` 直接丢（= 与 0x518400 不符）；
+    /// 现在 drain 成计数，交给联机侧那唯一一台时钟的消费者（`docs/06` §150 P3-*）。
+    frame_tick_requests: i64,
+    /// 累计发出过几条 `TickRequest`（`current_tick % 60 == 0` 的那些 tick）。
+    tick_requests_total: i64,
+    /// 累计发件箱里出现过几条 `TickEvent`（每 tick 一条）。
+    tick_events_total: i64,
 }
 
 #[godot_api]
@@ -1664,6 +1676,9 @@ impl IControl for GraphwarPlane {
             function_point_total: 0,
             removed_function_total: 0,
             reveal_redraws: 0,
+            frame_tick_requests: 0,
+            tick_requests_total: 0,
+            tick_events_total: 0,
         }
     }
 
@@ -2023,11 +2038,71 @@ impl GraphwarPlane {
             total / NANOS_PER_SECOND as u64,
             (total % NANOS_PER_SECOND as u64) as u32,
         );
-        // 原版 `tick()` 把 `TickEvent`/`TickRequest` 推进事件队列；本类没有那条队列
-        // （订阅者是 `GraphwarEventHandler`，我方走 GDScript 的 net 会话）⇒ 这里丢掉，
-        // 否则每帧一条会无限长。**这是本层的差**，登记在 `docs/06` §137。
-        self.tick_source.outbox.clear();
+        // 原版 `0x518400` 每 tick 之后**立刻**泵一次事件（`0x51849f call rbp`，
+        // `rbp = [GOT 0x9baef8] = 0x3d3630`，`panic::Location` = `graphwar_event_handler.rs:467`），
+        // `tick()` 推进发件箱的 `TickEvent`（每 tick 一条）与 `TickRequest`（每 60 tick 一条）
+        // 就是被那一泵取走的。改前这里 `outbox.clear()` 直接丢 ⇒ 与 0x518400 不符，
+        // 而且**逼出了第二台同源时钟**（`GwFlowClock` 自己再握一台 handler 复现 `%60` 节奏）。
+        // 现在：drain 成计数，由 [`GraphwarPlane::take_tick_requests`] 交给唯一那台时钟的消费者
+        // （`play_screen.gd::_online_poll_tick`）。**不丢事件**、也不让它无限长。
+        self.frame_tick_requests = 0;
+        for e in self.tick_source.take_outbox() {
+            match e {
+                crate::events::Event::TickRequest => {
+                    self.frame_tick_requests += 1;
+                    self.tick_requests_total += 1;
+                }
+                crate::events::Event::TickEvent => self.tick_events_total += 1,
+                _ => {}
+            }
+        }
         self.fractional_tick()
+    }
+
+    /// 取走本帧的 `TickRequest` 条数（`drive_frame` 之后调；取走后清零）。
+    ///
+    /// 这是"**一台时钟**"的接口：节奏判据（`0x519840` 的 `current_tick % 60 == 0`）只在
+    /// 平面这台 `GraphwarTickHandler` 里算，联机侧只是消费者。
+    #[func]
+    fn take_tick_requests(&mut self) -> i64 {
+        let n = self.frame_tick_requests;
+        self.frame_tick_requests = 0;
+        n
+    }
+
+    /// 累计发出过几条 `TickRequest`（自检/取证用；与 `take_tick_requests()` 的总和一致）。
+    #[func]
+    fn tick_requests_total(&self) -> i64 {
+        self.tick_requests_total
+    }
+
+    /// 累计发件箱里出现过几条 `TickEvent`（每 tick 一条；自检/取证用）。
+    #[func]
+    fn tick_events_total(&self) -> i64 {
+        self.tick_events_total
+    }
+
+    /// 连上服务器那一下：`GraphwarTickHandler::handle_connected_to_server_event`
+    /// （x86 **`0x519630`**，**不看**载荷，直接发一条 `TickRequest`），并立刻取走。
+    ///
+    /// 这就是联机开局"连上就发一条 `TickRequest`"的**唯一**来源（改前在 `GwFlowClock` 里
+    /// 又抄了一份同源逻辑 ⇒ 两台时钟）。返回 `1`（条数，写成计数是为了与
+    /// [`GraphwarPlane::take_tick_requests`] 同一形态）。
+    #[func]
+    fn tick_connected(&mut self) -> i64 {
+        self.tick_source.handle_connected_to_server_event();
+        self.frame_tick_requests = 0;
+        for e in self.tick_source.take_outbox() {
+            if matches!(e, crate::events::Event::TickRequest) {
+                self.frame_tick_requests += 1;
+                self.tick_requests_total += 1;
+            } else if matches!(e, crate::events::Event::TickEvent) {
+                self.tick_events_total += 1;
+            }
+        }
+        let n = self.frame_tick_requests;
+        self.frame_tick_requests = 0;
+        n
     }
 
     /// 累计调过几次 [`GraphwarPlane::drive_frame`]（**我方计数**，验收用）。
@@ -2735,3 +2810,97 @@ mod tests {
 
 #[cfg(feature = "gdext-bindings")]
 pub use node_class::*;
+
+#[cfg(all(test, feature = "gdext-bindings"))]
+mod tick_outbox_tests {
+    //! `drive_frame` 的**发件箱转发**（`docs/06` §150 P3-*）。
+    //!
+    //! 判据（逐位）：原版 `GraphwarGameClient::process`（x86 **`0x518400`**）每 tick 之后
+    //! **立刻**泵一次事件（`0x51849f call rbp`，`rbp = [GOT 0x9baef8] = 0x3d3630`，
+    //! `panic::Location` = `src/graphwar_event_handler.rs:467`）⇒ `tick()` 推进发件箱的
+    //! `TickEvent`（每 tick）与 `TickRequest`（每 60 tick）**被取走**，不是被丢掉。
+    //!
+    //! 这里只验**纯逻辑**（不实例化 Godot 类）：用同一台 `GraphwarTickHandler` + 与
+    //! `drive_frame` 相同的折法（[`super::ticks_for_frame`]）逐帧走，数 `%60` 那几条。
+
+    use crate::events::Event;
+    use crate::graphwar_tick_handler::GraphwarTickHandler;
+
+    /// 60 帧 1/60 s ⇒ `current_tick` 走到 **60**、且正好一条 `TickRequest`（在 tick=60 那一下）。
+    #[test]
+    fn sixty_frames_emit_exactly_one_tick_request() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        let mut carry = 0u64;
+        let mut requests = 0;
+        let mut events = 0;
+        for _ in 0..60 {
+            let (n, acc) = super::ticks_for_frame(carry, 1.0 / 60.0, 600);
+            carry = acc;
+            for _ in 0..n {
+                h.tick();
+            }
+            // 与 `drive_frame` **同一段 drain**：数完就取走（不再是 `outbox.clear()` 丢弃）。
+            for e in h.take_outbox() {
+                match e {
+                    Event::TickRequest => requests += 1,
+                    Event::TickEvent => events += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(h.current_tick, 60, "60 帧 1/60 s = 60 tick");
+        assert_eq!(requests, 1, "`current_tick % 60 == 0` 只命中一次（0x519840）");
+        assert_eq!(events, 60, "每 tick 一条 TickEvent");
+    }
+
+    /// 折法**逐位相同**时，`TickRequest` 的**逐帧序列**与改前那台独立时钟（`GwFlowClock` 的
+    /// `fold_dt_into_ticks`）完全一致 ⇒ 归一成一台时钟**不改变节奏**（P3-3 的判据）。
+    ///
+    /// 两处折法唯一的差别是"一帧补 tick 的上限"：平面 600（长卡顿保护）、旧实现无上限
+    /// ⇒ 只在单帧 > 10 s 时分叉；这一条用一帧 100 s 把那个差别也钉住。
+    #[test]
+    fn per_frame_request_sequence_matches_the_old_second_clock() {
+        let deltas = [
+            1.0 / 60.0, 1.0 / 60.0, 0.5, 0.25, 1.0 / 144.0, 1.0 / 30.0, 2.0, 0.016, 0.017,
+        ];
+        // 平面那台（改后，唯一一台）
+        let mut new_h = GraphwarTickHandler::new(0, 0);
+        let mut new_carry = 0u64;
+        let mut new_plan = Vec::new();
+        // 旧的 `GwFlowClock` 那台（改前）：`fold_dt_into_ticks` 无上限
+        let mut old_h = GraphwarTickHandler::new(0, 0);
+        let mut old_carry = 0u64;
+        let mut old_plan = Vec::new();
+        for _ in 0..200 {
+            for d in deltas {
+                let (n, acc) = super::ticks_for_frame(new_carry, d, 600);
+                new_carry = acc;
+                let mut r = 0;
+                for _ in 0..n {
+                    new_h.tick();
+                }
+                for e in new_h.take_outbox() {
+                    if matches!(e, Event::TickRequest) {
+                        r += 1;
+                    }
+                }
+                new_plan.push(r);
+
+                let m = crate::graphwar_tick_handler::fold_dt_into_ticks(d, &mut old_carry);
+                let mut r2 = 0;
+                for _ in 0..m {
+                    old_h.tick();
+                }
+                for e in old_h.take_outbox() {
+                    if matches!(e, Event::TickRequest) {
+                        r2 += 1;
+                    }
+                }
+                old_plan.push(r2);
+            }
+        }
+        assert_eq!(new_plan, old_plan, "同一串 delta ⇒ 逐帧 TickRequest 条数序列必须相同");
+        assert_eq!(new_h.current_tick, old_h.current_tick, "整数 tick 读数也必须相同");
+        assert!(new_plan.iter().sum::<i64>() > 10, "这串 delta 至少该跨过十几次 %60");
+    }
+}
