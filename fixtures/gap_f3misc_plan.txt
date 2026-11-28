@@ -1,0 +1,237 @@
+# gap_f3misc_plan.txt —— T95 **预注册**：4 个小模块 16 条 F3 的逐条裁决 + 落码口径（先提交，后跑）
+#
+# 为什么先写死再跑：本轮做两件会被"想要的数字"污染的判断 ——
+#   ① **逐条裁决**：16 条 F3 是 `real-missing`（真缺口）还是 `na:*`（源码层本来没有这个 fn）还是
+#      `unknown`（判不了）？判成 `na:*` 会**缩小分母**、判成 `real-missing` 会**扩大缺口**——两边都能凑数。
+#   ② **落码**：11 条候选真缺里，落几条、按什么标准算"落了"。若标准边写边改，报告一定好看。
+# 所以：**本文件先单独 commit**，然后才反汇编、才改 `src/`、才出 `fixtures/gap_f3misc.tsv`。
+# 跑完若发现判据有洞，**只许在本文件末尾追加 §9「勘误」（追加式）**，不改 §1–§8 的规则文本；
+# 结论写进 `docs/06` 新节（本轮 §139），**不回改本文件**。
+#
+# 口径（一律可复算）：
+#   * 地址 = **ELF vaddr（RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#   * 函数范围 = `.eh_frame` FDE 自解（`tools/addr_probe.py fde <va>`），**不读** Ghidra pkl。
+#   * 二进制 = `.reference/steam/2026-08-28/libgraphwarrust.so`（sha256
+#     `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`，与 `fixtures/boundary_audit.tsv` 文件头一致）。
+#   * 反汇编 = capstone x86-64（`.reference/venv`），复用 `tools/addr_probe.py` 的 `Ctx/dis_list`。
+#   * 分母 = `fixtures/function_coverage.tsv` 里 `判档 == F3` 且 `模块 ∈ 本表 4 个模块` 的行 = **16 条**
+#     （与 `tools/function_coverage.py --stats`「gap 占比最高 10 个模块」表一一对上：
+#      replay_player 4/5 · backend 4/6 · audio_control 4/7（unk=1）· play_screen_control 4/10）。
+
+## 0. 本轮要回答什么
+
+`tools/function_coverage.py --stats` 的「确证缺函数边界（gap）」榜上，四个**小模块**的缺口集中且互不牵连：
+
+| 模块 | gap | F1 | F2 | F3 | unk | na | 矩阵档位 |
+|---|---|---|---|---|---|---|---|
+| `graphwar_replay_player.rs` | 4/5 = 80.0% | 1 | 0 | 4 | 0 | 0 | 观测 |
+| `graphwar_backend.rs` | 4/6 = 66.7% | 1 | 1 | 4 | 0 | 0 | 观测 |
+| `graphwar_audio_control.rs` | 3/7 = 42.9% | 2 | 1 | 4 | 1 | 0 | 观测 |
+| `graphwar_play_screen_control.rs` | 4/10 = 40.0% | 3 | 3 | 4 | 0 | 0 | 观测 |
+
+本轮只碰这 4 个模块的 16 条 F3，不碰别的模块（`graphwar_game_state_manager`（t94）/
+`graphwar_lan_vbox` / `entity_drawer` / `math_function` / `graphwar_module_container`（t93）由别人做或另有遗留）。
+
+## 1. 目标集合（16 条，**跑前固定**）
+
+来源：`fixtures/function_coverage.tsv`（4 个模块的 F3 行），行内 `ledger#N` 指 `fixtures/f3_triage.tsv` 的行号。
+
+| # | vaddr | FDE 尺寸 | v2 真名（`name_to_addr_v2.tsv`） | 现行 pin 子类 | 台账现值（T82/T89） | ledger# |
+|---|---|---|---|---|---|---|
+| 1 | `0x3d61a0` | `0x70b` | `GraphwarReplayPlayer::inject_events` | named-miss | real-missing | 17 |
+| 2 | `0x3d68b0` | `0x186` | `GraphwarReplayPlayer::go_to_next_checkpoint` | named-miss | real-missing | 18 |
+| 3 | `0x3d6a40` | `0x162` | `GraphwarReplayPlayer::go_to_first_checkpoint` | named-miss | real-missing | 19 |
+| 4 | `0x3d6bb0` | `0x1bc` | `GraphwarReplayPlayer::go_to_previous_checkpoint` | named-miss | real-missing | 20 |
+| 5 | `0x514d80` | `0x112` | `GraphwarBackend::resubscribe_to_events` | register-only | real-missing | 58 |
+| 6 | `0x514f20` | `0x213` | `GraphwarBackend::start_client_to_replay` | named-miss | real-missing | 59 |
+| 7 | `0x5153f0` | `0x10a` | `…subscribe_to_event_with_id::{{closure}}`（naming_android） | parent-missing | unknown | 163 |
+| 8 | `0x520100` | `0x152` | 同上（`{{closure}}`，naming_android） | parent-missing | unknown | 164 |
+| 9 | `0x4bef20` | `0xd4` | `GraphwarAudioControl::game_state_event` | register-only | real-missing | 52 |
+| 10 | `0x4bf090` | `0x2a9` | `GraphwarAudioControl::effect_info_event` | register-only | real-missing | 53 |
+| 11 | `0x3bfdd0` | `0x25b` | —（无名） | noname | **na:std-mono**（T89 改判） | 13 |
+| 12 | `0x5238c0` | `0x358` | —（无名） | register-only | **na:std-mono**（T89 改判） | 64 |
+| 13 | `0x3db3e0` | `0x108e` | `GraphwarPlayScreenControl::add_player_victory_icon` | register-only | real-missing | 21 |
+| 14 | `0x3dc470` | `0x1c0` | `GraphwarPlayScreenControl::update_names_button_texture` | register-only | real-missing | 22 |
+| 15 | `0x3dc630` | `0x1c0` | `GraphwarPlayScreenControl::update_view_function_button_texture` | register-only | real-missing | 23 |
+| 16 | `0x522070` | `0x477` | —（无名） | register-only | **na:std-mono**（T89 改判） | 62 |
+
+⚠️ **台账是历史的裁决记录，不是本轮结论**：本轮**逐条复算**。三条 `na:std-mono`（#11/#12/#16）是
+T89（`docs/06` §137.5）刚改判过的，本轮**不许拿"台账这么写"当依据**——必须自己跑 T89 的两条判据
+（Android 侧命中物 + 调用形态）；复算一致就沿用，不一致就写清冲突并**以本轮证据为准**。
+
+## 2. 判据（**继承，不改阈值**）
+
+### 2.1 五类定义（T82 `fixtures/f3_triage_plan.txt` §1 逐字）
+
+| 类别 | 定义 | 进不进"诚实缺口" |
+|---|---|---|
+| `real-missing` | **原版有我方没有的业务函数**：函数体承载原版模块自己的语义，能按源码写出来 | **进** |
+| `na:std-mono` | **std/core/alloc 的单态化**：函数体是标准库的，本模块只贡献被内联进去的比较器/步长 | 不进 |
+| `na:gdext-glue` | **gdext 宏产物**：类注册胶水 / 属性访问器 / `#[func]` 分发壳 / 信号 connect 闭包。源码层无独立 `fn` | 不进 |
+| `na:other` | 其它不该手写的编译器生成物：drop glue / panic 展开 / `#[derive]` / trait 对象 shim | 不进 |
+| `unknown` | **判不了**：证据不足以判成上面任一类（**必须写明缺什么证据**） | **进**（保守） |
+
+### 2.2 机判特征（T82 §2，原样继承）
+
+`SZ`（FDE 尺寸/指令条数）· `LOC`（`panic::Location` 引用）· `SELF`（自递归次数）· `STRIDE`（元素步长乘法）·
+`CMP`（`ucomisd`+`jp`）· `BULK`（`movups/movaps/movdqu` ≥2）· `CMOV` · `ATOMIC`（`lock cmpxchg` 写可写段）·
+`BORROW`（`[reg+0x10]` 0→-1 借用标记）· `CALLERS`（`call rel32` 数）· `SLOTS`（值 == 本函数地址的重定位槽）·
+`CALLER_LOC` · `CALLEE`。
+
+### 2.3 判决规则（T82 §3 + §9 勘误 E1–E4，**含优先级**）
+
+* `R-STD ⇒ na:std-mono`：A 组（`SELF≥2` 且 `STRIDE`）/ B 组（`CMP` 且 (`BULK≥2` 或 `CMOV≥4`)）/
+  C 组（`CMP` 且**同批另一条 F3 行 FDE 尺寸逐字节相同**）。**A/B/C 全不中 ⇒ 不许判 std**。
+* `R-GDEXT ⇒ na:gdext-glue`：G1（`ATOMIC` 且 `CALLERS==0`）/ G1b（`CALLERS==0` 且 `SLOT≥1` 且 `imul …,0x78`）/
+  G2（`BORROW` 且 `CALLERS≤1` 且 `SLOT≥1`）/ G3（`CALLERS==1` 且调用者 `CALLER_LOC==0` 且体 ≥0x180）。
+* `G4 ⇒ unknown`（**不是** na）：同一个 `panic::Location` 被 ≥2 条无名 F3 行共享（源码闭包的多份实例）。
+* `R-OTHER ⇒ na:other`：只做 drop glue / panic 展开 / `#[derive]` 生成物 / 空壳，**且**无业务常量/串/分支。
+* `R-REAL ⇒ real-missing`：上面三组都不命中，**且**能写出该函数做什么的至少一句可复核描述
+  （来自：被调者 + 常量 + `.rodata` 串 + Location 行号 + 调用者模块）。
+* `R-UNKNOWN ⇒ unknown`：规则都不干净命中/相互冲突，或函数体太大本轮没读完（T82：>0x1000 未读完 ⇒ unknown）。
+  **必须写「缺什么」**。
+* 优先级（E4）：`na:gdext-glue` → `na:std-mono` → `na:other` → `unknown`(G4) → `real-missing`。
+* 纪律（T82 §3）：`na:*` 每条**至少 2 个独立证据**（1 个机器特征 + 1 条人工复核的指令/表项），
+  单条证据 ⇒ `unknown`；`real-missing` 必须能写出语义，写不出但也不像 na ⇒ `unknown`（不许猜）。
+
+### 2.4 体积上限（T85 M4 / T86 `VOL_CAP`，**硬闸**）
+
+`na:*` 要求 **FDE 尺寸 ≤ 0x800**（T85 实测：全部 na ≤ 0x721；反例 `0x3c2bc0`=0x308d 是业务函数）。
+**>0x800 一律不许判 `na:*`**（可判 `real-missing` 或 `unknown`）。本轮最高的一条是 `0x3db3e0`=0x108e ⇒ 天然不可能 na。
+
+### 2.5 **调用形态闸（T89 `docs/06` §137.5 新增，本轮强制且逐条记录）**
+
+对**每一条**目标行记录 `rel32`（`call rel32` 调用点数）与 `slot`（值 == 本函数地址的重定位槽数），判据：
+
+| 形态 | 含义 | 结论约束 |
+|---|---|---|
+| `rel32 ≥ 1` **且** `slot = 0` | 被**直接调用** | 泛型单态化的**必要形态**；也是业务函数的常见形态 —— **单靠它不能定案** |
+| `rel32 = 0` **且** `slot ≥ 1` | 地址只出现在**数据槽**里（交给 API 的闭包 / 注册表项） | **禁止**据此判 `na:std-mono`（T89 驳回 `0x438880` 的教训：被内联进 std wrapper 的游戏闭包也是这个形态） |
+| `rel32 = 0` **且** `slot = 0` | 只经 vtable/间接调用（如订阅回调） | 必须另找间接调用链（vtable 项 / `call_mut`），否则判 `unknown` 并写明缺哪条链 |
+
+⚠️ 本轮 `0x4bef20`/`0x4bf090` 实测 `rel32=0 / slot=0`（音频订阅回调）⇒ 它们的"谁调我"必须靠
+`new` 里 4 个 `dyn FnMut` vtable 的 `call_mut` 项解出来（`fixtures` 里已有：`0x85b0f8`/`0x85b170` 等），
+**不许**因为"没有 `call rel32`"就判它们不存在。
+
+### 2.6 Android 侧正向指名（T87/T89 判据①，`na:std-mono` 的另一半）
+
+`na:std-mono` 必须给**正向**指名：本址 `panic::Location` 键集在 Android 2.0.60 `.symtab`
+（`.reference/steam/android-2.0.60/libgraphwarrust.so`，未 strip）里命中的函数是**标准库/alloc 的泛型本体**
+（如 `Vec::from_iter` / `Rc::new_cyclic_in` / `LocalKey::with`），而不是游戏 crate 的闭包。
+命中物是**游戏闭包** ⇒ 不是 na（T89 驳回项）。
+
+## 3. 逐条必须产出的字段（写进 `fixtures/gap_f3misc.tsv`）
+
+`vaddr | FDE尺寸 | v2名 | module | 机判特征(hits) | rel32/slot | LOC | 被调者 | 业务串/常量 | 类别 | 依据（≥40 字符） | 落码（真名/我方文件:行）`
+
+* **正/负对照必须先跑**（§5），全对才允许进全量。
+* 「类别」列是**人工裁决结果**；与机器候选不同时必须写明理由（T82 §3 纪律 3）。
+
+## 4. 落码口径（什么算"这条 F3 真落下来了"）
+
+对本轮判 `real-missing` 的每一条：
+
+1. **落点必须是我方同名原版模块文件**（`src/graphwar_replay_player.rs` / `graphwar_backend.rs` /
+   `graphwar_audio_control.rs` / `graphwar_play_screen_control.rs`），**不许**落 `src/_scaffold/**`
+   （`AGENTS.md` §4 + `function_coverage.py` 的 R1：scaffold 里的同名函数不计复原）。
+2. **函数名 = v2 真名的方法段**（`fixtures/name_to_addr_v2.tsv` 的 `method` 列），大小写与下划线一致。
+   名字来源不是 v2（如 hyb / android-only）的，**不许**当结论用 —— 那种行只登记、不落码（本轮 #7/#8 若属此列）。
+3. **注释必须带**：`vaddr`（ELF 口径）+ FDE 尺寸 + 证据档（`逐位`/`观测`/`推断`）+ **关键指令**
+   （立即数 / 字段偏移 / `.rodata` 串 / 表项地址）。**只写"对应 0xNNNN"不算**。
+4. **单测**：能单测的加单测，**期望值只能来自反汇编读出的立即数/分支/表项**，不许来自我方实现的输出
+   （`AGENTS.md` §0.5）。无法隔离（要 Godot 节点/线程/分配器）的，写明"能做什么、缺什么"，
+   档位降到 `观测`/`推断`，**不许编语义**。
+5. **接线**：若它被别处调用/调用别处，把调用点接上（保持既有 API 不变，必要时加 `pub`）；
+   **既有测试断言若与本轮证据冲突**，改断言并写明地址与理由（不许删测试）。
+6. **每处 real-missing 单独一个 commit**（便于逐条复核）。
+
+### 4.1 判 F1 的机制（**不得为凑数改判据**）
+
+复用 `tools/function_coverage.py` 的既有三层判法，一字不改：
+* `P1`（真名）：`name_src ∈ {v2*, naming_android}` 的函数段（`::{{closure}}` 取**父函数**，R2）在我方
+  **同名实现函数**里命中；
+* `P2`（地址）：原文地址出现在**能贴到某个 fn** 的注释里（文件顶部台账注释块**不算** —— T85 N1 的假抬教训）；
+* 定档：`pin ∈ {name, addr}` 且 `grade ∈ {逐位, 观测}` ⇒ **F1**。
+⇒ 落码时"文件名 + 函数名 + 紧贴 fn 的 vaddr 注释"三件事同时做，是**判据要求**，不是包装。
+
+### 4.2 **诚实拆解三口径**（本轮报告必须分开给）
+
+| 口径 | 定义 | 复算 |
+|---|---|---|
+| **机器码** | `function_coverage.py --stats` 的 F1 条数变化（分母 527） | `--stats` 前后对比 |
+| **源码级** | 本轮**新增的不同源码函数**个数（`::{{closure}}`/单态化多份副本只算 1 个） | 逐条数 TSV 的 `落码` 列去重 |
+| **严格 1:1** | `--stats` 的 `M1_1to1`（R6：一个我方函数只对一个原版函数）变化 | `--stats` 的 `敏感度 R6` 行 |
+
+⚠️ 三个数**通常不等**（T87：+30 机器码 = +4 源码级；T89：+3 机器码 = +0 源码级）。
+本轮的 `::{{closure}}` 行（#7/#8）和"一条源码函数被切多份"的行，必须按这个口径扣掉。
+
+## 5. 正/负对照（**先做，全对才进全量**）
+
+| 组 | 条数 | 地址 | 期望 |
+|---|---|---|---|
+| A std 单态化 | 2 | `0x3bfdd0`（`0x25b`）、`0x5238c0`（`0x358`） | 若沿用 T89 的 `na:std-mono`，必须**自己复算**出：Android 泛型本体 + `rel32≥1 & slot=0` |
+| B 已判 gdext | 2 | `0x4e8f80`、`0x4e9380`（T82 台账 19 条 gdext 里两条，**不在本轮 16 条内**） | 本轮判法复跑仍得 `na:gdext-glue`（证判法没退化） |
+| C 已知真业务 | 2 | `0x3afcf0`（`check_save_level`）、`0x519630`（`handle_connected_to_server_event`） | `real-missing` 形态（非 na） |
+| D 附加负对照 | 1 | `0x438880`（T89 驳回项） | **非** `na:std-mono`（`rel32=0/slot=1` 的负向闸） |
+
+另加**机判自校验**：`tools/addr_probe.py fde` 算出的尺寸必须与台账 `fixtures/f3_triage.tsv` 的 FDE 尺寸列
+逐条相同（16/16）；不同 ⇒ 先查口径，不查就全错。
+
+## 6. 跑前的**预期**（写在这里，跑完对不上要解释，不许悄悄改）
+
+* 3 条 `na:std-mono`（#11/#12/#16）预期**复算通过**（T89 刚做过，且三者都是 `rel32=1/slot=0` 的直接调用形态）。
+* 2 条 `unknown`（#7/#8）预期**能定**：它们与 `0x515320`（hyb 高置信 0.7115，被 `0x514b40`/`0x514d80` 直接调）
+  是同一源码函数 `subscribe_to_event_with_id` 的闭包副本；若本轮把**父函数**落码，按 R2 它们将判 F1——
+  但**源码级只算 1 个**（闭包体住在父函数里），报告里必须写清这个折算。
+* 11 条 `real-missing` 候选里，**#13 `0x3db3e0`（0x108e = 4240 B）是本轮最大风险**：
+  T62 明确"未落"（三层嵌套循环 + 每层一个 `Gd` 句柄 + 一次 `upcast_ref`，三跳 `0x447d10`/`0x447e20`/`0x3acb00`
+  身份未定）。预期**先攻它**，若读不通就判 `unknown` 并写明缺哪几条链 —— **不许**用"大函数"当借口直接跳过。
+
+## 7. 交付物 / 门槛 / 复跑命令
+
+**交付物**
+* `fixtures/gap_f3misc_plan.txt`（本文件，**先单独 commit**）；
+* `fixtures/gap_f3misc.tsv`（16 行 × §3 的列 + 正/负对照分节）；
+* `src/graphwar_replay_player.rs` / `graphwar_backend.rs` / `graphwar_audio_control.rs` /
+  `graphwar_play_screen_control.rs` 的落码（每处单独 commit）+ 单测；
+* `docs/06` 新节（本轮从 **§139** 起；先 `tools/docsec.py check docs/06-verification.md` 确认空号）。
+
+**门槛（一条都不许跳）**
+```bash
+export PY=.reference/venv/bin/python
+$PY tools/function_coverage.py --stats        # cargo/gdext 口径只增不减：A 313/527 · B 313/438 · B′ 313/445 起
+cargo test --offline                          # 基线 1592/0（只增不减）
+cargo test --offline --features gdext-bindings # 基线 1741/0（只增不减）
+$PY tools/coverage_matrix.py --check          # OK
+python3 tools/check_doc_refs.py               # rc=0
+python3 tools/docsec.py check docs/06-verification.md   # 通过
+$PY tools/boundary_audit.py --check           # match 441 / mismatch 0 / multi 86
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl   # 内容 647
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl   # 内容 647
+cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict                                 # 637
+```
+快照 = `.reference/replays/gw2-replays-snapshot/replays`（**401 份回放 + MANIFEST + SHA256SUMS**，只读，不往里加样本）。
+
+## 8. 不做什么（边界，**先划死**）
+
+* **不动** `src/graphwar_module_container.rs`（t93）、`src/graphwar_game_state_manager.rs`（t94）、
+  `src/_scaffold/**`、`client/**`、别的 agent 的台账、门槛/护栏文件、`fixtures/guardrails.json`、
+  `tools/function_coverage.py`、`tools/f3_triage.py`、`fixtures/f3_triage.tsv`（历史裁决，只读引用）、
+  `fixtures/name_to_addr*.tsv`（只读引用）。
+* **不重翻 T72 的裁决**（`docs/06` §126.3.1）：`graphwar_replay_reader` 在 Linux 侧 **Location 锚 = 0**，
+  `replay_meta` 的 7 条判"我方自造（A）"已定案。本轮的 `graphwar_replay_player` 4 条**不涉及**回放头部解析
+  （它们是 checkpoint 导航 / 事件注入，Location 都在 `graphwar_replay_player.rs` / `graphwar_game_client.rs`）；
+  若某条实际落在 `replay_meta` 的职责边界上，**沿用 T72 裁决**（该函数不属本轮落码范围），只登记、不翻案。
+* **不改**既有测试的期望值除非它被本轮证据推翻（改了必须写地址 + 理由）。
+* 不 merge/push master；主工作区只读；提交作者用仓库配置（`Cmd-GZ`）。
+
+## 9. 已知风险（**跑前承认**）
+
+* **L1** 机器特征是**形态**证据不是语义证据：一个真业务函数若恰好是"自递归 + 步长"会被误判 std。
+  缓解：R-STD 要 ≥2 特征同时命中 + 每一条 na 都人工复核一条具体指令。
+* **L2** "原版源码里没有这一行 fn"本身是**推断**（我们手上没有原版源码），档位写「推断」，不许写"确定"。
+* **L3** `unknown` 计入缺口 ⇒ 本轮缺口读数**偏大**（保守方向，不虚报完成度）。
+* **L4** R2（`::{{closure}}` 按父函数判）会让"机器码 +2"虚高成"源码级 +2"，必须按 §4.2 拆开报。
+* **L5** 本轮 4 个模块都是 `观测` 档（`coverage-matrix`），不是 `逐位` ⇒ 落了码也只是"观测级 F1"，
+  **不等于**逐位验证；报告里每条都要写清这一点。
+* **L6** 落码"能编译、测试绿"**不是**复原证据（`AGENTS.md` §0.2）：判据是"注释能指到指令"。

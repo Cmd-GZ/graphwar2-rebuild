@@ -831,6 +831,449 @@ impl ReplayPlayer {
 }
 
 // ---------------------------------------------------------------------------
+// 6. 原版 `GraphwarReplayPlayer`：把回放事件**注入**活着的对局（T95 落码）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 这一节与上面 [`ReplayPlayer`] **不是同一个东西**：
+//   * [`ReplayPlayer`] 是我们自造的**纯数据**播放器（`ReplayState` 快照 + cursor），
+//     headless 对拍/回放界面用它；
+//   * [`GraphwarReplayPlayer`] 是**原版**的播放器：它不维护局面快照，而是把回放里的事件
+//     **当成"服务器发来的远端事件"重新喂一遍**（`handle_server_remote_event`），
+//     再把 `GraphwarTickHandler` 的 tick 计数对齐到回放时间轴。
+//
+// ## 函数清单（x86 vaddr = ELF 口径；arm64 = 同一份源码的另一份构建，有 `.symtab` 真名）
+//
+// | 函数 | x86 vaddr / FDE | arm64 vaddr / size | 证据档 |
+// |---|---|---|---|
+// | `inject_events` | **`0x3d61a0`** / `0x70b` | `0x3d8d9c` / `0x500` | 观测（逐指令；见下） |
+// | `go_to_first_checkpoint` | **`0x3d6a40`** / `0x162` | `0x3d94a0` / `0x1b8` | 观测 |
+// | `go_to_next_checkpoint` | **`0x3d68b0`** / `0x186` | `0x3d929c` / `0x204` | 观测 |
+// | `go_to_previous_checkpoint` | **`0x3d6bb0`** / `0x1bc` | `0x3d9658` / `0x220` | 观测 |
+//
+// 名字来源：`fixtures/name_to_addr_v2.tsv` 三向唯一锚（android+win+win_old 三份构建同名），
+// 不是本仓库的推断。
+//
+// ## `GraphwarReplayPlayer` 的字段偏移（观测，从四个函数的读写下夹逼）
+//
+// ```text
+// +0x00  u64/usize   "已开始注入" 标志：`inject_events` 写 1（x86 `0x3d62c5 mov qword [rax],1`）；
+//                    `go_to_next_checkpoint` 读它（`0x3d6922 cmp byte [rdi],0`）决定起点下标
+// +0x08  usize       最近注入的事件下标（`0x3d62d4 mov [rax+8],r13`）
+// +0x10  usize       `events: Vec<GraphwarEvent>` 的 cap（`0x3d6243` 起按 cap/ptr/len 读）
+// +0x18  ptr         同上：数据指针（`0x3d6256 mov rax,[rax+0x18]`）
+// +0x20  usize       同上：条数（`0x3d6237 mov rax,[rax+0x20]`）
+// +0x28  usize       `checkpoints: Vec<u32>` 的 cap
+// +0x30  ptr         同上：数据指针（`0x3d68bc mov rax,[rdi+0x30]`）
+// +0x38  usize       同上：条数（`0x3d68c0 mov rcx,[rdi+0x38]`；`0x3d6a93` 用它判空）
+// +0x58  u32         当前 tick（`0x3d6284 mov [rax+0x58],ecx` 写；`0x3d68cf` 读作二分查找的 key）
+// ```
+//
+// 事件元素 **`0x50` = 80 字节**、tick 在元素 **`+0x48`**（x86 `0x3d629d lea rsi,[r13*4]` +
+// `0x3d62a5 add rsi,r13` + `0x3d62a8 shl rsi,4` = `i*0x50`，`0x3d62ac mov ecx,[rax+rsi+0x48]`；
+// arm64 `0x3d8e78 mov w9,#0x50` + `0x3d8e80 madd x1,x23,x9,x8` + `0x3d8e84 ldr w28,[x1,#0x48]`
+// 逐条对上）。
+//
+// ## `inject_events` 的一圈到底做了什么（逐指令）
+//
+// ```text
+// 0x3d61c6 / arm64 0x3d8dbc  client+0x40 = Rc<RefCell<GraphwarModuleContainer>>
+// 0x3d61e9 call 0x46aa50     ; get_module::<GraphwarTickHandler>()   ← docs/02 §22.3 表
+// 0x3d621b call 0x46be70     ; get_module::<GraphwarGameStateManager>()（同一张表）
+// 0x3d6243 cmp  r13,[self+0x20]            ; from >= events.len() ⇒ 整个循环跳过
+// 0x3d62ac mov  ecx,[events_base + i*0x50 + 0x48]   ; 事件 tick
+// 0x3d62b4 cmp  ecx,[rsp]                  ; tick >= until_tick ⇒ 退出（**严格小于**才注入）
+// 0x3d62c5 mov  qword [self],1             ; 开始过
+// 0x3d62d4 mov  [self+8],r13               ; 记录下标
+// 0x3d62e0 call 0x3e8a60                   ; GraphwarEvent::clone（arm64 名：<GraphwarEvent as Clone>::clone）
+// 0x3d634d call 0x3e2830                   ; GraphwarRemoteEventHandler::handle_server_remote_event
+// 0x3d6376 call 0x3d3630                   ; GraphwarEventHandler::process_events
+// 0x3d6395 cmp  byte [gamestate+0x138],2   ; 状态字节 < 2 才同步 tick
+// 0x3d63ad mov  [tick_handler+0x58],tick   ; = TickHandler 的 u32 tick（+0x58 = payload+0x40）
+// 0x3d6284 mov  [self+0x58],tick           ; 播放器自己的当前 tick
+// ```
+//
+// ⚠️ 两处**没解透**（不许写成结论）：
+//   1. `handle_server_remote_event` 的三个实参的**类型**：x86 传 `rdi=&事件副本`、
+//      `rsi=client`、`rdx=&Weak<RefCell<…>>`（arm64 `0x3d8eb8 ldr x9,[x26,8]; adds x8,x9,1;
+//      str x8,[x26,8]` = 弱引用 +1，调用后 `0x3d8ef4` 起再 -1 并在 0 上 `__rust_dealloc(0x48,8)`）
+//      ⇒ 原版是**静态方法**（没有 `&self`），本文件用 [`ReplayInjectTarget`] 把这一步抽出来。
+//   2. 为什么 `GameStateManager+0x138` 的字节 `<2` 才同步 tick —— 那个字节的语义**未知**
+//      （只知道比较值 2，不猜它是不是 "game_state"）。
+//
+// ## 检查点按钮的三条路径（`GraphwarRootNode::process_button_pressed` = `0x3b0830` 调它们）
+//
+// 三条的共同尾巴：**注入完就冻结 `GraphwarTickHandler` 的时间基**（时间基哨兵
+// `nanos == 1e9` ⇔ 未冻结，见 `src/graphwar_tick_handler.rs` 的 `NANOS_PER_SECOND`；
+// 冻结 = 写 `Instant::now()` 到 `+0x38/+0x40`）。等价源码：`if !paused { pause() }`。
+
+/// 原版 `GraphwarReplayPlayer`（回放**注入器**）。字段偏移见本节开头表。
+#[derive(Debug, Clone, Default)]
+pub struct GraphwarReplayPlayer {
+    /// `+0x00`：是否已经开始注入过（`usize` 口径，`inject_events` 写 1）。
+    pub started: u64,
+    /// `+0x08`：最近注入的事件下标（`go_to_next_checkpoint` 的起点从它 +1 起）。
+    pub cursor: usize,
+    /// `+0x10/+0x18/+0x20`：`Vec<GraphwarEvent>`（元素 0x50 字节、tick 在 `+0x48`）。
+    ///
+    /// 我方用 [`ReplayEvent`] 承载同一个东西（`tick` + 原始 JSON 载荷）；
+    /// **元素大小与 tick 偏移是原版的**（有地址），类型名是我方的。
+    pub events: Vec<ReplayEvent>,
+    /// `+0x28/+0x30/+0x38`：`Vec<u32>`，检查点 tick 表（**升序**——四个函数都拿它做二分）。
+    pub checkpoints: Vec<u32>,
+    /// `+0x58`：当前 tick（注入时逐条写；三个 checkpoint 函数的查找 key）。
+    pub tick: u32,
+}
+
+/// 事件元素大小（逐位：`i*0x50`，x86 `0x3d62a8 shl rsi,4` / arm64 `0x3d8e78 mov w9,#0x50`）。
+pub const REPLAY_EVENT_STRIDE: usize = 0x50;
+/// tick 在事件元素内的偏移（x86 `0x3d62ac` / arm64 `0x3d8e84`：`+0x48`）。
+pub const REPLAY_EVENT_TICK_OFFSET: usize = 0x48;
+/// `GameStateManager` 里那个"状态字节"的偏移（`0x3d6395 cmp byte [rax+0x138],2`）。
+pub const GAME_STATE_GATE_OFFSET: usize = 0x138;
+/// 同一处比较的阈值：`< 2` 才把 tick 同步进 `GraphwarTickHandler`（`0x3d639c jae`）。
+pub const GAME_STATE_GATE_LIMIT: u8 = 2;
+/// `GraphwarTickHandler` 的 `u32 tick` 字段偏移（= payload `+0x40`，见 `src/graphwar_tick_handler.rs`）。
+pub const TICK_HANDLER_TICK_OFFSET: usize = 0x58;
+
+/// 注入时需要的那半套对局对象 —— **我方抽象，不是原版类型**。
+///
+/// 原版 `inject_events` 直接对着 `GraphwarGameClient` 与它的 `Rc<RefCell<GraphwarModuleContainer>>`
+/// 操作（`get_module::<GraphwarTickHandler>` = x86 `0x46aa50` / `get_module::<GraphwarGameStateManager>`
+/// = `0x46be70`）。本仓库 headless 没有那套 gdext 对象图，所以把"注入目标"抽成 trait；
+/// **函数体逻辑逐条照反汇编**，trait 本身是接线层。
+pub trait ReplayInjectTarget {
+    /// `GraphwarRemoteEventHandler::handle_server_remote_event`（x86 `0x3e2830`）+
+    /// `GraphwarEventHandler::process_events`（x86 `0x3d3630`）。
+    fn dispatch_replay_event(&mut self, ev: &ReplayEvent);
+    /// `GraphwarGameStateManager` 的 `+0x138` 字节（`0x3d6395` 读；语义未知）。
+    fn game_state_byte(&self) -> u8;
+    /// 写 `GraphwarTickHandler` 的 `u32 tick`（`0x3d63ad mov [tick_handler+0x58],tick`）。
+    fn set_tick_handler_tick(&mut self, tick: u32);
+    /// `GraphwarTickHandler` 时间基哨兵的 `nanos`（`1e9` ⇔ 未冻结；见 `NANOS_PER_SECOND`）。
+    fn tick_handler_base_nanos(&self) -> u32;
+    /// 冻结时间基（写 `Instant::now()` 到 `+0x38/+0x40`；`0x3d6395` 判据 + `0x3d63c8` 写入）。
+    fn freeze_tick_handler(&mut self);
+}
+
+/// 不做任何事的注入目标：给"只关心装配顺序"的调用方用（原版这里传的是真的对局客户端）。
+///
+/// `game_state_byte` 返回满值 ⇒ 不触发 tick 同步；`tick_handler_base_nanos` 返回非哨兵
+/// ⇒ 不冻结时钟。两者都是"让逻辑路径最短"的选择，**不是**原版行为。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoInjectTarget;
+
+impl ReplayInjectTarget for NoInjectTarget {
+    fn dispatch_replay_event(&mut self, _ev: &ReplayEvent) {}
+    fn game_state_byte(&self) -> u8 {
+        GAME_STATE_GATE_LIMIT
+    }
+    fn set_tick_handler_tick(&mut self, _tick: u32) {}
+    fn tick_handler_base_nanos(&self) -> u32 {
+        0
+    }
+    fn freeze_tick_handler(&mut self) {}
+}
+
+impl GraphwarReplayPlayer {
+    /// 空播放器（原版没有"`new` 只写这一节字段"的证据，这里只给 `Default` 同义的构造）。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `inject_events`（x86 **`0x3d61a0`** / FDE `0x70b`；arm64 `0x3d8d9c` / `0x500`）。
+    ///
+    /// 语义（逐条有地址）：从 `from` 号事件起，把 `tick < until_tick` 的事件**按文件顺序**
+    /// 逐条注入对局；每注入一条就把播放器的 `cursor`/`tick` 更新成这条事件的值，
+    /// 并在 `GameStateManager+0x138 < 2` 时把 `GraphwarTickHandler` 的 tick 也写成这条事件的 tick。
+    ///
+    /// `from >= events.len()` 时**一圈都不跑**（`0x3d624b jae` 直接跳过循环）；
+    /// `until_tick` 是**开区间上界**（`0x3d62b4 cmp ecx,[rsp]` + `0x3d62b7 jae`）。
+    pub fn inject_events<T: ReplayInjectTarget>(
+        &mut self,
+        from: usize,
+        until_tick: u32,
+        target: &mut T,
+    ) {
+        // 0x3d61c6/0x3d621b：先各取一次模块（原版 get_module，取不到就 expect panic）。
+        // 我方由 target 承担这两次取模块。
+        let mut i = from;
+        while i < self.events.len() {
+            let tick = self.events[i].tick;
+            // 0x3d62b4：`event.tick >= until_tick` ⇒ 停（严格小于才注入）。
+            if tick < 0 || tick as u64 >= until_tick as u64 {
+                break;
+            }
+            let tick = tick as u32;
+            // 0x3d62c5 / 0x3d62d4：记下"开始过"与当前下标。
+            self.started = 1;
+            self.cursor = i;
+            // 0x3d62e0：GraphwarEvent::clone（逐条克隆，后面交出去的是副本）。
+            let ev = self.events[i].clone();
+            // 0x3d634d / 0x3d6376：远端事件处理器 + 事件泵。
+            target.dispatch_replay_event(&ev);
+            // 0x3d6395：状态字节 < 2 才同步 tick；阈值 2 的语义**未知**。
+            if target.game_state_byte() < GAME_STATE_GATE_LIMIT {
+                // 0x3d63ad：写 TickHandler 的 u32 tick。
+                target.set_tick_handler_tick(tick);
+            }
+            // 0x3d6284：播放器自己的当前 tick。
+            self.tick = tick;
+            i += 1;
+        }
+    }
+
+    /// `go_to_first_checkpoint`（x86 **`0x3d6a40`** / `0x162`；arm64 `0x3d94a0`）。
+    ///
+    /// 目标 tick = `checkpoints.first().unwrap_or(0)`（`0x3d6a93` 判空 ⇒ `0x3d6b20 xor edx,edx`；
+    /// 否则 `0x3d6aa2 mov edx,[rax]` 取首项），把 TickHandler 的 tick 设成它
+    /// （`0x3d6aab mov [rbx+0x58],edx`），再从 **0 号事件**注入到该 tick（`0x3d6ab1 xor esi,esi`）。
+    pub fn go_to_first_checkpoint<T: ReplayInjectTarget>(&mut self, target: &mut T) {
+        let tick = self.checkpoints.first().copied().unwrap_or(0);
+        target.set_tick_handler_tick(tick);
+        self.inject_events(0, tick, target);
+        self.freeze_tick_clock_if_running(target);
+    }
+
+    /// `go_to_next_checkpoint`（x86 **`0x3d68b0`** / `0x186`；arm64 `0x3d929c`）。
+    ///
+    /// 1. 在 `checkpoints` 上二分找**第一个严格大于当前 tick** 的检查点
+    ///    （`0x3d68cf`..`0x3d6930`：二分 + `0x3d6902 je` 命中"相等就往后挪一格"的修正；
+    ///    等价于 `upper_bound(tick)`）；找不到（`0x3d6914 jae`）就**不注入**。
+    /// 2. 起点 = `if started != 0 { cursor + 1 } else { 0 }`
+    ///    （`0x3d6919 inc rax` + `0x3d6922 cmp byte [rdi],0` + `0x3d6925 cmovne`）。
+    /// 3. 注入到该检查点的 tick（`0x3d692c call inject_events`）。
+    /// 4. 冻结 TickHandler 的时钟（`0x3d697a`..`0x3d69a8`）。
+    pub fn go_to_next_checkpoint<T: ReplayInjectTarget>(&mut self, target: &mut T) {
+        // upper_bound：第一个 `> self.tick` 的检查点。
+        let next = self.checkpoints.iter().position(|&c| c > self.tick);
+        if let Some(idx) = next {
+            // 0x3d6919/0x3d6922/0x3d6925：起点 = 已注入过则 cursor+1，否则 0。
+            let from = if self.started != 0 { self.cursor + 1 } else { 0 };
+            let until = self.checkpoints[idx];
+            self.inject_events(from, until, target);
+        }
+        self.freeze_tick_clock_if_running(target);
+    }
+
+    /// `go_to_previous_checkpoint`（x86 **`0x3d6bb0`** / `0x1bc`；arm64 `0x3d9658`）。
+    ///
+    /// 1. 找**最后一个严格小于当前 tick** 的检查点（等价 `rposition(< tick)`；
+    ///    二进制里是 `upper_bound` 后再 `cmp rdx,1; adc rdx,-1` = `saturating_sub(1)`，
+    ///    见 `0x3d6c4c`..`0x3d6c5b`）；找不到（`0x3d6c60 jae`）就**不注入**。
+    /// 2. 把 TickHandler 的 tick 写成 **`checkpoints[0]`**（`0x3d6c78 mov eax,[rax]` +
+    ///    `0x3d6c7a mov [rbx+0x58],eax`）—— 注意**不是**目标检查点；
+    ///    为什么是首项：**未知**（只观测到"写首项"这一条指令，不编语义）。
+    /// 3. 从 **0 号事件**注入到该检查点的 tick（`0x3d6c88 xor esi,esi`）。
+    /// 4. 冻结 TickHandler 时钟。
+    pub fn go_to_previous_checkpoint<T: ReplayInjectTarget>(&mut self, target: &mut T) {
+        let prev = self.checkpoints.iter().rposition(|&c| c < self.tick);
+        if let Some(idx) = prev {
+            // 0x3d6c78：写的是**首项**（不是 checkpoints[idx]）。
+            let first = self.checkpoints[0];
+            target.set_tick_handler_tick(first);
+            let until = self.checkpoints[idx];
+            self.inject_events(0, until, target);
+        }
+        self.freeze_tick_clock_if_running(target);
+    }
+
+    /// 三条 checkpoint 路径的共同尾巴：时间基**未冻结**（哨兵 `nanos == 1e9`）时才冻结。
+    ///
+    /// 逐指令：x86 `0x3d697a cmp dword [rbx+0x40],0x3b9aca00` / `0x3d69a8`；
+    /// arm64 `0x3d939c ldr w9,[x19,#0x40]` + `0x3d93a0/0x3d93a8 mov w10,#0x3b9aca00`
+    /// + `0x3d93b0 cmp` + `0x3d93c8 bl <Instant>::now` + `0x3d93d0/0x3d93d4` 写 `+0x38/+0x40`。
+    fn freeze_tick_clock_if_running<T: ReplayInjectTarget>(&self, target: &mut T) {
+        if target.tick_handler_base_nanos() == crate::graphwar_tick_handler::NANOS_PER_SECOND {
+            target.freeze_tick_handler();
+        }
+    }
+}
+
+#[cfg(test)]
+mod replay_player_orig_tests {
+    use super::*;
+
+    /// 记录"注入了什么、tick 被写成什么"的假目标。
+    struct Recorder {
+        dispatched: Vec<i64>,
+        tick_handler_tick: Vec<u32>,
+        state_byte: u8,
+        base_nanos: u32,
+        freezes: usize,
+    }
+
+    impl Recorder {
+        fn new(state_byte: u8) -> Self {
+            Self {
+                dispatched: Vec::new(),
+                tick_handler_tick: Vec::new(),
+                state_byte,
+                // 哨兵 1e9 = 未冻结（`src/graphwar_tick_handler.rs` 的 NANOS_PER_SECOND）
+                base_nanos: crate::graphwar_tick_handler::NANOS_PER_SECOND,
+                freezes: 0,
+            }
+        }
+    }
+
+    impl ReplayInjectTarget for Recorder {
+        fn dispatch_replay_event(&mut self, ev: &ReplayEvent) {
+            self.dispatched.push(ev.tick);
+        }
+        fn game_state_byte(&self) -> u8 {
+            self.state_byte
+        }
+        fn set_tick_handler_tick(&mut self, tick: u32) {
+            self.tick_handler_tick.push(tick);
+        }
+        fn tick_handler_base_nanos(&self) -> u32 {
+            self.base_nanos
+        }
+        fn freeze_tick_handler(&mut self) {
+            self.freezes += 1;
+            self.base_nanos = 123_456_789; // 非哨兵 = 已冻结
+        }
+    }
+
+    fn ev(tick: i64) -> ReplayEvent {
+        ReplayEvent { tick, kind: "TickEvent".into(), body: String::new() }
+    }
+
+    fn player(ticks: &[i64], checkpoints: &[u32]) -> GraphwarReplayPlayer {
+        GraphwarReplayPlayer {
+            started: 0,
+            cursor: 0,
+            events: ticks.iter().map(|&t| ev(t)).collect(),
+            checkpoints: checkpoints.to_vec(),
+            tick: 0,
+        }
+    }
+
+    /// `inject_events` 的上界是**开区间**：`0x3d62b4 cmp ecx,[rsp]` + `jae` ⇒ `tick == until` 不注入。
+    #[test]
+    fn inject_events_stops_before_until_tick() {
+        let mut p = player(&[10, 20, 30, 40], &[]);
+        let mut t = Recorder::new(0);
+        p.inject_events(0, 30, &mut t);
+        assert_eq!(t.dispatched, vec![10, 20], "tick 30 是上界，不含");
+        assert_eq!(p.tick, 20);
+        assert_eq!(p.cursor, 1, "cursor = 最后注入的下标");
+        assert_eq!(p.started, 1);
+    }
+
+    /// `GameStateManager+0x138 < 2` 才同步 TickHandler 的 tick（`0x3d6395` / `0x3d639c jae`）。
+    #[test]
+    fn tick_handler_sync_is_gated_by_state_byte() {
+        let mut p = player(&[10, 20], &[]);
+        let mut t = Recorder::new(0); // 0 < 2 ⇒ 同步
+        p.inject_events(0, 100, &mut t);
+        assert_eq!(t.tick_handler_tick, vec![10, 20]);
+
+        let mut p = player(&[10, 20], &[]);
+        let mut t = Recorder::new(2); // 2 不小于 2 ⇒ 不同步
+        p.inject_events(0, 100, &mut t);
+        assert_eq!(t.dispatched, vec![10, 20]);
+        assert!(t.tick_handler_tick.is_empty());
+    }
+
+    /// `from >= events.len()` 一圈都不跑（`0x3d624b jae`）。
+    #[test]
+    fn inject_events_from_past_end_does_nothing() {
+        let mut p = player(&[10], &[]);
+        let mut t = Recorder::new(0);
+        p.inject_events(1, 1000, &mut t);
+        assert!(t.dispatched.is_empty());
+        assert_eq!(p.started, 0);
+    }
+
+    /// 首检查点：空表 ⇒ tick 0（`0x3d6b20 xor edx,edx`）；非空 ⇒ `checkpoints[0]`（`0x3d6aa2`）。
+    #[test]
+    fn first_checkpoint_uses_head_or_zero() {
+        let mut p = player(&[5, 50, 500], &[100, 300]);
+        let mut t = Recorder::new(0);
+        p.go_to_first_checkpoint(&mut t);
+        assert_eq!(t.tick_handler_tick.first(), Some(&100));
+        assert_eq!(t.dispatched, vec![5, 50], "注入到 100 之前");
+        assert_eq!(t.freezes, 1, "尾部冻结一次");
+
+        let mut p = player(&[5, 50], &[]);
+        let mut t = Recorder::new(0);
+        p.go_to_first_checkpoint(&mut t);
+        assert_eq!(t.tick_handler_tick.first(), Some(&0));
+        assert!(t.dispatched.is_empty(), "until=0 ⇒ 一条都不注入");
+        assert_eq!(t.freezes, 1);
+    }
+
+    /// 「下一个检查点」= 第一个**严格大于**当前 tick 的检查点；起点 = 已注入过则 cursor+1。
+    #[test]
+    fn next_checkpoint_is_upper_bound_and_resumes_after_cursor() {
+        let mut p = player(&[5, 50, 150, 250, 350], &[100, 200, 300]);
+        p.tick = 200; // 正好在一个检查点上 ⇒ 目标应是 300（严格大于）
+        p.started = 1;
+        p.cursor = 1; // 已注入到下标 1（tick 50）
+        let mut t = Recorder::new(0);
+        p.go_to_next_checkpoint(&mut t);
+        assert_eq!(t.dispatched, vec![150, 250], "从 cursor+1=2 起，注入到 300 之前");
+        assert_eq!(t.freezes, 1);
+    }
+
+    /// 没有更大的检查点：不注入、不写 tick（`0x3d6914 jae`），但仍然冻结时钟。
+    #[test]
+    fn next_checkpoint_absent_still_freezes_clock() {
+        let mut p = player(&[5, 50, 150], &[100, 200]);
+        p.tick = 900;
+        let mut t = Recorder::new(0);
+        p.go_to_next_checkpoint(&mut t);
+        assert!(t.dispatched.is_empty());
+        assert!(t.tick_handler_tick.is_empty());
+        assert_eq!(t.freezes, 1);
+    }
+
+    /// 「上一个检查点」= 最后一个**严格小于**当前 tick 的检查点；TickHandler 的 tick 写成**首项**。
+    #[test]
+    fn previous_checkpoint_writes_head_tick_not_target() {
+        let mut p = player(&[50, 150, 250, 350], &[100, 200, 300]);
+        p.tick = 250;
+        let mut t = Recorder::new(0);
+        p.go_to_previous_checkpoint(&mut t);
+        // 目标 = 200（严格小于 250 的最后一个）；TickHandler tick 写首项 100（0x3d6c78）
+        assert_eq!(t.tick_handler_tick.first(), Some(&100), "写的是 checkpoints[0]");
+        assert_eq!(t.dispatched, vec![50, 150], "从 0 号事件注入到 200 之前");
+        assert_eq!(t.freezes, 1);
+    }
+
+    /// 当前 tick 早于所有检查点：没有"上一个"，不注入，但仍冻结。
+    #[test]
+    fn previous_checkpoint_absent_still_freezes_clock() {
+        let mut p = player(&[5, 50], &[100, 200]);
+        p.tick = 10;
+        let mut t = Recorder::new(0);
+        p.go_to_previous_checkpoint(&mut t);
+        assert!(t.dispatched.is_empty());
+        assert!(t.tick_handler_tick.is_empty());
+        assert_eq!(t.freezes, 1);
+    }
+
+    /// 已冻结（`nanos != 1e9`）时**不再**冻结（`0x3d6981 jne` 跳过整段）。
+    #[test]
+    fn already_frozen_clock_is_not_frozen_again() {
+        let mut p = player(&[5], &[100]);
+        let mut t = Recorder::new(0);
+        t.base_nanos = 42; // 非哨兵 = 已冻结
+        p.go_to_first_checkpoint(&mut t);
+        assert_eq!(t.freezes, 0);
+    }
+
+    /// 元素步长与 tick 偏移是反汇编里的立即数（`0x50` / `0x48`）。
+    #[test]
+    fn event_stride_and_tick_offset_match_the_binary() {
+        assert_eq!(REPLAY_EVENT_STRIDE, 0x50);
+        assert_eq!(REPLAY_EVENT_TICK_OFFSET, 0x48);
+        assert_eq!(GAME_STATE_GATE_LIMIT, 2);
+        assert_eq!(TICK_HANDLER_TICK_OFFSET, 0x58);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 对外 C ABI（供 ctypes / 离线对拍；GDScript 不走这条路）
 // ---------------------------------------------------------------------------
 

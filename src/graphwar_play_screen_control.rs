@@ -31,9 +31,9 @@
 //! | `0x3d9b50` | `0x2f0` | [`FN_SET_WIDGETS_A`] | 5 个节点的可见性置 `(0,0,0,1,1)` → **回放视图** | 观测 |
 //! | `0x3d9e40` | `0x2f0` | [`FN_SET_WIDGETS_B`] | 同 5 个节点置 `(1,1,1,0,0)` → **对局视图** | 观测 |
 //! | `0x3da130` | `0x12b0` | [`FN_SHOW_VICTORY`] | 胜负横幅：`TeamVictoryLabel` / `SelfVictoryLabel` / 头像纹理 | 观测 |
-//! | `0x3db3e0` | `0x1090` | — | 被 `0x3da130` 调 3 次，内部逻辑**未解** | 未知 |
-//! | `0x3dc470` | `0x1c0` | — | 小整数键的哈希表查找 + 取 `Gd<T>`；被 `0x3dc7f0` / `0x3b0830` 调 | 推断 |
-//! | `0x3dc630` | `0x1c0` | — | 同上（另一张表 / 另一个键） | 推断 |
+//! | `0x3db3e0` | `0x1090` | [`GraphwarPlayScreenControl::add_player_victory_icon`] | **T95 已落码**：取 `VictoryPlayerContainer{index}` 一格 → 三个图标节点 → 皮肤/脸/帽子三张贴图 `set_texture` + `set_visible(true)` | 观测 |
+//! | `0x3dc470` | `0x1c0` | [`GraphwarPlayScreenControl::update_names_button_texture`] | **T95 已落码**：按 `self+0x89` 的 u8 键查图标表（`+0x120`）→ `Button::set_button_icon`（`self+0x58`） | 观测 |
+//! | `0x3dc630` | `0x1c0` | [`GraphwarPlayScreenControl::update_view_function_button_texture`] | **T95 已落码**：同形，键 `self+0x88`、表 `+0xf0`、按钮 `self+0x48` | 观测 |
 //! | `0x3dc7f0` | `0x3c0` | [`SUBSCRIBED_SIGNALS`] | **订阅**：`function_info_event` + `function_fire_event` | 观测 |
 //! | `0x3dcbb0` | `0x2250` | — | 被 `0x3a5760` 调 1 次；含 `f(x) = ` 与 `LeftButtonGrid` 串 | 未知 |
 //! | `0x522070` | `0x480` | [`ACTION_NODES`] | 取 `TimerLabel` / `ViewFunctionButton` / … + `player_info_event` | 观测（角色推断） |
@@ -1488,6 +1488,400 @@ impl GraphwarPlayScreenControl {
 // ---------------------------------------------------------------------------
 // 11. 单测（期望值来自 §2 表里的**指令地址**与 §10 的调用顺序，不来自实现本身）
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 5. 胜利横幅的玩家头像位 + 两个按钮图标（T95 落码）
+// ---------------------------------------------------------------------------
+//
+// 这三条在 `fixtures/function_coverage.tsv` 里都是 `F3 register-only`（地址只登记、没有函数体）。
+// 本轮逐条读通并落码；名字全部来自 `fixtures/name_to_addr_v2.tsv` 的 v2 三向唯一锚（硬）。
+//
+// | 函数 | x86 vaddr / FDE | arm64 vaddr / size |
+// |---|---|---|
+// | `add_player_victory_icon` | **`0x3db3e0`** / `0x108e`（4240 B） | `0x3e0b64` / `0xbb4` |
+// | `update_names_button_texture` | **`0x3dc470`** / `0x1c0` | `0x3e1718` / `0x1b8` |
+// | `update_view_function_button_texture` | **`0x3dc630`** / `0x1c0` | `0x3e18d0` / `0x1b8` |
+//
+// ## `add_player_victory_icon`（`0x3db3e0`）：把一个玩家头像刷进胜利横幅的**一格**
+//
+// T62（`docs/06`）把这条记成"三层嵌套循环没读通、缺 `0x447d10`/`0x447e20`/`0x3acb00` 三跳身份"。
+// 本轮在 **arm64 未 strip 的 `.symtab`** 上重读，三跳的身份全部落地，而且**没有嵌套循环** ——
+// 它是**三段同形的顺序块**（皮肤 / 脸 / 帽子），每块 = 一次 hash 查找 + 一次取贴图 + 一次 `set_texture`：
+//
+// ```text
+// 0x3e0ba8  取 22 字节字面量 "VictoryPlayerContainer"（arm64 0x19bf62 / x86 0x1bf952）
+// 0x3e0bdc  <u32>::_fmt（w2 = 0xa ⇒ 十进制）把第 2 个实参拼上去
+//           ⇒ 节点名 = "VictoryPlayerContainer{index}"
+// 0x3e0ce4  GraphwarNodes::get_node_by_name_rec(…, &容器名)     ; 0x3a51a8
+// 0x3e0d50  get_node_by_name_rec(…, "SkinIcon")   ; 0x179470
+// 0x3e0dcc  get_node_by_name_rec(…, "FaceIcon")   ; 0x1791f0
+// 0x3e0e48  get_node_by_name_rec(…, "HatIcon")    ; 0x19bf78
+// 0x3e0e7c  GraphwarModuleContainer::get_module::<GraphwarTextureLoader>  ; 0x49fb84
+// 0x3e0ec0  RawGd::check_rtti("upcast_ref",10)     ; 0x19bdff
+// 0x3e0ecc  CanvasItem::set_visible(容器, true)    ; 0x7e68e0
+// —— 皮肤块 ——
+// 0x3e0ed0  ldr x8,[loader+0x48]  ; 皮肤缓存表非空？
+// 0x3e0ee8  hash_one(&loader+0x50, &graphics_id)
+//           hashbrown 查找（键 u32 = **第 1 个实参**）     ; 表项键在 entry-0x20
+// 0x3e0f9c  GraphwarTextureLoader::get_skin_texture(…)     ; 0x40c1cc
+// 0x3e0fbc  check_rtti(&贴图,"upcast_ref") + check_rtti(…,"to_godot",8)  ; 0x1799a0
+// 0x3e101c  Object::call(SkinIcon, "set_texture", 11, [贴图.to_variant()])  ; 0x19bec0
+// —— 脸块 / 帽子块同形：表在 +0x78/+0x80、get_face_texture(0x40c0a4)；
+//    表在 +0xa8/+0xb0、get_hat_texture(0x40bf7c) ——
+// 失败臂的串：`"Upcast failed. This is a bug; please report it."`（0x19be91）
+// ```
+//
+// ⇒ **语义**：`add_player_victory_icon(graphics_id, index)` = 取 `VictoryPlayerContainer{index}`
+// 这一格，把 `graphics_id` 对应的**皮肤 / 脸 / 帽子**三张贴图刷到它的三个子节点上，并把这一格
+// 设为可见。**没有循环**（三段是展开的，不是三层嵌套）。
+//
+// ## 两个 `update_*_button_texture`（各 `0x1c0`）
+//
+// 两者**同形**，只差三处立即数（逐条对上）：
+//
+// | | `update_names_button_texture` | `update_view_function_button_texture` |
+// |---|---|---|
+// | 图标表长度字段 | `Rc` 载荷 `+0x120`（arm64 `0x3e1740`） | `+0xf0`（`0x3e18f8`） |
+// | 索引字节 | `self+0x89`（`0x3e1768`） | `self+0x88`（`0x3e1920`） |
+// | 目标按钮 | `self+0x58`（`0x3e180c`） | `self+0x48`（`0x3e19c4`） |
+//
+// 共同形状：`顺序受控` → 图标表为空就整条返回 → 按 u8 键在 `Rc<RefCell<…>>` 的 hashbrown 表里查
+// （`self+0x10` 是那个 Rc：借用标记 `+0x10`、表 `+0x108`、掩码 `+0x110`、hasher `+0x128`）→
+// 命中就 `RawGd::clone` + `Button::set_button_icon`（arm64 `0x420688`）→ 再 `RefCounted::unreference`
+// 释放那份克隆。
+//
+// ⚠️ x86 侧 `0x3dc5e1` 那条 `call [rax+0x418]`（T62 记的"卡在 `[rax+0x418]` 的 gdext 虚调用"）
+// 本轮定位清楚：arm64 同一位置是 `BindingStorage::ensure_main_thread` → `[x8+0xd10]` →
+// `ldarb [x8+0x14f0]` → `blr [x8+0x418]`，即 **gdext 引擎接口表里的一格**（`RefCounted::unreference`
+// 的 ptrcall），**不是游戏业务代码** ⇒ 不构成缺口，也不需要落码。
+
+/// 胜利横幅一格里三个图标节点的名字（按反汇编里的取节点顺序）。
+///
+/// 顺序 = arm64 的 `get_node_by_name_rec` 调用顺序：`SkinIcon`(`0x3e0d50`) →
+/// `FaceIcon`(`0x3e0dcc`) → `HatIcon`(`0x3e0e48`)。档位：**观测**。
+pub const VICTORY_ICON_NODES: [&str; 3] = ["SkinIcon", "FaceIcon", "HatIcon"];
+
+/// 胜利横幅每一格的容器名**前缀**：拼上玩家的展示位序号（十进制）。
+///
+/// 真值：22 字节字面量 `"VictoryPlayerContainer"`（arm64 `0x19bf62` / x86 `0x1bf952`）
+/// + `<u32>::_fmt`（十进制，arm64 `0x3e0bdc`，`w2 = 0xa`）。档位：**观测**。
+pub const VICTORY_SLOT_PREFIX: &str = "VictoryPlayerContainer";
+
+/// 往图标节点上刷贴图用的动态方法名（`Object::call` 的第一个实参）。
+///
+/// 真值：`"set_texture"`（11 字节，arm64 `0x19bec0`；arm64 侧三处 `Object::call` = `0x3e101c`
+/// / `0x3e11d0` / `0x3e1384`）。档位：**观测**。
+pub const ICON_SET_TEXTURE: &str = "set_texture";
+
+/// 三个贴图来源（皮肤 / 脸 / 帽子）——顺序与反汇编里的三段一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VictoryTextureKind {
+    /// `GraphwarTextureLoader::get_skin_texture`（arm64 `0x40c1cc`）。
+    Skin,
+    /// `GraphwarTextureLoader::get_face_texture`（arm64 `0x40c0a4`）。
+    Face,
+    /// `GraphwarTextureLoader::get_hat_texture`（arm64 `0x40bf7c`）。
+    Hat,
+}
+
+impl VictoryTextureKind {
+    /// 三段顺序（= 反汇编里块的顺序：皮肤 → 脸 → 帽子）。
+    pub const ALL: [VictoryTextureKind; 3] = [
+        VictoryTextureKind::Skin,
+        VictoryTextureKind::Face,
+        VictoryTextureKind::Hat,
+    ];
+}
+
+/// `add_player_victory_icon` 需要的那半套 gdext 能力（**我方抽象，不是原版类型**）。
+pub trait VictoryIconSink {
+    /// 节点句柄。
+    type Node: Copy;
+    /// 贴图句柄。
+    type Texture: Copy;
+
+    /// `GraphwarNodes::get_node_by_name_rec`（arm64 `0x3a51a8`）。`None` ⇒ 原版走 `unwrap` 的 panic 臂。
+    fn get_node_by_name_rec(&mut self, name: &str) -> Option<Self::Node>;
+    /// `CanvasItem::set_visible`（arm64 `0x7e68e0`，实参 `w1 = 1`）。
+    fn set_visible(&mut self, node: Self::Node, visible: bool);
+    /// `graphics_id` 对应的贴图缓存里有没有这一条（三张表在 loader 载荷 `+0x48`/`+0x78`/`+0xa8`）。
+    fn has_cached_texture(&self, kind: VictoryTextureKind, graphics_id: u32) -> bool;
+    /// `GraphwarTextureLoader::get_*_texture`（三个 arm64 地址见 [`VictoryTextureKind`]）。
+    fn get_texture(&mut self, kind: VictoryTextureKind, graphics_id: u32) -> Option<Self::Texture>;
+    /// `Object::call(node, "set_texture", [texture.to_variant()])`（arm64 `0x36bdf4`）。
+    fn call_set_texture(&mut self, node: Self::Node, texture: Self::Texture);
+}
+
+/// 两个 `update_*_button_texture` 需要的能力。
+pub trait ButtonIconSink {
+    /// 图标句柄。
+    type Texture: Copy;
+
+    /// 图标表为空？（`update_names` 读 `+0x120`；`update_view_function` 读 `+0xf0`）。
+    fn icon_table_is_empty(&self, table: IconTable) -> bool;
+    /// 按 u8 键查图标表（键来自 `self+0x89` / `self+0x88`）。
+    fn icon_for_index(&mut self, table: IconTable, index: u8) -> Option<Self::Texture>;
+    /// `Button::set_button_icon`（arm64 `0x420688`）。
+    fn set_button_icon(&mut self, button: ButtonSlot, icon: Self::Texture);
+}
+
+/// 两张图标表（分别挂在 `ShowNames` 与 `ViewFunctionButton` 上）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconTable {
+    /// `update_names_button_texture` 用的那张（长度字段 `+0x120`、hasher `+0x128`）。
+    Names,
+    /// `update_view_function_button_texture` 用的那张（长度字段 `+0xf0`）。
+    ViewFunction,
+}
+
+/// 两个按钮在 `self` 里的位置（只给测试/记录用，不参与逻辑）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonSlot {
+    /// `self + 0x58`：`ShowNames` 按钮（`update_names_button_texture` 的目标）。
+    Names,
+    /// `self + 0x48`：`ViewFunctionButton`（`update_view_function_button_texture` 的目标）。
+    ViewFunction,
+}
+
+impl GraphwarPlayScreenControl {
+    /// `add_player_victory_icon`（x86 **`0x3db3e0`** / FDE `0x108e`；arm64 `0x3e0b64` / `0xbb4`）。
+    ///
+    /// 逐条依据见本节开头；`graphics_id` = 第 1 个实参（三张贴图表的键），
+    /// `index` = 第 2 个实参（拼进容器名，`0x3e0bdc` 的十进制格式化）。
+    ///
+    /// 返回真正刷上去的贴图张数（0..=3；没有对应贴图就不调 `set_texture`，
+    /// 这也是原版的行为：三处 `get_*_texture` 的返回值都先判 `tag == 1` 才继续）。
+    ///
+    /// 档位：**观测**（节点名 / 顺序 / 三个取贴图调用 / `set_texture` 串 / `set_visible(…, true)`
+    /// 都有地址）；返回条数是**我方**为了可测加的。
+    pub fn add_player_victory_icon<S>(sink: &mut S, graphics_id: u32, index: u32) -> usize
+    where
+        S: VictoryIconSink + ?Sized,
+    {
+        // 0x3e0ba8 + 0x3e0bdc：22 字节前缀 + 十进制序号。
+        let container_name = format!("{}{}", VICTORY_SLOT_PREFIX, index);
+        // 0x3e0ce4：容器节点（拿不到就 panic —— 原版是 unwrap）。
+        let container = sink
+            .get_node_by_name_rec(&container_name)
+            .expect("VictoryPlayerContainer{n}");
+        // 0x3e0d50 / 0x3e0dcc / 0x3e0e48：三个图标节点，顺序固定。
+        let mut icons = [None; 3];
+        for (i, name) in VICTORY_ICON_NODES.iter().enumerate() {
+            icons[i] = Some(
+                sink.get_node_by_name_rec(name)
+                    .unwrap_or_else(|| panic!("{}", name)),
+            );
+        }
+        // 0x3e0e7c：贴图装载器（`get_module::<GraphwarTextureLoader>`；拿不到就 panic）。
+        // 0x3e0ecc：先把这一格设为可见（在刷贴图**之前**）。
+        sink.set_visible(container, true);
+        // 三段同形块：皮肤 → 脸 → 帽子。
+        let mut applied = 0;
+        for (i, kind) in VictoryTextureKind::ALL.iter().enumerate() {
+            let node = icons[i].expect("图标节点");
+            // 先看缓存有没有（`ldr x8,[loader+0x48/0x78/0xa8]` + hashbrown 查找）。
+            if !sink.has_cached_texture(*kind, graphics_id) {
+                continue;
+            }
+            let Some(texture) = sink.get_texture(*kind, graphics_id) else {
+                continue;
+            };
+            sink.call_set_texture(node, texture);
+            applied += 1;
+        }
+        applied
+    }
+
+    /// `update_names_button_texture`（x86 **`0x3dc470`** / FDE `0x1c0`；arm64 `0x3e1718`）。
+    ///
+    /// `icon_index` 是原版 `self + 0x89` 那个 `u8`（`0x3e1768 ldrb w11,[x19,#0x89]`）；
+    /// 返回 `true` 表示真的设了图标（表为空 / 键不存在都返回 `false`）。
+    ///
+    /// 档位：**观测**（三个差异点见本节表）。
+    pub fn update_names_button_texture<S>(sink: &mut S, icon_index: u8) -> bool
+    where
+        S: ButtonIconSink + ?Sized,
+    {
+        // 0x3dc49b/0x3e1740：图标表长度为 0 ⇒ 整条返回（不做任何事）
+        if sink.icon_table_is_empty(IconTable::Names) {
+            return false;
+        }
+        // 0x3dc4e9 / 0x3e1768：键 = self + 0x89 那个 u8
+        let Some(icon) = sink.icon_for_index(IconTable::Names, icon_index) else {
+            return false;
+        };
+        // 0x3dc567 起：RawGd::clone → Button::set_button_icon(self+0x58)
+        sink.set_button_icon(ButtonSlot::Names, icon);
+        true
+    }
+
+    /// `update_view_function_button_texture`（x86 **`0x3dc630`** / FDE `0x1c0`；arm64 `0x3e18d0`）。
+    ///
+    /// 与 [`Self::update_names_button_texture`] 同形，只差三处立即数：
+    /// 表长度 `+0xf0`、键 `self + 0x88`、目标按钮 `self + 0x48`。
+    pub fn update_view_function_button_texture<S>(sink: &mut S, icon_index: u8) -> bool
+    where
+        S: ButtonIconSink + ?Sized,
+    {
+        // 0x3dc64b 附近 / 0x3e18f8：`[x20+0xf0] == 0` ⇒ 返回
+        if sink.icon_table_is_empty(IconTable::ViewFunction) {
+            return false;
+        }
+        // 0x3e1920：键 = self + 0x88
+        let Some(icon) = sink.icon_for_index(IconTable::ViewFunction, icon_index) else {
+            return false;
+        };
+        // 0x3e19d8：Button::set_button_icon(self+0x48)
+        sink.set_button_icon(ButtonSlot::ViewFunction, icon);
+        true
+    }
+}
+
+#[cfg(test)]
+mod victory_icon_tests {
+    use super::*;
+
+    /// 记录调用顺序的假 sink。
+    #[derive(Default)]
+    struct FakeIcons {
+        nodes: Vec<String>,
+        visible: Vec<(u32, bool)>,
+        cached: Vec<VictoryTextureKind>,
+        textures: Vec<(VictoryTextureKind, u32)>,
+        set_textures: Vec<(u32, u32)>,
+    }
+
+    impl VictoryIconSink for FakeIcons {
+        type Node = u32;
+        type Texture = u32;
+
+        fn get_node_by_name_rec(&mut self, name: &str) -> Option<u32> {
+            self.nodes.push(name.to_string());
+            Some(self.nodes.len() as u32)
+        }
+        fn set_visible(&mut self, node: u32, visible: bool) {
+            self.visible.push((node, visible));
+        }
+        fn has_cached_texture(&self, kind: VictoryTextureKind, _graphics_id: u32) -> bool {
+            self.cached.contains(&kind)
+        }
+        fn get_texture(&mut self, kind: VictoryTextureKind, graphics_id: u32) -> Option<u32> {
+            self.textures.push((kind, graphics_id));
+            Some(100 + kind as u32)
+        }
+        fn call_set_texture(&mut self, node: u32, texture: u32) {
+            self.set_textures.push((node, texture));
+        }
+    }
+
+    /// 节点名 = `"VictoryPlayerContainer"` + 十进制序号；取节点顺序固定；三层贴图顺序固定。
+    #[test]
+    fn victory_icon_names_and_order_come_from_the_binary() {
+        let mut s = FakeIcons::default();
+        s.cached = vec![
+            VictoryTextureKind::Skin,
+            VictoryTextureKind::Face,
+            VictoryTextureKind::Hat,
+        ];
+        let n = GraphwarPlayScreenControl::add_player_victory_icon(&mut s, 7, 42);
+        assert_eq!(n, 3);
+        assert_eq!(
+            s.nodes,
+            vec![
+                "VictoryPlayerContainer42".to_string(),
+                "SkinIcon".to_string(),
+                "FaceIcon".to_string(),
+                "HatIcon".to_string(),
+            ],
+            "顺序 = 0x3e0ce4 → 0x3e0d50 → 0x3e0dcc → 0x3e0e48"
+        );
+        assert_eq!(s.visible, vec![(1u32, true)], "0x3e0ecc set_visible(容器, true)");
+        assert_eq!(
+            s.set_textures,
+            vec![(2u32, 100u32), (3, 101), (4, 102)],
+            "SkinIcon/FaceIcon/HatIcon 各一次 set_texture，顺序 = 皮肤→脸→帽子"
+        );
+        assert!(s.textures.iter().all(|&(_, gid)| gid == 7), "三张表都用第 1 个实参做键");
+    }
+
+    /// 缓存里没有 ⇒ 该块整段跳过（原版先看表长度 + 查键，查不到就不调 get_*_texture）。
+    #[test]
+    fn missing_cache_entry_skips_that_block() {
+        let mut s = FakeIcons::default();
+        s.cached = vec![VictoryTextureKind::Hat];
+        let n = GraphwarPlayScreenControl::add_player_victory_icon(&mut s, 9, 0);
+        assert_eq!(n, 1);
+        assert_eq!(s.set_textures, vec![(4u32, 102u32)], "只有 HatIcon 被刷");
+        assert_eq!(s.textures, vec![(VictoryTextureKind::Hat, 9u32)]);
+    }
+
+    /// 容器名按**十进制**拼（`<u32>::_fmt` + `w2 = 0xa`）。
+    #[test]
+    fn container_name_uses_decimal_index() {
+        let mut s = FakeIcons::default();
+        GraphwarPlayScreenControl::add_player_victory_icon(&mut s, 1, 255);
+        assert_eq!(s.nodes[0], "VictoryPlayerContainer255");
+    }
+
+    /// 两个 `update_*_button_texture`：空表 / 缺键都返回 false；命中才设图标。
+    #[test]
+    fn button_icon_updates_follow_the_same_shape() {
+        #[derive(Default)]
+        struct FakeButtons {
+            empty: Vec<IconTable>,
+            present: Vec<(IconTable, u8)>,
+            set: Vec<(ButtonSlot, u32)>,
+        }
+        impl ButtonIconSink for FakeButtons {
+            type Texture = u32;
+            fn icon_table_is_empty(&self, table: IconTable) -> bool {
+                self.empty.contains(&table)
+            }
+            fn icon_for_index(&mut self, table: IconTable, index: u8) -> Option<u32> {
+                if self.present.contains(&(table, index)) {
+                    Some(u32::from(index) + 1)
+                } else {
+                    None
+                }
+            }
+            fn set_button_icon(&mut self, button: ButtonSlot, icon: u32) {
+                self.set.push((button, icon));
+            }
+        }
+
+        // 空表 ⇒ 一次都不设
+        let mut b = FakeButtons { empty: vec![IconTable::Names, IconTable::ViewFunction], ..Default::default() };
+        assert!(!GraphwarPlayScreenControl::update_names_button_texture(&mut b, 3));
+        assert!(!GraphwarPlayScreenControl::update_view_function_button_texture(&mut b, 3));
+        assert!(b.set.is_empty());
+
+        // 缺键 ⇒ 不设；命中 ⇒ 设到正确的槽位
+        let mut b = FakeButtons::default();
+        assert!(!GraphwarPlayScreenControl::update_names_button_texture(&mut b, 5));
+        b.present = vec![(IconTable::Names, 5u8), (IconTable::ViewFunction, 6u8)];
+        assert!(GraphwarPlayScreenControl::update_names_button_texture(&mut b, 5));
+        assert!(GraphwarPlayScreenControl::update_view_function_button_texture(&mut b, 6));
+        assert_eq!(
+            b.set,
+            vec![(ButtonSlot::Names, 6u32), (ButtonSlot::ViewFunction, 7u32)],
+            "names 用 self+0x58 / view_function 用 self+0x48"
+        );
+    }
+
+    /// 常量与反汇编里的串/长度逐条对上。
+    #[test]
+    fn victory_icon_constants_match_the_binary() {
+        assert_eq!(VICTORY_SLOT_PREFIX.len(), 22, "arm64 0x3e0b98 mov w0,#0x16");
+        assert_eq!(VICTORY_SLOT_PREFIX, "VictoryPlayerContainer");
+        assert_eq!(VICTORY_ICON_NODES, ["SkinIcon", "FaceIcon", "HatIcon"]);
+        assert_eq!(ICON_SET_TEXTURE.len(), 11, "Object::call 的 w2 = 0xb");
+        assert_eq!(ICON_SET_TEXTURE, "set_texture");
+        assert_eq!(
+            VictoryTextureKind::ALL,
+            [VictoryTextureKind::Skin, VictoryTextureKind::Face, VictoryTextureKind::Hat]
+        );
+    }
+}
 
 #[cfg(test)]
 mod f3_landing_tests {
