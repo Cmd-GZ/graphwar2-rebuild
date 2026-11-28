@@ -1,0 +1,33 @@
+# fixtures/pixel_leftover_results.tsv —— T100 两处遗留的读数（2026-11-28，分支 agent/pixel-leftover）
+# 判据 = fixtures/pixel_leftover_plan.txt（预注册，先于本轮任何代码改动与读数 commit）。
+# 采集口径：tools/frame_capture.py --flow match --stop-plan fixtures/frame_capture_freeze_plan.txt
+#           + bwrap 私有 netns + 两侧串行 + 同一棵树同一份 .so（md5 261a413f…）。
+# 门槛文件未改：frame_diff_thresholds.txt sha256 9cc9fcda… / frame_capture_freeze_plan.txt aa23b64d…
+# 列：section	item	before	after	verdict	note
+①	停帧 match_ready	2179 px / 0.0979 % (L2 0)	2112 px / 0.0949 % (L2 0)	过	预注册带 [0.070,0.100] % 内
+①	停帧 match_play（raw）	1645 px	1550 px	过	−95 px / −0.0042 pp；预注册上限 1740 px、L2 0 块
+①	停帧 match_play（掩膜后）	1375 px（masked 270）	1550 px（masked 0）	不直接可比	掩膜后那列差 175 px 全部是光标本轮没落进排除区，同口径看 raw
+①	密集 dense3 #2 (colored px)	-	原版 846 / 我方 855	过	Δ+9
+①	密集 dense3 #3		原版 1947 / 我方 1952	过	Δ+5
+①	密集 dense3 #4		原版 3415 / 我方 3450	过	Δ+35
+①	密集 dense3 #5		原版 5089 / 我方 5144	过	Δ+55
+①	密集 dense3 #6		原版 6763 / 我方 6840	过	Δ+77
+①	密集 dense3 #7		原版 8427 / 我方 8521	过	Δ+94
+①	密集 dense3 #8		原版 10067 / 我方 10223	过	Δ+156（+1.6 %）
+①	淡出段时长 vs 采集步长	60 tick = 1.00 s	单帧 ≈1.02 s（8.18 s / 8 帧）	不可测	A2/A3 未测到（不是判红），见 docs/06 §144.2.3
+①	淡出段（长 match_ready regime）	改前我们一格归 0	原版 #34..#39 = 11326/10856/1573/74/0	未达	起点相位被 1 s 采样步长放大；根因是 tick 轴口径（§137.6 第 2/3 条）
+②	断线前逐帧跨侧差异（#1..#30）	916–2186 px	-	基线	同一份 45 帧密集采集
+②	断线后逐帧跨侧差异（#31..#45）	22482 px / 1.0098 % (L2 6 块)	22482 px / 1.0098 % (L2 6 块)	未达	T84 登记的 22925 px = 同一现象；预注册 B2 上限 2000 px 未达
+②	弹窗是否出现	两侧都弹（同一帧 #31）	两侧都弹（同一帧 #31）	结论	T84 的「我方没弹」被证伪
+②	22 375 px 拆块：ShowExtraButtons（∨）	-	12552 px	根因1	我方断线那刻从禁用态翻回启用态（end_match → _set_replay_layout(false) / _set_replay_input_enabled(true)）
+②	22 375 px 拆块：棋盘 3 px 黑框	-	8797 px	根因2	GraphwarPlane::draw 0x4b614c test %rbx,%rbx / je（rbx=[容器+0x1f8]=GraphwarGameClient）
+②	22 375 px 拆块：其余（士兵/名字标签等）	-	1026 px	既有残差	§137.5.3 同源
+门槛	cargo test --offline	1620 / 0 / 1 ignored	1620 / 0 / 1 ignored	过	本轮没改 src/**
+门槛	cargo test --features gdext-bindings	1769 / 0 / 1 ignored	1769 / 0 / 1 ignored	过	同上
+门槛	selftest	757 / 0 / 1 skip（任务书）	694 / 0 / 3 skip（本机）	未达	少的 63 条 = replay_player(47)+replay_ode(16) 整组跳过，本机原版存档目录可见性；A/B 证明与本轮改动无关
+门槛	headless 14 脚本	1979 / 0（任务书）	1975 / 0（本分支基线）	未达	play_flow 230（T88 记 234）；A/B：把本轮改动 stash 掉仍是 230/0
+门槛	三轴 fire	647	647	过	结算批 1080
+门槛	三轴 batch	647	647	过	结算批 1080
+门槛	三轴 batch_conv	内容 637 / 1080、种类 1075（文档口径）	单发批 950：种类 947/950、内容 605/950；变差 0 批	口径不齐	分母 950 ≠ 1080，本树 example 默认批集合不同；只用「变差 0 批」作不退化判据
+门槛	coverage_matrix.py --check	OK	OK	过	527 个：逐位 89 / 观测 435 / 推断 3 / 未做 0
+门槛	check_doc_refs.py	rc=0	rc=0	过	docsec check 也无重复号/空心节
