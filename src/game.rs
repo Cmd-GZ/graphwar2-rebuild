@@ -140,18 +140,6 @@ pub struct Match {
     ///
     /// 实测延迟 ≈165 tick（2.75 秒），见 `docs/44`。
     pending_destroy: Vec<(i64, String)>,
-    /// **"已请求移除的实体 id"表**：原版 `GraphwarGameStateManager` 数据 **`+0x90`**（cap）/
-    /// **`+0x98`**（ptr）/ **`+0xa0`**（len）的 `Vec<u32>`，**只追加**。
-    ///
-    /// 三个写点（`docs/06` §157.3，全是同一条 `push` 序列）：`remove_all_players`
-    /// （`0x473879`–`0x4738a4`，逐个 player）、`remove_soldier_from_player`
-    /// （`0x4768e8`–`0x476913`，只推**最后**一个士兵）、`request_remove_player`
-    /// （`0x4757a8`–`0x4757d3`，**总是**推入，连"找不到这个玩家"也推）。
-    ///
-    /// ⚠️ **未证**：全 `.text` 里没有观测到读这个表的地方（本轮只做了三个写点的
-    /// `addr_probe.dis` 与 `callers`，没做全 `.text` 的 `0x90(%r..)` 扫描）⇒ 它的
-    /// **消费方未知**。所以这里**只如实记录追加**，不拿它当任何判决依据。
-    pub removed_entities: Vec<u32>,
 
     // ---- 接线层：射手轮转 + 按士兵的 AI 进化（`docs/109` §6.1 说的"还没接线"）----
     /// 玩家 → `{队伍, Vec<soldier_id>, 游标}`（`docs/98` §1.1 的 `0x28` 步长表）。
@@ -876,7 +864,6 @@ impl Match {
             turn_start_tick: 0, time_mode: "Timer1m".to_string(),
             function_mode,
             pending_destroy: Vec::new(),
-            removed_entities: Vec::new(),
             turns: TurnManager::new(),
             functions: SoldierFunctions::new(),
             life: LifeState::default(),
